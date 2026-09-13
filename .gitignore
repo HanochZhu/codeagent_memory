@@ -1,0 +1,4 @@
+/target
+/.cam
+*.db
+.DS_Store
