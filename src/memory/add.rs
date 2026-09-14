@@ -86,13 +86,23 @@ pub fn escape_fts_query(tokens: &str) -> String {
     tokens
         .split_whitespace()
         .map(|t| {
-            let cleaned: String = t
-                .chars()
+            t.chars()
                 .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-                .collect();
-            cleaned
+                .collect::<String>()
         })
         .filter(|t| !t.is_empty())
+        .map(|t| format!("\"{}\"", t.replace('"', "")))
         .collect::<Vec<_>>()
         .join(" OR ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quotes_hyphen_and_or_tokens() {
+        let q = escape_fts_query("multi-arch Docker OR");
+        assert_eq!(q, "\"multi-arch\" OR \"Docker\" OR \"OR\"");
+    }
 }

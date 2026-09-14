@@ -16,7 +16,9 @@ const RUST_DEFS: &str = r#"
 (function_item name: (identifier) @name) @def
 (struct_item name: (type_identifier) @name) @def
 (enum_item name: (type_identifier) @name) @def
+(enum_variant name: (identifier) @name) @def
 (trait_item name: (type_identifier) @name) @def
+(type_item name: (type_identifier) @name) @def
 "#;
 
 const RUST_CALLS: &str = r#"
@@ -524,6 +526,19 @@ fn helper() {}
         let call_names: Vec<_> = calls.iter().map(|c| c.name.as_str()).collect();
         assert!(call_names.contains(&"add"));
         assert!(call_names.contains(&"helper"));
+    }
+
+    #[test]
+    fn parse_rust_enum_variants_and_aliases() {
+        let src = r#"
+type Result<T> = std::result::Result<T, ()>;
+enum Command { DoSomething { arg: String } }
+"#;
+        let (defs, _) = parse_source(Lang::Rust, src).unwrap();
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Result"));
+        assert!(names.contains(&"Command"));
+        assert!(names.contains(&"DoSomething"));
     }
 
     #[test]

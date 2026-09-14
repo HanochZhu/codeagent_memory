@@ -2,3 +2,6 @@
 /.cam
 *.db
 .DS_Store
+eval/longmemcode/corpora/
+eval/longmemcode/results/
+eval/coding_life/results/

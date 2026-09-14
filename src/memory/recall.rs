@@ -127,7 +127,9 @@ pub fn recall(
         });
         if let Ok(rows) = rows {
             for row in rows {
-                let (id, bm25) = row?;
+                let Ok((id, bm25)) = row else {
+                    continue;
+                };
                 // FTS5 bm25 is lower (more negative) is better.
                 raw.push(RawHit {
                     id,
