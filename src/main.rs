@@ -2,8 +2,11 @@ use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
-use cam::code::{index_project, ls, read, refs, RefDir};
+use anyhow::{bail, Context, Result};
+use cam::code::{
+    clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, RefDir,
+    DEFAULT_DEBOUNCE_MS,
+};
 use cam::memory::{
     add_solution, format_tree, show_solution, solution_tree, Embedder, HashEmbedder,
     Model2VecEmbedder,
@@ -32,6 +35,15 @@ enum Command {
     Init { path: Option<PathBuf> },
     /// Parse the project with tree-sitter into SQLite
     Index { path: Option<PathBuf> },
+    /// Incrementally update the graph for files that changed
+    Sync { path: Option<PathBuf> },
+    /// Watch the project and update the graph when files change
+    Watch {
+        path: Option<PathBuf>,
+        /// Quiet window in ms after the last relevant event (default 2000)
+        #[arg(long, default_value_t = DEFAULT_DEBOUNCE_MS)]
+        debounce_ms: u64,
+    },
     /// List the indexed graph as a virtual filesystem
     Ls { virt_path: Option<String> },
     /// Read a file outline or a symbol body
@@ -81,7 +93,7 @@ enum MemCmd {
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("error: {err}");
+        eprintln!("error: {err:#}");
         std::process::exit(1);
     }
 }
@@ -114,6 +126,46 @@ fn run() -> Result<()> {
                     report.files, report.nodes, report.edges, report.skipped
                 ));
             }
+        }
+        Command::Sync { path } => {
+            let project = resolve(cli.path.as_deref().or(path.as_deref()))?;
+            project.ensure_initialized()?;
+            let report = sync_project(&project)?;
+            if cli.json {
+                emit_json(&report)?;
+            } else {
+                emit_text(format_sync(&report));
+            }
+        }
+        Command::Watch { path, debounce_ms } => {
+            let project = resolve(cli.path.as_deref().or(path.as_deref()))?;
+            project.ensure_initialized()?;
+            let debounce_ms = clamp_debounce_ms(debounce_ms);
+            if !cli.json {
+                emit_text(format!(
+                    "watching {} (debounce {debounce_ms}ms)",
+                    project.root.display()
+                ));
+            }
+            let mut first = true;
+            watch_project(
+                &project,
+                std::time::Duration::from_millis(debounce_ms),
+                None,
+                |report| {
+                    let changed =
+                        report.files_added + report.files_modified + report.files_removed;
+                    if !first && changed == 0 {
+                        return;
+                    }
+                    first = false;
+                    if cli.json {
+                        let _ = emit_json(report);
+                    } else {
+                        emit_text(format_sync(report));
+                    }
+                },
+            )?;
         }
         Command::Ls { virt_path } => {
             let project = resolve(cli.path.as_deref())?;
@@ -262,8 +314,12 @@ fn load_embedder(hash: bool) -> Result<Box<dyn Embedder>> {
     if hash {
         return Ok(Box::new(HashEmbedder::default()));
     }
+    let require = std::env::var_os("CAM_REQUIRE_MODEL2VEC").is_some();
     match Model2VecEmbedder::load() {
         Ok(m) => Ok(Box::new(m)),
+        Err(err) if require => {
+            Err(err).context("CAM_REQUIRE_MODEL2VEC is set; refusing hash fallback")
+        }
         Err(err) => {
             eprintln!("warn: model2vec unavailable ({err}); falling back to hash embedder");
             Ok(Box::new(HashEmbedder::default()))
@@ -290,6 +346,19 @@ fn trim_body(body: &str, max: usize) -> String {
     }
     let clipped: String = body.chars().take(max).collect();
     format!("{clipped}…")
+}
+
+fn format_sync(report: &cam::code::SyncReport) -> String {
+    format!(
+        "synced +{} ~{} -{}  ({} files, {} nodes, {} edges, {}ms)",
+        report.files_added,
+        report.files_modified,
+        report.files_removed,
+        report.files_checked,
+        report.nodes,
+        report.edges,
+        report.duration_ms
+    )
 }
 
 #[derive(Serialize)]

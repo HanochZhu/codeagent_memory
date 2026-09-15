@@ -116,3 +116,137 @@ fn index_ls_read_ref() {
     assert!(names.contains(&"add"));
     assert!(names.contains(&"helper"));
 }
+
+#[test]
+fn sync_updates_changed_added_and_removed_files() {
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+
+    let status = Command::new(cam_bin())
+        .args(["--json", "--path"])
+        .arg(dir.path())
+        .arg("init")
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let index = Command::new(cam_bin())
+        .args(["--json", "--path"])
+        .arg(dir.path())
+        .arg("index")
+        .output()
+        .unwrap();
+    assert!(index.status.success(), "{}", String::from_utf8_lossy(&index.stderr));
+
+    let noop = Command::new(cam_bin())
+        .args(["--json", "--path"])
+        .arg(dir.path())
+        .arg("sync")
+        .output()
+        .unwrap();
+    assert!(noop.status.success(), "{}", String::from_utf8_lossy(&noop.stderr));
+    let noop_report: serde_json::Value = serde_json::from_slice(&noop.stdout).unwrap();
+    assert_eq!(noop_report["files_added"], 0);
+    assert_eq!(noop_report["files_modified"], 0);
+    assert_eq!(noop_report["files_removed"], 0);
+
+    fs::write(
+        dir.path().join("src/lib.rs"),
+        r#"
+pub fn add(a: i32, b: i32) -> i32 { a + b }
+pub fn extra() { let _ = add(1, 2); }
+"#,
+    )
+    .unwrap();
+    fs::write(dir.path().join("src/new.rs"), "pub fn fresh() {}\n").unwrap();
+    fs::remove_file(dir.path().join("py/mod.py")).unwrap();
+
+    let sync = Command::new(cam_bin())
+        .args(["--json", "--path"])
+        .arg(dir.path())
+        .arg("sync")
+        .output()
+        .unwrap();
+    assert!(sync.status.success(), "{}", String::from_utf8_lossy(&sync.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&sync.stdout).unwrap();
+    assert_eq!(report["files_added"], 1, "{report}");
+    assert_eq!(report["files_modified"], 1, "{report}");
+    assert_eq!(report["files_removed"], 1, "{report}");
+
+    let ls = Command::new(cam_bin())
+        .args(["--json", "--path"])
+        .arg(dir.path())
+        .args(["ls", "src/lib.rs"])
+        .output()
+        .unwrap();
+    let entries: Vec<serde_json::Value> = serde_json::from_slice(&ls.stdout).unwrap();
+    let names: Vec<_> = entries
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(names.contains(&"extra"), "{entries:?}");
+    assert!(!names.contains(&"run"), "{entries:?}");
+
+    let ls_new = Command::new(cam_bin())
+        .args(["--json", "--path"])
+        .arg(dir.path())
+        .args(["ls", "src/new.rs"])
+        .output()
+        .unwrap();
+    let new_entries: Vec<serde_json::Value> = serde_json::from_slice(&ls_new.stdout).unwrap();
+    let new_names: Vec<_> = new_entries
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(new_names.contains(&"fresh"), "{new_entries:?}");
+}
+
+#[test]
+fn watch_updates_graph_on_file_change() {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use cam::code::{index_project, ls, watch_project};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    index_project(&project).unwrap();
+
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let watched = project.clone();
+    let handle = thread::spawn(move || {
+        watch_project(
+            &watched,
+            Duration::from_millis(120),
+            Some(&stop_rx),
+            |report| {
+                if report.files_modified + report.files_added > 0 {
+                    let _ = done_tx.send(());
+                }
+            },
+        )
+    });
+
+    thread::sleep(Duration::from_millis(400));
+    fs::write(
+        dir.path().join("src/lib.rs"),
+        r#"
+pub fn add(a: i32, b: i32) -> i32 { a + b }
+pub fn extra() {}
+"#,
+    )
+    .unwrap();
+
+    let synced = done_rx.recv_timeout(Duration::from_secs(8));
+    let _ = stop_tx.send(());
+    handle.join().unwrap().expect("watch_project");
+    assert!(synced.is_ok(), "watcher did not sync after source change");
+
+    let entries = ls(&project, Some("src/lib.rs")).unwrap();
+    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"extra"), "{names:?}");
+}

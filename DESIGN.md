@@ -8,7 +8,9 @@
 
 用 tree-sitter 把项目解析成图，存在项目内 SQLite（`.cam/cam.db`）。读代码走虚拟文件系统，而不是整文件乱扫。
 
-- `cam index`：解析 Rust / Python / TypeScript / JavaScript / Go
+- `cam index`：解析 Rust / Python / TypeScript / JavaScript / Go（全量重建）
+- `cam sync`：按内容哈希增量更新图
+- `cam watch`：监听源文件变化，debounce 后自动 `sync`
 - `cam ls [path]`：目录 / 文件 / 符号
 - `cam read <path>`：文件大纲，或符号源码切片（`--full` 才整文件）
 - `cam ref <symbol> --dir in|out`：一跳 callers / callees（多跳 hops 第一版不做）
@@ -42,6 +44,7 @@
 ```text
 cam init
 cam index
+cam watch
 cam ls src/
 cam read src/memory/recall.rs/fuse_scores
 cam ref fuse_scores --dir in

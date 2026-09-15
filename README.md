@@ -93,7 +93,7 @@ cam init
 cam index
 ```
 
-<sub>`cam init` creates `.cam/` and registers the project. `cam index` parses the tree with tree-sitter into `.cam/cam.db`. These are two steps on purpose: init is cheap, index is the work.</sub>
+<sub>`cam init` creates `.cam/` and registers the project. `cam index` parses the tree with tree-sitter into `.cam/cam.db`. These are two steps on purpose: init is cheap, index is the work. Leave `cam watch` running if you want the graph to follow later edits.</sub>
 
 ### 3. Ask the graph, then remember the answer
 
@@ -131,6 +131,7 @@ Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
 | | |
 |---|---|
 | **Code graph in SQLite** | tree-sitter parse into `.cam/cam.db` — list, read, and hop callers/callees without opening whole files |
+| **Live sync** | `cam watch` incrementally updates the graph when source files change |
 | **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
 | **Hybrid recall** | Vector + BM25, each min-max normalized to `[0,1]` then **summed** (not RRF) |
 | **Ebbinghaus retention** | `R = exp(-t / S)` is added to the recall score; stale and forgotten entries are flagged, never deleted |
@@ -181,6 +182,7 @@ Design notes (Chinese): [DESIGN.md](DESIGN.md).
 ```text
 cam init
 cam index
+cam watch
 cam ls src/
 cam read src/memory/recall.rs/fuse_scores
 cam ref fuse_scores --dir in
@@ -199,6 +201,8 @@ Global flags: `--json`, `--path <project>`. Without `--path`, `cam` walks up for
 ```bash
 cam init [path]                          # Create .cam/ and register the project
 cam index [path]                         # Parse the project with tree-sitter into SQLite
+cam sync [path]                          # Incrementally update the graph for changed files
+cam watch [path]                         # Watch source files and auto-sync after a quiet window
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
 cam ref <symbol> --dir in|out            # One-hop callers (in) or callees (out)
@@ -212,6 +216,8 @@ cam mem show <id>                        # Show one memory
 | --- | --- |
 | `cam init` | Create `.cam/` and register the project |
 | `cam index` | Parse with tree-sitter into SQLite (`.cam/cam.db`) |
+| `cam sync` | Incrementally update the graph from content hashes |
+| `cam watch` | Debounced file watcher that runs `sync` on source changes |
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees |
