@@ -42,6 +42,7 @@
 - [Supported Platforms](#supported-platforms)
 - [Supported Agents](#supported-agents)
 - [Supported Languages](#supported-languages)
+- [Benchmarks](#benchmarks)
 - [License](#license)
 
 ## Get Started
@@ -291,6 +292,54 @@ Paste the [one-sentence install](#get-started) into the agent, or run `cargo ins
 | TypeScript | `.ts`, `.tsx` | functions, methods, classes, calls |
 | JavaScript | `.js`, `.jsx` | functions, methods, classes, calls |
 | Go | `.go` | functions, methods, structs, calls |
+
+---
+
+## Benchmarks
+
+Three evals under `eval/`. Retrieval benches do not call an LLM. The multi-turn runner uses DeepSeek (`deepseek-flash`) and records `usage` tokens.
+
+### Solution recall — [coding-agent-life-v1](eval/coding_life/README.md)
+
+15 fictional coding-agent sessions, 15 queries (single-session, multi-session causal, preference, temporal). Hash embedder, 2026-09-15:
+
+| | |
+|---|---|
+| Hit rate | **15 / 15** |
+| R@5 | 0.933 |
+| P@5 | 0.213 (ceiling 0.240) |
+| p50 | 1.1 s |
+
+The two partial misses are the second gold session on `temporal` and `multi-session-causal`.
+
+### Code graph — [LongMemCode](eval/longmemcode/README.md)
+
+clap v4.6.1, 536 scenarios (2026-09-14, this tree):
+
+| slice | n | accuracy |
+|---|---:|---:|
+| supported (one-hop) | 478 | 0.769 |
+| deferred (impl / multi-hop) | 58 | 0.216 |
+| raw / weighted | 536 | 0.709 / **0.704** |
+
+P95 ≈ 6.5 ms, `$/1k` = 0. Callers 0.397, callees 0.811. Full per-op tables: [eval/longmemcode/README.md](eval/longmemcode/README.md).
+
+### Multi-turn accuracy and tokens — [eval/llm_multiturn](eval/llm_multiturn/README.md)
+
+Same DeepSeek conversation twice: dump every session / every `src/*.rs` file into the system prompt, or inject `cam recall` (plus `read` / `ref` on code) for the current turn only. History keeps Q&A, not retrieved blobs. Hash embedder, 2026-09-15:
+
+| track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
+|---|---:|---:|---:|---:|---:|---:|
+| solutions (coding-agent-life) | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
+| code (this repo after `cam index`) | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
+
+Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
+
+```bash
+python3 eval/coding_life/run.py --hash-embed
+python3 eval/llm_multiturn/run.py --track both   # needs DEEPSEEK_API_KEY
+python3 eval/longmemcode/run.py --corpus clap
+```
 
 ---
 

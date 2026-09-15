@@ -42,6 +42,7 @@
 - [支持的平台](#支持的平台)
 - [支持的 Agent](#支持的-agent)
 - [支持的语言](#支持的语言)
+- [评测](#评测)
 - [许可证](#许可证)
 
 ## 开始
@@ -285,6 +286,54 @@ stale_days = 30
 | TypeScript | `.ts`, `.tsx` | 函数、方法、类、调用 |
 | JavaScript | `.js`, `.jsx` | 函数、方法、类、调用 |
 | Go | `.go` | 函数、方法、struct、调用 |
+
+---
+
+## 评测
+
+`eval/` 下三套。检索评测不调 LLM。多轮评测用 DeepSeek（`deepseek-flash`），token 来自 API `usage`。
+
+### 解法召回 — [coding-agent-life-v1](eval/coding_life/README.md)
+
+15 段虚构 coding-agent 会话、15 条查询（单会话、跨会话因果、偏好、时间）。hash embedder，2026-09-15：
+
+| | |
+|---|---|
+| Hit rate | **15 / 15** |
+| R@5 | 0.933 |
+| P@5 | 0.213（天花板 0.240） |
+| p50 | 1.1 s |
+
+两处部分 miss 都是 `temporal` / `multi-session-causal` 的第二枚 gold。
+
+### 代码图 — [LongMemCode](eval/longmemcode/README.md)
+
+clap v4.6.1，536 条（2026-09-14，本树）：
+
+| 切片 | n | accuracy |
+|---|---:|---:|
+| supported（一跳） | 478 | 0.769 |
+| deferred（impl / 多跳） | 58 | 0.216 |
+| raw / weighted | 536 | 0.709 / **0.704** |
+
+P95 ≈ 6.5 ms，`$/1k` = 0。callers 0.397，callees 0.811。分操作表见 [eval/longmemcode/README.md](eval/longmemcode/README.md)。
+
+### 多轮正确率与 token — [eval/llm_multiturn](eval/llm_multiturn/README.md)
+
+同一段 DeepSeek 对话跑两遍：系统提示里塞进全部 session / 全部 `src/*.rs`，或每轮只注入当前的 `cam recall`（代码再加 `read` / `ref`）。历史只留问答，不把检索正文带入后续轮。hash embedder，2026-09-15：
+
+| 线 | n | full 正确率 | cam 正确率 | full token | cam token | 节省 |
+|---|---:|---:|---:|---:|---:|---:|
+| 解法（coding-agent-life） | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
+| 代码（本仓 `cam index`） | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
+
+平均每轮 prompt：解法 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
+
+```bash
+python3 eval/coding_life/run.py --hash-embed
+python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
+python3 eval/longmemcode/run.py --corpus clap
+```
 
 ---
 
