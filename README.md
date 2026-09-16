@@ -4,7 +4,7 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### Give Claude Code, Cursor, Codex, Windsurf, Copilot, and JetBrains a local memory they can query from the shell
+### Give code agent a local memory they can query from the shell
 
 **Code graph + solution recall · surgical reads · 100% local · no MCP**
 
