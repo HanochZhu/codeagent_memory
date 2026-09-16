@@ -33,6 +33,7 @@
 
 - [Get Started](#get-started)
 - [Why cam?](#why-cam)
+- [Benchmarks](#benchmarks)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
 - [Agent Workflow](#agent-workflow)
@@ -42,7 +43,6 @@
 - [Supported Platforms](#supported-platforms)
 - [Supported Agents](#supported-agents)
 - [Supported Languages](#supported-languages)
-- [Benchmarks](#benchmarks)
 - [License](#license)
 
 ## Get Started
@@ -124,6 +124,89 @@ When an AI agent needs to understand code — or reuse a fix it already found �
 Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
 
 > Agents talk to `cam` over the shell — no MCP. That is a product choice: one binary, same commands in every IDE, nothing to register in `mcp.json`.
+
+---
+
+## Benchmarks
+
+cam has two retrieval planes. Each is scored against the closest open system **on the same corpus**. Do not fold them into one number.
+
+| Plane | Closest analogue | Shared bench |
+|---|---|---|
+| Solution memory | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid search + tokenized **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
+| Code graph | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
+| Token cost | full context dump | [DeepSeek multi-turn](eval/llm_multiturn/README.md) |
+
+Mem0, Zep, and Letta are general chat memories. They are not on these two corpora, so they are not in the score tables.
+
+### How the systems differ
+
+| | **cam** | **agentmemory** | **codegraph** |
+|---|---|---|---|
+| What it stores | code graph + solution tree | session / chat memories | code graph |
+| Query | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
+| Interface | **shell only** | MCP + REST + hooks | MCP + CLI |
+| Fusion | vector + BM25 + **RRF** | BM25 + embed + rerank | FTS5 + graph walk |
+| Local / cost | 100% local, retrieval `$0` | local server | local |
+
+### Solution memory — coding-agent-life-v1
+
+15 sessions, 15 queries, k=5. Same formula as agentmemory `score.ts`. P@5 ceiling is 0.240.
+
+| system | Hit rate | R@5 | P@5 | source |
+|---|---|---:|---:|---|
+| grep (tokenized substring) | 15 / 15 | 0.967 | 0.227 | this tree, 2026-09-16 |
+| cam `--fusion sum` | 15 / 15 | 0.933 | 0.213 | this tree, hash embed |
+| **cam RRF** (default) | **15 / 15** | **1.000** | **0.240** | this tree, hash embed |
+| agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | published v0.9.26 |
+
+![coding-agent-life headline R@5 and P@5 / ceiling](eval/charts/solution-headline.svg)
+
+![coding-agent-life R@5 by question type](eval/charts/solution-recall.svg)
+
+RRF matches the published hybrid ceiling and beats grep on `temporal` (q-015). Min-max sum still drops the second gold on `temporal` and `multi-session-causal` (q-011).
+
+### Code graph — LongMemCode clap
+
+clap v4.6.1, 536 scenarios, no LLM. cam one-hop vs codegraph on the same SCIP gold.
+
+| slice | n | cam | codegraph |
+|---|---:|---:|---:|
+| supported (one-hop) | 478 | **0.769** | 0.769 |
+| lookup / file_symbols | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
+| callers / callees | 67 / 18 | **0.397** / **0.811** | 0.379 / 0.811 |
+| implementors | 40 | **0.119** | 0.094 |
+| raw / weighted | 536 | 0.709 / **0.704** | — / 0.702 |
+
+P95 ≈ 6.5 ms, `$/1k` = 0.
+
+![LongMemCode clap accuracy bars](eval/charts/code-graph-bars.svg)
+
+![LongMemCode clap accuracy by operation](eval/charts/code-graph.svg)
+
+### Multi-turn tokens — DeepSeek
+
+Same conversation twice: dump every session / every `src/*.rs` file, or inject `cam recall` (plus `read` / `ref` on code) for the current turn only. Hash embedder, 2026-09-15.
+
+| track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
+|---|---:|---:|---:|---:|---:|---:|
+| solutions (coding-agent-life) | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
+| code (this repo after `cam index`) | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
+
+![DeepSeek multi-turn prompt token bars](eval/charts/multiturn-bars.svg)
+
+![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
+
+Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
+
+```bash
+python3 eval/coding_life/run.py --adapter grep
+python3 eval/coding_life/run.py --hash-embed              # default RRF
+python3 eval/coding_life/run.py --hash-embed --fusion sum
+python3 eval/llm_multiturn/run.py --track both   # needs DEEPSEEK_API_KEY
+python3 eval/longmemcode/run.py --corpus clap
+python3 eval/charts/generate.py
+```
 
 ---
 
@@ -292,53 +375,6 @@ Paste the [one-sentence install](#get-started) into the agent, or run `cargo ins
 | TypeScript | `.ts`, `.tsx` | functions, methods, classes, calls |
 | JavaScript | `.js`, `.jsx` | functions, methods, classes, calls |
 | Go | `.go` | functions, methods, structs, calls |
-
----
-
-## Benchmarks
-
-Three evals under `eval/`. Retrieval benches do not call an LLM. The multi-turn runner uses DeepSeek (`deepseek-flash`) and records `usage` tokens.
-
-### Solution recall — [coding-agent-life-v1](eval/coding_life/README.md)
-
-15 fictional coding-agent sessions, 15 queries (single-session, multi-session causal, preference, temporal). Hash embedder, 2026-09-16:
-
-| fusion | Hit rate | R@5 | P@5 | p50 |
-|---|---|---:|---:|---:|
-| sum (min-max) | 15 / 15 | 0.933 | 0.213 | 1.4 s |
-| **rrf** (k=60, default) | **15 / 15** | **1.000** | **0.240** (ceiling) | 1.4 s |
-
-RRF recovers the second gold on `temporal` (q-015) and `multi-session-causal` (q-011), which min-max sum ranked below k=5.
-
-### Code graph — [LongMemCode](eval/longmemcode/README.md)
-
-clap v4.6.1, 536 scenarios (2026-09-14, this tree):
-
-| slice | n | accuracy |
-|---|---:|---:|
-| supported (one-hop) | 478 | 0.769 |
-| deferred (impl / multi-hop) | 58 | 0.216 |
-| raw / weighted | 536 | 0.709 / **0.704** |
-
-P95 ≈ 6.5 ms, `$/1k` = 0. Callers 0.397, callees 0.811. Full per-op tables: [eval/longmemcode/README.md](eval/longmemcode/README.md).
-
-### Multi-turn accuracy and tokens — [eval/llm_multiturn](eval/llm_multiturn/README.md)
-
-Same DeepSeek conversation twice: dump every session / every `src/*.rs` file into the system prompt, or inject `cam recall` (plus `read` / `ref` on code) for the current turn only. History keeps Q&A, not retrieved blobs. Hash embedder, 2026-09-15:
-
-| track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
-|---|---:|---:|---:|---:|---:|---:|
-| solutions (coding-agent-life) | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
-| code (this repo after `cam index`) | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
-
-Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
-
-```bash
-python3 eval/coding_life/run.py --hash-embed              # default RRF
-python3 eval/coding_life/run.py --hash-embed --fusion sum
-python3 eval/llm_multiturn/run.py --track both   # needs DEEPSEEK_API_KEY
-python3 eval/longmemcode/run.py --corpus clap
-```
 
 ---
 

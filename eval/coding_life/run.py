@@ -79,6 +79,22 @@ def score_question(gold: list[str], ranked: list[str], k: int) -> dict:
     }
 
 
+def tokenize_grep(text: str) -> list[str]:
+    return [t for t in re.sub(r"[^a-z0-9_]+", " ", text.lower()).split() if len(t) > 2]
+
+
+def grep_rank(question: str, sessions: list[dict], k: int) -> list[str]:
+    terms = tokenize_grep(question)
+    scored: list[tuple[str, int]] = []
+    for sess in sessions:
+        body = sess["content"].lower()
+        hits = sum(1 for t in terms if t in body)
+        if hits:
+            scored.append((sess["id"], hits))
+    scored.sort(key=lambda x: (-x[1], x[0]))
+    return [sid for sid, _ in scored[:k]]
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--data", type=Path, default=DEFAULT_DATA)
@@ -94,66 +110,86 @@ def main() -> int:
         default="rrf",
         help="solution score fusion: RRF k=60 (default) or min-max sum",
     )
+    p.add_argument(
+        "--adapter",
+        choices=("cam", "grep"),
+        default="cam",
+        help="cam recall (default) or tokenized-substring grep baseline",
+    )
     args = p.parse_args()
     sessions = json.loads((args.data / "sessions.json").read_text())
     queries = json.loads((args.data / "queries.json").read_text())
-    cam = cam_bin()
-    embed_flag = ["--hash-embed"] if args.hash_embed else []
-    env = os.environ.copy()
-    if not args.hash_embed:
-        env["CAM_REQUIRE_MODEL2VEC"] = "1"
 
-
-    with tempfile.TemporaryDirectory(prefix="cam-life-") as tmp:
-        root = Path(tmp)
-        cam_json(cam, root, ["init"], env=env)
-        for sess in sessions:
-            body = f"{sess['id']}\n{sess.get('timestamp') or ''}\n{sess['content']}"
-            summary = f"{sess['id']}: {sess['content'].splitlines()[0][:80]}"
-            cam_json(
-                cam,
-                root,
-                ["add", "--summary", summary, *embed_flag],
-                stdin=body,
-                env=env,
-            )
-
-        rows = []
+    rows = []
+    if args.adapter == "grep":
         for q in queries:
             t0 = time.perf_counter()
-            hits = cam_json(
-                cam,
-                root,
-                [
-                    "recall",
-                    q["question"],
-                    "--limit",
-                    str(args.k),
-                    "--fusion",
-                    args.fusion,
-                    *embed_flag,
-                ],
-                env=env,
-            )
+            ranked = grep_rank(q["question"], sessions, args.k)
             latency = (time.perf_counter() - t0) * 1000
-            ranked = [session_id_from_hit(h) or "" for h in hits]
             scored = score_question(q["goldSessionIds"], ranked, args.k)
-            scored.update(
-                {
-                    "id": q["id"],
-                    "type": q["type"],
-                    "latency_ms": latency,
-                }
-            )
+            scored.update({"id": q["id"], "type": q["type"], "latency_ms": latency})
             rows.append(scored)
+    else:
+        cam = cam_bin()
+        embed_flag = ["--hash-embed"] if args.hash_embed else []
+        env = os.environ.copy()
+        if not args.hash_embed:
+            env["CAM_REQUIRE_MODEL2VEC"] = "1"
+
+        with tempfile.TemporaryDirectory(prefix="cam-life-") as tmp:
+            root = Path(tmp)
+            cam_json(cam, root, ["init"], env=env)
+            for sess in sessions:
+                body = f"{sess['id']}\n{sess.get('timestamp') or ''}\n{sess['content']}"
+                summary = f"{sess['id']}: {sess['content'].splitlines()[0][:80]}"
+                cam_json(
+                    cam,
+                    root,
+                    ["add", "--summary", summary, *embed_flag],
+                    stdin=body,
+                    env=env,
+                )
+
+            for q in queries:
+                t0 = time.perf_counter()
+                hits = cam_json(
+                    cam,
+                    root,
+                    [
+                        "recall",
+                        q["question"],
+                        "--limit",
+                        str(args.k),
+                        "--fusion",
+                        args.fusion,
+                        *embed_flag,
+                    ],
+                    env=env,
+                )
+                latency = (time.perf_counter() - t0) * 1000
+                ranked = [session_id_from_hit(h) or "" for h in hits]
+                scored = score_question(q["goldSessionIds"], ranked, args.k)
+                scored.update(
+                    {
+                        "id": q["id"],
+                        "type": q["type"],
+                        "latency_ms": latency,
+                    }
+                )
+                rows.append(scored)
 
     n = len(rows)
     summary = {
         "n": n,
         "k": args.k,
+        "adapter": args.adapter,
         "hash_embed": args.hash_embed,
-        "embedder": "hash" if args.hash_embed else "potion-multilingual-128M",
-        "fusion": args.fusion,
+        "embedder": (
+            "n/a"
+            if args.adapter == "grep"
+            else ("hash" if args.hash_embed else "potion-multilingual-128M")
+        ),
+        "fusion": None if args.adapter == "grep" else args.fusion,
         "P@k": sum(r["precisionAtK"] for r in rows) / n,
         "R@k": sum(r["recallAtK"] for r in rows) / n,
         "hit_rate": sum(1 for r in rows if r["hit"]) / n,
@@ -178,7 +214,8 @@ def main() -> int:
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    (out_dir / f"cam-life-{stamp}.json").write_text(
+    tag = "grep" if args.adapter == "grep" else f"cam-{args.fusion}"
+    (out_dir / f"cam-life-{tag}-{stamp}.json").write_text(
         json.dumps({"summary": summary, "rows": rows}, indent=2)
     )
     print(json.dumps(summary, indent=2))

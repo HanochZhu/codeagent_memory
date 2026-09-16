@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="340" viewBox="0 0 560 340" role="img">
+<title>DeepSeek multi-turn · prompt tokens</title>
+<rect width="560" height="340" fill="#ffffff"/>
+<text x="64" y="22" fill="#0f172a" font-size="14" font-family="ui-sans-serif,system-ui,sans-serif" font-weight="600">DeepSeek multi-turn · prompt tokens</text>
+<line x1="64" y1="268.0" x2="544" y2="268.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="56" y="272.0" text-anchor="end" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">0</text>
+<line x1="64" y1="210.0" x2="544" y2="210.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="56" y="214.0" text-anchor="end" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">45,000</text>
+<line x1="64" y1="152.0" x2="544" y2="152.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="56" y="156.0" text-anchor="end" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">90,000</text>
+<line x1="64" y1="94.0" x2="544" y2="94.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="56" y="98.0" text-anchor="end" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">135,000</text>
+<line x1="64" y1="36.0" x2="544" y2="36.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="56" y="40.0" text-anchor="end" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">180,000</text>
+<text x="179.5" y="298" text-anchor="middle" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">solutions</text>
+<rect x="64.0" y="237.5" width="94.7" height="30.5" rx="2" fill="#94a3b8"/>
+<text x="111.4" y="233.5" text-anchor="middle" fill="#0f172a" font-size="10" font-family="ui-sans-serif,system-ui,sans-serif">23,673</text>
+<rect x="179.5" y="250.9" width="94.7" height="17.1" rx="2" fill="#2563eb"/>
+<text x="226.9" y="246.9" text-anchor="middle" fill="#0f172a" font-size="10" font-family="ui-sans-serif,system-ui,sans-serif">13,255</text>
+<text x="428.5" y="298" text-anchor="middle" fill="#64748b" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">code</text>
+<rect x="313.0" y="49.1" width="94.7" height="218.9" rx="2" fill="#94a3b8"/>
+<text x="360.4" y="45.1" text-anchor="middle" fill="#0f172a" font-size="10" font-family="ui-sans-serif,system-ui,sans-serif">169,838</text>
+<rect x="428.5" y="259.7" width="94.7" height="8.3" rx="2" fill="#2563eb"/>
+<text x="475.9" y="255.7" text-anchor="middle" fill="#0f172a" font-size="10" font-family="ui-sans-serif,system-ui,sans-serif">6,432</text>
+<rect x="64" y="317" width="10" height="10" rx="2" fill="#94a3b8"/>
+<text x="78" y="326" fill="#0f172a" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">full dump</text>
+<rect x="163" y="317" width="10" height="10" rx="2" fill="#2563eb"/>
+<text x="177" y="326" fill="#0f172a" font-size="11" font-family="ui-sans-serif,system-ui,sans-serif">cam retrieve</text>
+</svg>

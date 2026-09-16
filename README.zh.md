@@ -33,6 +33,7 @@
 
 - [开始](#开始)
 - [为什么需要 cam？](#为什么需要-cam)
+- [评测](#评测)
 - [能力](#能力)
 - [原理](#原理)
 - [Agent 怎么用](#agent-怎么用)
@@ -42,7 +43,6 @@
 - [支持的平台](#支持的平台)
 - [支持的 Agent](#支持的-agent)
 - [支持的语言](#支持的语言)
-- [评测](#评测)
 - [许可证](#许可证)
 
 ## 开始
@@ -124,6 +124,89 @@ Agent 理解代码、复用已经找到的解法时，通常靠 grep / glob / Re
 按符号读，而不是整文件扫。记忆落在本地磁盘，100% 本地。
 
 > Agent 只通过 shell 调 `cam`，不接 MCP。这是产品选择：一个二进制，所有 IDE 同一套命令，不用改 `mcp.json`。
+
+---
+
+## 评测
+
+cam 有两面检索。每一面只和**同一语料上最近的开源系统**比，不要合成一张总分。
+
+| 面 | 最近对照 | 共用基准 |
+|---|---|---|
+| 解法记忆 | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + 分词 **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
+| 代码图 | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
+| Token | 全文塞进上下文 | [DeepSeek 多轮](eval/llm_multiturn/README.md) |
+
+Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进分数表。
+
+### 机制对照
+
+| | **cam** | **agentmemory** | **codegraph** |
+|---|---|---|---|
+| 存什么 | 代码图 + 解法树 | 会话 / 聊天记忆 | 代码图 |
+| 怎么查 | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
+| 接入 | **只走 shell** | MCP + REST + hooks | MCP + CLI |
+| 融合 | 向量 + BM25 + **RRF** | BM25 + 向量 + rerank | FTS5 + 图遍历 |
+| 本地 / 费用 | 100% 本地，检索 `$0` | 本地 server | 本地 |
+
+### 解法记忆 — coding-agent-life-v1
+
+15 段会话、15 条查询、k=5。计分与 agentmemory `score.ts` 相同。P@5 天花板 0.240。
+
+| 系统 | Hit rate | R@5 | P@5 | 来源 |
+|---|---|---:|---:|---|
+| grep（分词子串） | 15 / 15 | 0.967 | 0.227 | 本树，2026-09-16 |
+| cam `--fusion sum` | 15 / 15 | 0.933 | 0.213 | 本树，hash embed |
+| **cam RRF**（默认） | **15 / 15** | **1.000** | **0.240** | 本树，hash embed |
+| agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | 已发表 v0.9.26 |
+
+![coding-agent-life 总览 R@5 与 P@5 / 天花板](eval/charts/solution-headline.svg)
+
+![coding-agent-life 各题型 R@5](eval/charts/solution-recall.svg)
+
+RRF 追平 hybrid 天花板，并在 `temporal`（q-015）上超过 grep。min-max 求和仍丢掉 `temporal` 和 `multi-session-causal`（q-011）的第二枚 gold。
+
+### 代码图 — LongMemCode clap
+
+clap v4.6.1，536 题，无 LLM。cam 一跳 vs codegraph，同一套 SCIP gold。
+
+| 切片 | n | cam | codegraph |
+|---|---:|---:|---:|
+| supported（一跳） | 478 | **0.769** | 0.769 |
+| lookup / file_symbols | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
+| callers / callees | 67 / 18 | **0.397** / **0.811** | 0.379 / 0.811 |
+| implementors | 40 | **0.119** | 0.094 |
+| raw / weighted | 536 | 0.709 / **0.704** | — / 0.702 |
+
+P95 ≈ 6.5 ms，`$/1k` = 0。
+
+![LongMemCode clap 正确率柱状图](eval/charts/code-graph-bars.svg)
+
+![LongMemCode clap 分操作正确率](eval/charts/code-graph.svg)
+
+### 多轮 token — DeepSeek
+
+同一段对话跑两遍：系统提示里塞进全部 session / 全部 `src/*.rs`，或每轮只注入 `cam recall`（代码再加 `read` / `ref`）。hash embedder，2026-09-15。
+
+| 线 | n | full 正确率 | cam 正确率 | full token | cam token | 节省 |
+|---|---:|---:|---:|---:|---:|---:|
+| 解法（coding-agent-life） | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
+| 代码（本仓 `cam index`） | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
+
+![DeepSeek 多轮 prompt token 柱状图](eval/charts/multiturn-bars.svg)
+
+![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
+
+平均每轮 prompt：解法 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
+
+```bash
+python3 eval/coding_life/run.py --adapter grep
+python3 eval/coding_life/run.py --hash-embed              # 默认 RRF
+python3 eval/coding_life/run.py --hash-embed --fusion sum
+python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
+python3 eval/longmemcode/run.py --corpus clap
+python3 eval/charts/generate.py
+```
 
 ---
 
@@ -286,53 +369,6 @@ stale_days = 30
 | TypeScript | `.ts`, `.tsx` | 函数、方法、类、调用 |
 | JavaScript | `.js`, `.jsx` | 函数、方法、类、调用 |
 | Go | `.go` | 函数、方法、struct、调用 |
-
----
-
-## 评测
-
-`eval/` 下三套。检索评测不调 LLM。多轮评测用 DeepSeek（`deepseek-flash`），token 来自 API `usage`。
-
-### 解法召回 — [coding-agent-life-v1](eval/coding_life/README.md)
-
-15 段虚构 coding-agent 会话、15 条查询（单会话、跨会话因果、偏好、时间）。hash embedder，2026-09-16：
-
-| fusion | Hit rate | R@5 | P@5 | p50 |
-|---|---|---:|---:|---:|
-| sum（min-max） | 15 / 15 | 0.933 | 0.213 | 1.4 s |
-| **rrf**（k=60，默认） | **15 / 15** | **1.000** | **0.240**（天花板） | 1.4 s |
-
-RRF 找回了 `temporal`（q-015）和 `multi-session-causal`（q-011）的第二枚 gold；min-max 求和把它们排在 k=5 之外。
-
-### 代码图 — [LongMemCode](eval/longmemcode/README.md)
-
-clap v4.6.1，536 条（2026-09-14，本树）：
-
-| 切片 | n | accuracy |
-|---|---:|---:|
-| supported（一跳） | 478 | 0.769 |
-| deferred（impl / 多跳） | 58 | 0.216 |
-| raw / weighted | 536 | 0.709 / **0.704** |
-
-P95 ≈ 6.5 ms，`$/1k` = 0。callers 0.397，callees 0.811。分操作表见 [eval/longmemcode/README.md](eval/longmemcode/README.md)。
-
-### 多轮正确率与 token — [eval/llm_multiturn](eval/llm_multiturn/README.md)
-
-同一段 DeepSeek 对话跑两遍：系统提示里塞进全部 session / 全部 `src/*.rs`，或每轮只注入当前的 `cam recall`（代码再加 `read` / `ref`）。历史只留问答，不把检索正文带入后续轮。hash embedder，2026-09-15：
-
-| 线 | n | full 正确率 | cam 正确率 | full token | cam token | 节省 |
-|---|---:|---:|---:|---:|---:|---:|
-| 解法（coding-agent-life） | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
-| 代码（本仓 `cam index`） | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
-
-平均每轮 prompt：解法 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
-
-```bash
-python3 eval/coding_life/run.py --hash-embed              # 默认 RRF
-python3 eval/coding_life/run.py --hash-embed --fusion sum
-python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
-python3 eval/longmemcode/run.py --corpus clap
-```
 
 ---
 
