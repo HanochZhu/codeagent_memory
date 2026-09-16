@@ -4,9 +4,9 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### 给 Claude Code、Cursor、Codex、Windsurf、Copilot、JetBrains 一套能从 shell 查询的本地记忆
+### 给 Claude Code、Cursor、Codex、Windsurf、Copilot、JetBrains 一套本地记忆 — 主 Agent 走 MCP，Subagent 走 CLI
 
-**代码图 + 记忆 · 按符号读代码 · 100% 本地 · 不接 MCP**
+**代码图 + 记忆 · 按符号读代码 · 100% 本地 · MCP + CLI**
 
 **内核用 Rust 写成**
 
@@ -45,6 +45,8 @@
 - [支持的语言](#支持的语言)
 - [许可证](#许可证)
 
+详细用法：[主 Agent 与 Subagent](docs/agents.zh.md) · [各 IDE 的 MCP 配置](docs/mcp.zh.md) · [English](docs/agents.md)
+
 ## 开始
 
 ### 1. 安装 CLI
@@ -60,7 +62,7 @@ cam --help
 <summary><b>或者把这段丢给 AI（Cursor、Claude Code、Copilot …）</b></summary>
 
 ```text
-请从 https://github.com/HanochZhu/codeagent_memory 安装 cam：先确认本机有 rustup/cargo，执行 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`，把 ~/.cargo/bin（Windows 为 %USERPROFILE%\.cargo\bin）加入 PATH，用 `cam --help` 验证。然后在当前仓库执行 `cam init` 和 `cam index`。不要额外新建文件。
+请从 https://github.com/HanochZhu/codeagent_memory 安装 cam：先确认本机有 rustup/cargo，执行 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`，把 ~/.cargo/bin（Windows 为 %USERPROFILE%\.cargo\bin）加入 PATH，用 `cam --help` 验证。然后在当前仓库执行 `cam init` 和 `cam index`。给主 Agent 注册 MCP stdio：command 为 `cam`，args 为 `["mcp"]`（Cursor：.cursor/mcp.json；Claude Code：.mcp.json）。Subagent 在 shell 里跑 `cam --json`。不要额外写说明文档。
 ```
 
 | 环境 | 怎么用这段话 |
@@ -106,7 +108,13 @@ cam recall "how does hybrid recall fuse BM25 and vectors"
 cam add --summary "..." < notes.md
 ```
 
-到这里就够了 — Agent **只走 shell**，不用配 MCP。输出默认尽量短；要结构化结果就加 `--json`。
+**主 Agent**（当前对话）：接一次 `cam mcp`，之后调 `cam_*` 工具。**Subagent**（Task / explore / 被委派的 CLI）：继续在 shell 里跑同一套命令。输出默认尽量短；要结构化结果就加 `--json`。
+
+```json
+{ "mcpServers": { "cam": { "command": "cam", "args": ["mcp"] } } }
+```
+
+贴到 Cursor 的 `.cursor/mcp.json`、Claude Code 的 `.mcp.json`，或宿主自己的 MCP 设置。分工具配置：[docs/mcp.zh.md](docs/mcp.zh.md)。谁走 MCP、谁走 CLI：[docs/agents.zh.md](docs/agents.zh.md)。
 
 首次 `recall` / `add` 会下载 `potion-multilingual-128M`。模型不可用时回退 hash embedder。
 
@@ -123,7 +131,7 @@ Agent 理解代码、复用已经记下的项目结论时，通常靠 grep / glo
 
 按符号读，而不是整文件扫。记忆落在本地磁盘，100% 本地。
 
-> Agent 只通过 shell 调 `cam`，不接 MCP。这是产品选择：一个二进制，所有 IDE 同一套命令，不用改 `mcp.json`。
+> 一个二进制，两扇门：**主 Agent** 走 MCP（`cam mcp`）；**Subagent** 通常没有 MCP，跑同一套 CLI。配置见 [docs/mcp.zh.md](docs/mcp.zh.md)，用法见 [docs/agents.zh.md](docs/agents.zh.md)。
 
 ---
 
@@ -145,7 +153,7 @@ Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进�
 |---|---|---|---|
 | 存什么 | 代码图 + 记忆树 | 会话 / 聊天记忆 | 代码图 |
 | 怎么查 | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
-| 接入 | **只走 shell** | MCP + REST + hooks | MCP + CLI |
+| 接入 | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
 | 融合 | 向量 + BM25 + **RRF** | BM25 + 向量 + rerank | FTS5 + 图遍历 |
 | 本地 / 费用 | 100% 本地，检索 `$0` | 本地 server | 本地 |
 
@@ -219,7 +227,7 @@ python3 eval/charts/generate.py
 | **多路召回** | 向量 + BM25，默认 **RRF**（k=60）；`--fusion sum` 仍是 min-max 后求和 |
 | **艾宾浩斯保留** | `R = exp(-t / S)` 加进召回分；过期和遗忘只打标，不删除 |
 | **记忆树** | `add` 追加节点（可挂 `--parent`）；旧条目留在树上 |
-| **只走 shell** | 不接 MCP。Cursor、Claude Code、Copilot、JetBrains 跑同一条 CLI |
+| **MCP + CLI** | 主 Agent：`cam_*` 工具。Subagent：`cam --json …`。同一个二进制 |
 | **100% 本地** | 无 API key。SQLite + 可选的本地向量模型（`~/.cam/models/`） |
 | **5 种语言** | Rust、Python、TypeScript、JavaScript、Go |
 
@@ -232,7 +240,7 @@ python3 eval/charts/generate.py
 │                     Cursor / Claude Code / …                      │
 │                                                                   │
 │   「BM25 和向量的多路召回以前做过吗？」                             │
-│       在 shell 里跑 `cam recall "..."` — 不接 MCP                  │
+│       主 Agent：MCP cam_recall     Subagent：cam recall            │
 │                                 │                                 │
 └─────────────────────────────────┬─────────────────────────────────┘
                                   │
@@ -262,19 +270,23 @@ python3 eval/charts/generate.py
 
 探索仓库前先 `recall`；没有命中再读代码图；有需要长期留下的结论再 `add`。
 
+**主 Agent（MCP）：** `cam_recall` → `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。MCP 可用时不要开 shell。全文：[docs/agents.zh.md](docs/agents.zh.md)。
+
+**Subagent（CLI）：**
+
 ```text
-cam init
-cam index
-cam ls src/
-cam read src/memory/recall.rs/fuse_scores
-cam ref fuse_scores --dir in
-cam recall "如何做 BM25 和向量的多路召回"
-cam add --summary "..." --parent <id>
-cam mem tree
-cam mem show <id>
+cam --json init
+cam --json index
+cam --json ls src/
+cam --json read src/memory/recall.rs/fuse_scores
+cam --json ref fuse_scores --dir in
+cam --json recall "如何做 BM25 和向量的多路召回"
+cam --json add --summary "..." --parent <id>
+cam --json mem tree
+cam --json mem show <id>
 ```
 
-全局参数：`--json`、`--path <project>`。未指定 `--path` 时向上查找 `.cam` 或 `.git`。
+全局参数：`--json`、`--path <project>`。未指定 `--path` 时向上查找 `.cam` 或 `.git`。MCP 服务：`cam mcp`（可加 `--path`）。
 
 ---
 
@@ -290,6 +302,7 @@ cam recall "<query>" [--limit N] [--fusion rrf|sum]  # 多路召回：向量 + B
 cam add --summary "..." [--parent ID] [--file PATH]   # 写入记忆（正文：stdin 或 --file）
 cam mem tree                             # 打印记忆树
 cam mem show <id>                        # 查看一条记忆
+cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 ```
 
 | 命令 | 作用 |
@@ -302,6 +315,7 @@ cam mem show <id>                        # 查看一条记忆
 | `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和 |
 | `cam add --summary "..." [--parent ID]` | 写入记忆（正文来自 stdin 或 `--file`） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
+| `cam mcp` | stdio MCP 服务（主 Agent）。见 [docs/mcp.zh.md](docs/mcp.zh.md) |
 
 虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。
 
@@ -346,17 +360,21 @@ stale_days = 30
 
 ## 支持的 Agent
 
-`cam` 是 shell CLI。能跑终端命令的 Agent 都能用，不用注册任何东西：
+**主 Agent：** 注册 `cam mcp`（stdio）。**Subagent：** 同一套 CLI，不用再配。
 
-- **Claude Code**
-- **Cursor**
-- **Codex**
-- **Windsurf**
-- **GitHub Copilot**（VS Code Chat、Copilot CLI）
-- **Continue** / **Cline**
-- **JetBrains AI Assistant**（IntelliJ / RustRover / GoLand）
+| 宿主 | MCP 配置 | 说明 |
+| --- | --- | --- |
+| Cursor | `.cursor/mcp.json` 或 `~/.cursor/mcp.json` | Task / explore 走 CLI |
+| Claude Code | `.mcp.json` / `~/.claude.json` / `claude mcp add` | 工具被裁过的 subagent 走 CLI |
+| Codex | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` 走 CLI |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | Cascade = MCP |
+| GitHub Copilot | `.vscode/mcp.json` / `~/.copilot/mcp-config.json` | Chat = MCP；脚本 = CLI |
+| Continue | `~/.continue/config.yaml` | |
+| Cline | `~/.cline/mcp.json` | |
+| JetBrains | AI Assistant → MCP | PATH 为空时写 `cam.exe` 绝对路径 |
+| Gemini CLI / Antigravity / OpenCode / Zed / Droid | 见 [docs/mcp.zh.md](docs/mcp.zh.md) | |
 
-把 [一句话安装](#开始) 贴给 Agent，或自己跑 `cargo install`。
+把 [一句话安装](#开始) 贴给 Agent，再补上 MCP 配置。分工具文件：[docs/mcp.zh.md](docs/mcp.zh.md)。提示词：[docs/agents.zh.md](docs/agents.zh.md)。
 
 ---
 

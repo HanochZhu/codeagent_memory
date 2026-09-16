@@ -1,6 +1,8 @@
 # 设计
 
-面向 CodeAgent 的记忆模块，用来减少多轮对话里的 token 消耗。同一段代码、同一条已经记下的结论，不该被反复读、反复想。本仓库提供 CLI `cam`：管理项目、代码图和记忆。Agent 只通过 shell 调用，不做 MCP。
+面向 CodeAgent 的记忆模块，用来减少多轮对话里的 token 消耗。同一段代码、同一条已经记下的结论，不该被反复读、反复想。本仓库提供 CLI `cam`：管理项目、代码图和记忆。
+
+入口分开：**主 Agent 走 MCP**（`cam mcp`，stdio JSON-RPC，工具名 `cam_*`）；**Subagent 直接调 CLI**（`cam --json …`）。大多数宿主不会把 MCP 挂到 Task / explore / 被委派的子进程上。用法见 [docs/agents.zh.md](docs/agents.zh.md)，各 IDE 配置见 [docs/mcp.zh.md](docs/mcp.zh.md)。
 
 cam 有两面：
 
@@ -44,17 +46,23 @@ cam 有两面：
 
 # Agent 速查
 
+主 Agent（MCP）：`cam_recall` → `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。
+
+Subagent（CLI）：
+
 ```text
-cam init
-cam index
-cam watch
-cam ls src/
-cam read src/memory/recall.rs/fuse_scores
-cam ref fuse_scores --dir in
-cam recall "如何做 BM25 和向量的多路召回"
-cam add --summary "..." --parent <id>
-cam mem tree
-cam mem show <id>
+cam --json init
+cam --json index
+cam --json sync
+cam --json watch
+cam --json ls src/
+cam --json read src/memory/recall.rs/fuse_scores
+cam --json ref fuse_scores --dir in
+cam --json recall "如何做 BM25 和向量的多路召回"
+cam --json add --summary "..." --parent <id>
+cam --json mem tree
+cam --json mem show <id>
+cam mcp
 ```
 
-全局 `--json`、`--path <project>`。输出默认尽量短。
+全局 `--json`、`--path <project>`。输出默认尽量短。MCP 服务：`cam mcp`。

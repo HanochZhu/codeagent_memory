@@ -1,5 +1,13 @@
 # 文档索引
 
+## 使用 / 接入
+
+| topic | 文档 | 一句话 |
+|---|---|---|
+| agent | [agents.zh.md](agents.zh.md) | 主 Agent 走 MCP、Subagent 走 CLI 的分工与工作流 |
+| mcp | [mcp.zh.md](mcp.zh.md) | 各 IDE / 宿主的 MCP 配置 |
+| skill | [../.opencode/skill/cam/SKILL.md](../.opencode/skill/cam/SKILL.md) | opencode / Claude Code 的 cam skill |
+
 ## 探索
 
 | topic | 文档 | 一句话 |

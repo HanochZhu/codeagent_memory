@@ -4,9 +4,9 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### Give code agent a local memory they can query from the shell
+### Give code agent a local memory — MCP for the main agent, CLI for subagents
 
-**Code graph + memory · surgical reads · 100% local · no MCP**
+**Code graph + memory · surgical reads · 100% local · MCP + CLI**
 
 **Kernel written in Rust**
 
@@ -45,6 +45,8 @@
 - [Supported Languages](#supported-languages)
 - [License](#license)
 
+Usage details: [main agent vs subagent](docs/agents.md) · [MCP configs for each IDE](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+
 ## Get Started
 
 ### 1. Install the CLI
@@ -60,7 +62,7 @@ cam --help
 <summary><b>Paste this into an AI instead (Cursor, Claude Code, Copilot, …)</b></summary>
 
 ```text
-Install cam from https://github.com/HanochZhu/codeagent_memory: require a working Rust toolchain (rustup), run `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, ensure ~/.cargo/bin (or %USERPROFILE%\.cargo\bin on Windows) is on PATH, then verify with `cam --help`. In this repo run `cam init` and `cam index`. Do not add extra files.
+Install cam from https://github.com/HanochZhu/codeagent_memory: require a working Rust toolchain (rustup), run `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, ensure ~/.cargo/bin (or %USERPROFILE%\.cargo\bin on Windows) is on PATH, then verify with `cam --help`. In this repo run `cam init` and `cam index`. For the main agent, register MCP stdio: command `cam`, args `["mcp"]` (Cursor: .cursor/mcp.json; Claude Code: .mcp.json). Subagents call `cam --json` in the shell. Do not add extra docs.
 ```
 
 | Environment | How to use it |
@@ -106,7 +108,13 @@ cam recall "how does hybrid recall fuse BM25 and vectors"
 cam add --summary "..." < notes.md
 ```
 
-That's it — your agent talks to `cam` over the **shell only**. No MCP server to wire up. Output is compact by default; pass `--json` when you need structured results.
+**Main agent** (the chat session): wire `cam mcp` once, then call `cam_*` tools. **Subagent** (Task / explore / delegated CLI): run the same commands in the shell. Output is compact by default; pass `--json` when you need structured results.
+
+```json
+{ "mcpServers": { "cam": { "command": "cam", "args": ["mcp"] } } }
+```
+
+Paste that into Cursor `.cursor/mcp.json`, Claude Code `.mcp.json`, or the host's MCP settings. Per-tool files: [docs/mcp.md](docs/mcp.md). Who should call MCP vs CLI: [docs/agents.md](docs/agents.md).
 
 The first `recall` / `add` downloads `potion-multilingual-128M`. If the model is unavailable, `cam` falls back to a hash embedder.
 
@@ -123,7 +131,7 @@ When an AI agent needs to understand code — or reuse what it already learned a
 
 Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
 
-> Agents talk to `cam` over the shell — no MCP. That is a product choice: one binary, same commands in every IDE, nothing to register in `mcp.json`.
+> One binary, two doors: the **main agent** uses MCP (`cam mcp`); **subagents** usually have no MCP, so they run the same CLI. Configs: [docs/mcp.md](docs/mcp.md). Usage: [docs/agents.md](docs/agents.md).
 
 ---
 
@@ -145,7 +153,7 @@ Mem0, Zep, and Letta are general chat memories. They are not on these two corpor
 |---|---|---|---|
 | What it stores | code graph + memory tree | session / chat memories | code graph |
 | Query | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
-| Interface | **shell only** | MCP + REST + hooks | MCP + CLI |
+| Interface | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
 | Fusion | vector + BM25 + **RRF** | BM25 + embed + rerank | FTS5 + graph walk |
 | Local / cost | 100% local, retrieval `$0` | local server | local |
 
@@ -220,7 +228,7 @@ python3 eval/charts/generate.py
 | **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) by default; `--fusion sum` keeps min-max + sum |
 | **Ebbinghaus retention** | `R = exp(-t / S)` is added to the recall score; stale and forgotten entries are flagged, never deleted |
 | **Memory tree** | `add` appends a node (optionally `--parent`); the old entry stays on the tree |
-| **Shell-only** | No MCP. Cursor, Claude Code, Copilot, and JetBrains all run the same CLI |
+| **MCP + CLI** | Main agent: `cam_*` tools. Subagent: `cam --json …`. Same binary |
 | **100% local** | No API keys. SQLite + an optional on-disk embedding model under `~/.cam/models/` |
 | **5 languages** | Rust, Python, TypeScript, JavaScript, Go |
 
@@ -233,7 +241,7 @@ python3 eval/charts/generate.py
 │                     Cursor / Claude Code / …                      │
 │                                                                   │
 │   "Have we solved hybrid BM25 + vector recall before?"            │
-│       runs `cam recall "..."` in the shell — no MCP               │
+│       main agent: MCP cam_recall     subagent: cam recall         │
 │                                 │                                 │
 └─────────────────────────────────┬─────────────────────────────────┘
                                   │
@@ -263,20 +271,26 @@ Design notes (Chinese): [DESIGN.md](DESIGN.md).
 
 `recall` first. If nothing hits, walk the code graph. After you learn something worth keeping, `add`.
 
+**Main agent (MCP):** `cam_recall` → `cam_ls` / `cam_read` / `cam_ref` → `cam_add`. Do not shell out unless MCP is down. Full text: [docs/agents.md](docs/agents.md).
+
+**Subagent (CLI):**
+
 ```text
-cam init
-cam index
-cam watch
-cam ls src/
-cam read src/memory/recall.rs/fuse_scores
-cam ref fuse_scores --dir in
-cam recall "how to fuse BM25 and vector recall"
-cam add --summary "..." --parent <id>
-cam mem tree
-cam mem show <id>
+cam --json init
+cam --json index
+cam --json sync
+cam --json watch
+cam --json ls src/
+cam --json read src/memory/recall.rs/fuse_scores
+cam --json ref fuse_scores --dir in
+cam --json recall "how to fuse BM25 and vector recall"
+cam --json add --summary "..." --parent <id>
+cam --json mem tree
+cam --json mem show <id>
+cam mcp
 ```
 
-Global flags: `--json`, `--path <project>`. Without `--path`, `cam` walks up for `.cam` or `.git`.
+Global flags: `--json`, `--path <project>`. Without `--path`, `cam` walks up for `.cam` or `.git`. Start the MCP server with `cam mcp` (optional `--path`).
 
 ---
 
@@ -294,6 +308,7 @@ cam recall "<query>" [--limit N] [--fusion rrf|sum]  # Hybrid recall: vector + B
 cam add --summary "..." [--parent ID] [--file PATH]   # Store a memory (body: stdin or --file)
 cam mem tree                             # Print the memory tree
 cam mem show <id>                        # Show one memory
+cam mcp                                  # MCP stdio server for the main agent
 ```
 
 | Command | What it does |
@@ -308,6 +323,7 @@ cam mem show <id>                        # Show one memory
 | `cam recall "<one sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum |
 | `cam add --summary "..." [--parent ID]` | Store a memory (body from stdin or `--file`) |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
+| `cam mcp` | Stdio MCP server (main agent). See [docs/mcp.md](docs/mcp.md) |
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
 
@@ -352,17 +368,21 @@ See [Get Started](#get-started) for the full command.
 
 ## Supported Agents
 
-`cam` is a shell CLI. Any agent that can run a terminal command can use it — there is nothing to register:
+**Main agent:** register `cam mcp` (stdio). **Subagent:** same CLI, no extra wiring.
 
-- **Claude Code**
-- **Cursor**
-- **Codex**
-- **Windsurf**
-- **GitHub Copilot** (VS Code Chat, Copilot CLI)
-- **Continue** / **Cline**
-- **JetBrains AI Assistant** (IntelliJ / RustRover / GoLand)
+| Host | MCP config | Notes |
+| --- | --- | --- |
+| Cursor | `.cursor/mcp.json` or `~/.cursor/mcp.json` | Task / explore subagents use CLI |
+| Claude Code | `.mcp.json` / `~/.claude.json` / `claude mcp add` | Limited-tool subagents use CLI |
+| Codex | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` uses CLI |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | Cascade = MCP |
+| GitHub Copilot | `.vscode/mcp.json` / `~/.copilot/mcp-config.json` | Chat = MCP; CLI scripts = CLI |
+| Continue | `~/.continue/config.yaml` | |
+| Cline | `~/.cline/mcp.json` | |
+| JetBrains | AI Assistant → MCP | Use an absolute `cam.exe` if PATH is empty |
+| Gemini CLI / Antigravity / OpenCode / Zed / Droid | see [docs/mcp.md](docs/mcp.md) | |
 
-Paste the [one-sentence install](#get-started) into the agent, or run `cargo install` yourself.
+Paste the [one-sentence install](#get-started) into the agent, then add the MCP block. Copy-paste files: [docs/mcp.md](docs/mcp.md). Agent prompts: [docs/agents.md](docs/agents.md).
 
 ---
 
