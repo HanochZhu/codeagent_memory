@@ -36,7 +36,13 @@ def cam_bin() -> Path:
     return debug
 
 
-def cam_json(cam: Path, root: Path, args: list[str], stdin: str | None = None) -> dict | list:
+def cam_json(
+    cam: Path,
+    root: Path,
+    args: list[str],
+    stdin: str | None = None,
+    env: dict | None = None,
+) -> dict | list:
     cmd = [str(cam), "--json", "--path", str(root), *args]
     proc = subprocess.run(
         cmd,
@@ -45,6 +51,7 @@ def cam_json(cam: Path, root: Path, args: list[str], stdin: str | None = None) -
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)}\n{proc.stderr}")
@@ -81,15 +88,25 @@ def main() -> int:
         action="store_true",
         help="use the test hash embedder (no model2vec download)",
     )
+    p.add_argument(
+        "--fusion",
+        choices=("sum", "rrf"),
+        default="rrf",
+        help="solution score fusion: RRF k=60 (default) or min-max sum",
+    )
     args = p.parse_args()
     sessions = json.loads((args.data / "sessions.json").read_text())
     queries = json.loads((args.data / "queries.json").read_text())
     cam = cam_bin()
     embed_flag = ["--hash-embed"] if args.hash_embed else []
+    env = os.environ.copy()
+    if not args.hash_embed:
+        env["CAM_REQUIRE_MODEL2VEC"] = "1"
+
 
     with tempfile.TemporaryDirectory(prefix="cam-life-") as tmp:
         root = Path(tmp)
-        cam_json(cam, root, ["init"])
+        cam_json(cam, root, ["init"], env=env)
         for sess in sessions:
             body = f"{sess['id']}\n{sess.get('timestamp') or ''}\n{sess['content']}"
             summary = f"{sess['id']}: {sess['content'].splitlines()[0][:80]}"
@@ -98,6 +115,7 @@ def main() -> int:
                 root,
                 ["add", "--summary", summary, *embed_flag],
                 stdin=body,
+                env=env,
             )
 
         rows = []
@@ -106,7 +124,16 @@ def main() -> int:
             hits = cam_json(
                 cam,
                 root,
-                ["recall", q["question"], "--limit", str(args.k), *embed_flag],
+                [
+                    "recall",
+                    q["question"],
+                    "--limit",
+                    str(args.k),
+                    "--fusion",
+                    args.fusion,
+                    *embed_flag,
+                ],
+                env=env,
             )
             latency = (time.perf_counter() - t0) * 1000
             ranked = [session_id_from_hit(h) or "" for h in hits]
@@ -125,6 +152,8 @@ def main() -> int:
         "n": n,
         "k": args.k,
         "hash_embed": args.hash_embed,
+        "embedder": "hash" if args.hash_embed else "potion-multilingual-128M",
+        "fusion": args.fusion,
         "P@k": sum(r["precisionAtK"] for r in rows) / n,
         "R@k": sum(r["recallAtK"] for r in rows) / n,
         "hit_rate": sum(1 for r in rows if r["hit"]) / n,
@@ -132,6 +161,7 @@ def main() -> int:
         "ceiling_P@5": 0.240,
         "by_type": {},
         "misses": [r["id"] for r in rows if not r["hit"]],
+        "partial_misses": [r["id"] for r in rows if r["recallAtK"] < 1.0],
     }
     by: dict[str, list] = {}
     for r in rows:

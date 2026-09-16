@@ -134,7 +134,7 @@ Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
 | **Code graph in SQLite** | tree-sitter parse into `.cam/cam.db` — list, read, and hop callers/callees without opening whole files |
 | **Live sync** | `cam watch` incrementally updates the graph when source files change |
 | **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
-| **Hybrid recall** | Vector + BM25, each min-max normalized to `[0,1]` then **summed** (not RRF) |
+| **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) by default; `--fusion sum` keeps min-max + sum |
 | **Ebbinghaus retention** | `R = exp(-t / S)` is added to the recall score; stale and forgotten entries are flagged, never deleted |
 | **Solution tree** | `add` appends a node (optionally `--parent`); the old write-up stays on the tree |
 | **Shell-only** | No MCP. Cursor, Claude Code, Copilot, and JetBrains all run the same CLI |
@@ -169,7 +169,7 @@ Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
 
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
-3. **Recall** — `recall` embeds the query, runs BM25 (jieba first for Chinese), min-max normalizes each score, and **sums** them. Retention `R` is added on top.
+3. **Recall** — `recall` embeds the query, runs BM25 (jieba first for Chinese), and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. Retention `R` is added on top.
 4. **Write-back** — after the agent solves something, `add` stores summary + body. Same path, newer node wins as `latest`.
 
 Design notes (Chinese): [DESIGN.md](DESIGN.md).
@@ -207,7 +207,7 @@ cam watch [path]                         # Watch source files and auto-sync afte
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
 cam ref <symbol> --dir in|out            # One-hop callers (in) or callees (out)
-cam recall "<query>" [--limit N]         # Hybrid recall: vector + BM25, scores summed
+cam recall "<query>" [--limit N] [--fusion rrf|sum]  # Hybrid recall: vector + BM25, RRF by default
 cam add --summary "..." [--parent ID] [--file PATH]   # Store a solution (body: stdin or --file)
 cam mem tree                             # Print the solution tree
 cam mem show <id>                        # Show one memory
@@ -222,7 +222,7 @@ cam mem show <id>                        # Show one memory
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees |
-| `cam recall "<one sentence>"` | Vector + BM25; scores are min-max normalized then **summed** |
+| `cam recall "<one sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum |
 | `cam add --summary "..." [--parent ID]` | Store a solution (body from stdin or `--file`) |
 | `cam mem tree` / `cam mem show <id>` | Browse the solution tree |
 
@@ -301,16 +301,14 @@ Three evals under `eval/`. Retrieval benches do not call an LLM. The multi-turn 
 
 ### Solution recall — [coding-agent-life-v1](eval/coding_life/README.md)
 
-15 fictional coding-agent sessions, 15 queries (single-session, multi-session causal, preference, temporal). Hash embedder, 2026-09-15:
+15 fictional coding-agent sessions, 15 queries (single-session, multi-session causal, preference, temporal). Hash embedder, 2026-09-16:
 
-| | |
-|---|---|
-| Hit rate | **15 / 15** |
-| R@5 | 0.933 |
-| P@5 | 0.213 (ceiling 0.240) |
-| p50 | 1.1 s |
+| fusion | Hit rate | R@5 | P@5 | p50 |
+|---|---|---:|---:|---:|
+| sum (min-max) | 15 / 15 | 0.933 | 0.213 | 1.4 s |
+| **rrf** (k=60, default) | **15 / 15** | **1.000** | **0.240** (ceiling) | 1.4 s |
 
-The two partial misses are the second gold session on `temporal` and `multi-session-causal`.
+RRF recovers the second gold on `temporal` (q-015) and `multi-session-causal` (q-011), which min-max sum ranked below k=5.
 
 ### Code graph — [LongMemCode](eval/longmemcode/README.md)
 
@@ -336,7 +334,8 @@ Same DeepSeek conversation twice: dump every session / every `src/*.rs` file int
 Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
 
 ```bash
-python3 eval/coding_life/run.py --hash-embed
+python3 eval/coding_life/run.py --hash-embed              # default RRF
+python3 eval/coding_life/run.py --hash-embed --fusion sum
 python3 eval/llm_multiturn/run.py --track both   # needs DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 ```

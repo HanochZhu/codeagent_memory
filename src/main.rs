@@ -8,7 +8,7 @@ use cam::code::{
     DEFAULT_DEBOUNCE_MS,
 };
 use cam::memory::{
-    add_solution, format_tree, show_solution, solution_tree, Embedder, HashEmbedder,
+    add_solution, format_tree, show_solution, solution_tree, Embedder, Fusion, HashEmbedder,
     Model2VecEmbedder,
 };
 use cam::output::{emit_json, emit_text};
@@ -58,11 +58,14 @@ enum Command {
         #[arg(long, value_enum)]
         dir: RefDir,
     },
-    /// Hybrid recall: vector + BM25, scores summed
+    /// Hybrid recall: vector + BM25, fused with min-max sum or RRF
     Recall {
         query: String,
         #[arg(long, default_value_t = 3)]
         limit: usize,
+        /// Score fusion: RRF (default) or min-max sum
+        #[arg(long, value_enum, default_value_t = Fusion::Rrf)]
+        fusion: Fusion,
         /// Skip model2vec and use the test hash embedder
         #[arg(long, hide = true)]
         hash_embed: bool,
@@ -212,11 +215,12 @@ fn run() -> Result<()> {
         Command::Recall {
             query,
             limit,
+            fusion,
             hash_embed,
         } => {
             let project = resolve(cli.path.as_deref())?;
             let embedder = load_embedder(hash_embed)?;
-            let hits = cam::memory::recall(&project, embedder.as_ref(), &query, limit)?;
+            let hits = cam::memory::recall(&project, embedder.as_ref(), &query, limit, fusion)?;
             if cli.json {
                 emit_json(&hits)?;
             } else if hits.is_empty() {

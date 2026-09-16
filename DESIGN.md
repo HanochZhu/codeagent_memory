@@ -21,7 +21,7 @@
 
 树状记忆，多路召回。探索项目前先 `recall`；没有命中再搜代码，搜到后 `add`。
 
-- `cam recall "<一句话>"`：向量 + BM25，两路分数各自 min-max 到 `[0,1]` 后**求和**（不是 RRF）
+- `cam recall "<一句话>"`：向量 + BM25，默认 **RRF**（k=60；分数乘以 k+1，使单路第一名=1、双路第一名=2）。`--fusion sum` 则两路 min-max 到 `[0,1]` 后求和
 - `cam add --summary "..." [--parent ID]`：必须提供全文（stdin / `--file`）和摘要
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新
 

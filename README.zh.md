@@ -133,7 +133,7 @@ Agent 理解代码、复用已经找到的解法时，通常靠 grep / glob / Re
 |---|---|
 | **SQLite 代码图** | tree-sitter 解析进 `.cam/cam.db` — 列目录、读符号、跳 callers/callees，不必打开整文件 |
 | **虚拟路径** | `src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号 |
-| **多路召回** | 向量 + BM25，各自 min-max 到 `[0,1]` 后**求和**（不是 RRF） |
+| **多路召回** | 向量 + BM25，默认 **RRF**（k=60）；`--fusion sum` 仍是 min-max 后求和 |
 | **艾宾浩斯保留** | `R = exp(-t / S)` 加进召回分；过期和遗忘只打标，不删除 |
 | **解法树** | `add` 追加节点（可挂 `--parent`）；旧说明留在树上 |
 | **只走 shell** | 不接 MCP。Cursor、Claude Code、Copilot、JetBrains 跑同一条 CLI |
@@ -168,7 +168,7 @@ Agent 理解代码、复用已经找到的解法时，通常靠 grep / glob / Re
 
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
-3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），两路分数各自归一后**求和**，再加上保留率 `R`。
+3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），两路排序用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。再加上保留率 `R`。
 4. **写回** — Agent 解完后 `add` 存摘要和正文。同一路径上新节点标 `latest`。
 
 设计细节见 [DESIGN.md](DESIGN.md)。
@@ -203,7 +203,7 @@ cam index [path]                         # tree-sitter 解析进 SQLite
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
 cam ref <symbol> --dir in|out            # 一跳 callers (in) 或 callees (out)
-cam recall "<query>" [--limit N]         # 多路召回：向量 + BM25，分数求和
+cam recall "<query>" [--limit N] [--fusion rrf|sum]  # 多路召回：向量 + BM25，默认 RRF
 cam add --summary "..." [--parent ID] [--file PATH]   # 写入解法（正文：stdin 或 --file）
 cam mem tree                             # 打印解法树
 cam mem show <id>                        # 查看一条记忆
@@ -216,7 +216,7 @@ cam mem show <id>                        # 查看一条记忆
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees |
-| `cam recall "<一句话>"` | 向量 + BM25，分数各自归一后**求和** |
+| `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和 |
 | `cam add --summary "..." [--parent ID]` | 写入解法（正文来自 stdin 或 `--file`） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
 
@@ -295,16 +295,14 @@ stale_days = 30
 
 ### 解法召回 — [coding-agent-life-v1](eval/coding_life/README.md)
 
-15 段虚构 coding-agent 会话、15 条查询（单会话、跨会话因果、偏好、时间）。hash embedder，2026-09-15：
+15 段虚构 coding-agent 会话、15 条查询（单会话、跨会话因果、偏好、时间）。hash embedder，2026-09-16：
 
-| | |
-|---|---|
-| Hit rate | **15 / 15** |
-| R@5 | 0.933 |
-| P@5 | 0.213（天花板 0.240） |
-| p50 | 1.1 s |
+| fusion | Hit rate | R@5 | P@5 | p50 |
+|---|---|---:|---:|---:|
+| sum（min-max） | 15 / 15 | 0.933 | 0.213 | 1.4 s |
+| **rrf**（k=60，默认） | **15 / 15** | **1.000** | **0.240**（天花板） | 1.4 s |
 
-两处部分 miss 都是 `temporal` / `multi-session-causal` 的第二枚 gold。
+RRF 找回了 `temporal`（q-015）和 `multi-session-causal`（q-011）的第二枚 gold；min-max 求和把它们排在 k=5 之外。
 
 ### 代码图 — [LongMemCode](eval/longmemcode/README.md)
 
@@ -330,7 +328,8 @@ P95 ≈ 6.5 ms，`$/1k` = 0。callers 0.397，callees 0.811。分操作表见 [e
 平均每轮 prompt：解法 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
 
 ```bash
-python3 eval/coding_life/run.py --hash-embed
+python3 eval/coding_life/run.py --hash-embed              # 默认 RRF
+python3 eval/coding_life/run.py --hash-embed --fusion sum
 python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 ```
