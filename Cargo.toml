@@ -2,7 +2,7 @@
 name = "cam"
 version = "0.1.0"
 edition = "2021"
-description = "CodeAgent memory: code graph + solution recall (CLI + MCP)"
+description = "CodeAgent memory: code graph + memory (CLI + MCP)"
 license = "MIT"
 default-run = "cam"
 

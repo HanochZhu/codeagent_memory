@@ -4,9 +4,9 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### Give Claude Code, Cursor, Codex, Windsurf, Copilot, and JetBrains a local memory — MCP for the main agent, CLI for subagents
+### Give code agent a local memory — MCP for the main agent, CLI for subagents
 
-**Code graph + solution recall · surgical reads · 100% local · MCP + CLI**
+**Code graph + memory · surgical reads · 100% local · MCP + CLI**
 
 **Kernel written in Rust**
 
@@ -122,12 +122,12 @@ The first `recall` / `add` downloads `potion-multilingual-128M`. If the model is
 
 ## Why cam?
 
-When an AI agent needs to understand code — or reuse a fix it already found — it discovers structure the slow way: grep, glob, and Read, one file at a time. Next session it does the same work again.
+When an AI agent needs to understand code — or reuse what it already learned about this project — it discovers structure the slow way: grep, glob, and Read, one file at a time. Next session it does the same work again.
 
 **cam hands the agent two things it can query in one shell call:**
 
 1. A **code graph** — every indexed file and symbol as a virtual filesystem, plus one-hop callers / callees.
-2. A **solution tree** — past write-ups, recalled with vector + BM25 so the agent does not re-solve the same problem.
+2. A **memory tree** — habits, project facts, designs, write-ups; recalled with vector + BM25 so the agent does not re-learn the same project.
 
 Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
 
@@ -141,7 +141,7 @@ cam has two retrieval planes. Each is scored against the closest open system **o
 
 | Plane | Closest analogue | Shared bench |
 |---|---|---|
-| Solution memory | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid search + tokenized **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
+| Memory | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid search + tokenized **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
 | Code graph | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
 | Token cost | full context dump | [DeepSeek multi-turn](eval/llm_multiturn/README.md) |
 
@@ -151,13 +151,13 @@ Mem0, Zep, and Letta are general chat memories. They are not on these two corpor
 
 | | **cam** | **agentmemory** | **codegraph** |
 |---|---|---|---|
-| What it stores | code graph + solution tree | session / chat memories | code graph |
+| What it stores | code graph + memory tree | session / chat memories | code graph |
 | Query | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
 | Interface | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
 | Fusion | vector + BM25 + **RRF** | BM25 + embed + rerank | FTS5 + graph walk |
 | Local / cost | 100% local, retrieval `$0` | local server | local |
 
-### Solution memory — coding-agent-life-v1
+### Memory — coding-agent-life-v1
 
 15 sessions, 15 queries, k=5. Same formula as agentmemory `score.ts`. P@5 ceiling is 0.240.
 
@@ -198,14 +198,14 @@ Same conversation twice: dump every session / every `src/*.rs` file, or inject `
 
 | track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
 |---|---:|---:|---:|---:|---:|---:|
-| solutions (coding-agent-life) | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
+| memory (coding-agent-life) | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
 | code (this repo after `cam index`) | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
 
 ![DeepSeek multi-turn prompt token bars](eval/charts/multiturn-bars.svg)
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
-Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
+Mean prompt tokens / turn: memory 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
@@ -227,7 +227,7 @@ python3 eval/charts/generate.py
 | **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
 | **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) by default; `--fusion sum` keeps min-max + sum |
 | **Ebbinghaus retention** | `R = exp(-t / S)` is added to the recall score; stale and forgotten entries are flagged, never deleted |
-| **Solution tree** | `add` appends a node (optionally `--parent`); the old write-up stays on the tree |
+| **Memory tree** | `add` appends a node (optionally `--parent`); the old entry stays on the tree |
 | **MCP + CLI** | Main agent: `cam_*` tools. Subagent: `cam --json …`. Same binary |
 | **100% local** | No API keys. SQLite + an optional on-disk embedding model under `~/.cam/models/` |
 | **5 languages** | Rust, Python, TypeScript, JavaScript, Go |
@@ -250,7 +250,7 @@ python3 eval/charts/generate.py
 │                              cam CLI                              │
 │                                                                   │
 │  ls / read / ref     →  code graph (tree-sitter)                  │
-│  recall / add / mem  →  solution tree (vector + BM25 + FTS5)      │
+│  recall / add / mem  →  memory tree (vector + BM25 + FTS5)        │
 │                                 │                                 │
 │                                 ▼                                 │
 │                       local SQLite  (.cam/cam.db)                 │
@@ -261,7 +261,7 @@ python3 eval/charts/generate.py
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
 3. **Recall** — `recall` embeds the query, runs BM25 (jieba first for Chinese), and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. Retention `R` is added on top.
-4. **Write-back** — after the agent solves something, `add` stores summary + body. Same path, newer node wins as `latest`.
+4. **Write-back** — after the agent learns something worth keeping, `add` stores summary + body. Same path, newer node wins as `latest`.
 
 Design notes (Chinese): [DESIGN.md](DESIGN.md).
 
@@ -269,7 +269,7 @@ Design notes (Chinese): [DESIGN.md](DESIGN.md).
 
 ## Agent Workflow
 
-`recall` first. If nothing hits, walk the code graph. After you solve it, `add`.
+`recall` first. If nothing hits, walk the code graph. After you learn something worth keeping, `add`.
 
 **Main agent (MCP):** `cam_recall` → `cam_ls` / `cam_read` / `cam_ref` → `cam_add`. Do not shell out unless MCP is down. Full text: [docs/agents.md](docs/agents.md).
 
@@ -305,8 +305,8 @@ cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
 cam ref <symbol> --dir in|out            # One-hop callers (in) or callees (out)
 cam recall "<query>" [--limit N] [--fusion rrf|sum]  # Hybrid recall: vector + BM25, RRF by default
-cam add --summary "..." [--parent ID] [--file PATH]   # Store a solution (body: stdin or --file)
-cam mem tree                             # Print the solution tree
+cam add --summary "..." [--parent ID] [--file PATH]   # Store a memory (body: stdin or --file)
+cam mem tree                             # Print the memory tree
 cam mem show <id>                        # Show one memory
 cam mcp                                  # MCP stdio server for the main agent
 ```
@@ -321,8 +321,8 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees |
 | `cam recall "<one sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum |
-| `cam add --summary "..." [--parent ID]` | Store a solution (body from stdin or `--file`) |
-| `cam mem tree` / `cam mem show <id>` | Browse the solution tree |
+| `cam add --summary "..." [--parent ID]` | Store a memory (body from stdin or `--file`) |
+| `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
 | `cam mcp` | Stdio MCP server (main agent). See [docs/mcp.md](docs/mcp.md) |
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.

@@ -33,18 +33,55 @@ pub struct Model2VecEmbedder {
 
 impl Model2VecEmbedder {
     pub fn load() -> Result<Self> {
-        let cache = crate::config::Config::models_dir()?;
+        let cache = crate::config::Config::models_dir()?.join("potion-multilingual-128M");
         std::fs::create_dir_all(&cache)?;
-        std::env::set_var("HF_HOME", &cache);
-        let model = model2vec_rs::model::StaticModel::from_pretrained(
-            "minishlab/potion-multilingual-128M",
-            None,
-            Some(true),
-            None,
-        )
-        .context("load model2vec potion-multilingual-128M (needs network on first run)")?;
+        std::env::set_var("HF_HOME", crate::config::Config::models_dir()?);
+        let tokenizer = cache.join("tokenizer.json");
+        let weights = cache.join("model.safetensors");
+        let config = cache.join("config.json");
+        if !(tokenizer.exists() && weights.exists() && config.exists()) {
+            fetch_potion_files(&cache)?;
+        }
+        let model = if tokenizer.exists() && weights.exists() && config.exists() {
+            model2vec_rs::model::StaticModel::from_pretrained(&cache, None, Some(true), None)
+                .context("load local potion-multilingual-128M")?
+        } else {
+            model2vec_rs::model::StaticModel::from_pretrained(
+                "minishlab/potion-multilingual-128M",
+                None,
+                Some(true),
+                None,
+            )
+            .context("load model2vec potion-multilingual-128M (needs network on first run)")?
+        };
         Ok(Self { model })
     }
+}
+
+fn fetch_potion_files(dir: &std::path::Path) -> Result<()> {
+    let base = std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://hf-mirror.com".into());
+    let repo = format!(
+        "{}/minishlab/potion-multilingual-128M/resolve/main",
+        base.trim_end_matches('/')
+    );
+    for name in ["tokenizer.json", "config.json", "model.safetensors"] {
+        let dest = dir.join(name);
+        if dest.exists() {
+            continue;
+        }
+        let url = format!("{repo}/{name}");
+        let status = std::process::Command::new("curl")
+            .args(["-4", "-fsSL", "--retry", "3", "--max-time", "180", "-o"])
+            .arg(&dest)
+            .arg(&url)
+            .status()
+            .with_context(|| format!("spawn curl for {url}"))?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&dest);
+            anyhow::bail!("curl failed for {url} (status {status})");
+        }
+    }
+    Ok(())
 }
 
 impl Embedder for Model2VecEmbedder {

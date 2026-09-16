@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Fetch a LongMemCode scenario file, index the corpus with cam, score.
+"""Fetch a LongMemCode scenario file, index with cam or codegraph, score.
 
 Example:
   python3 eval/longmemcode/run.py --corpus clap --limit 50
+  python3 eval/longmemcode/run.py --corpus clap --backend codegraph
 """
 
 from __future__ import annotations
@@ -92,9 +93,31 @@ def cam_bin() -> Path:
     return debug
 
 
-def index_corpus(cam: Path, corpus: Path) -> None:
+def codegraph_bin() -> str:
+    env = os.environ.get("CODEGRAPH_BIN")
+    if env:
+        return env
+    return "codegraph"
+
+
+def index_corpus(backend: str, corpus: Path) -> None:
+    if backend == "codegraph":
+        bin_ = codegraph_bin()
+        marker = corpus / ".codegraph"
+        if not marker.exists():
+            subprocess.check_call([bin_, "init", "-y", str(corpus)], cwd=corpus)
+        else:
+            subprocess.check_call([bin_, "index", str(corpus)], cwd=corpus)
+        return
+    cam = cam_bin()
     subprocess.check_call([str(cam), "--path", str(corpus), "init"], cwd=corpus)
     subprocess.check_call([str(cam), "--path", str(corpus), "index"], cwd=corpus)
+
+
+def graph_db(backend: str, corpus: Path) -> Path:
+    if backend == "codegraph":
+        return corpus / ".codegraph" / "codegraph.db"
+    return corpus / ".cam" / "cam.db"
 
 
 def main() -> int:
@@ -105,6 +128,7 @@ def main() -> int:
 
     p = argparse.ArgumentParser()
     p.add_argument("--corpus", default="clap", choices=sorted(CORPORA))
+    p.add_argument("--backend", default="cam", choices=("cam", "codegraph"))
     p.add_argument("--limit", type=int, default=0, help="score first N scenarios (0=all)")
     p.add_argument("--skip-index", action="store_true")
     p.add_argument("--source", default="", help="already-checked-out corpus root")
@@ -117,17 +141,21 @@ def main() -> int:
         scenarios = scenarios[: args.limit]
 
     source = Path(args.source) if args.source else ensure_corpus(args.corpus)
-    cam = cam_bin()
     if not args.skip_index:
-        index_corpus(cam, source)
+        index_corpus(args.backend, source)
 
-    db = source / ".cam" / "cam.db"
+    db = graph_db(args.backend, source)
     if not db.exists():
         print(f"error: {db} missing after index", file=sys.stderr)
         return 1
 
     catalog = load_catalog(scenarios_path)
-    graph = CamGraph(db)
+    if args.backend == "codegraph":
+        from codegraph_graph import CodegraphGraph
+
+        graph = CodegraphGraph(db, source)
+    else:
+        graph = CamGraph(db)
     rows = []
     t0 = time.perf_counter()
     latencies = []
@@ -160,6 +188,7 @@ def main() -> int:
     summary.update(
         {
             "corpus": args.corpus,
+            "backend": args.backend,
             "source": str(source),
             "elapsed_s": elapsed,
             "p50_ms": pct(0.50),
@@ -171,7 +200,7 @@ def main() -> int:
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    (out_dir / f"cam-{args.corpus}-{stamp}.json").write_text(
+    (out_dir / f"{args.backend}-{args.corpus}-{stamp}.json").write_text(
         json.dumps({"summary": summary, "scenarios": rows}, indent=2)
     )
     print(json.dumps(summary, indent=2))

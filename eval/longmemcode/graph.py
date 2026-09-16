@@ -56,19 +56,21 @@ class CamGraph:
         if not node_ids:
             return []
         placeholders = ",".join("?" * len(node_ids))
+        kinds = ("calls", "references")
+        kind_q = ",".join("?" * len(kinds))
         if direction == "in":
             sql = f"""
                 SELECT DISTINCT n.* FROM edges e
                 JOIN nodes n ON n.id = e.source
-                WHERE e.target IN ({placeholders}) AND e.kind = 'calls'
+                WHERE e.target IN ({placeholders}) AND e.kind IN ({kind_q})
             """
         else:
             sql = f"""
                 SELECT DISTINCT n.* FROM edges e
                 JOIN nodes n ON n.id = e.target
-                WHERE e.source IN ({placeholders}) AND e.kind = 'calls'
+                WHERE e.source IN ({placeholders}) AND e.kind IN ({kind_q})
             """
-        return [_node(r) for r in self.conn.execute(sql, node_ids).fetchall()]
+        return [_node(r) for r in self.conn.execute(sql, [*node_ids, *kinds]).fetchall()]
 
     def orphans(self, kind: str | None = None) -> list[Node]:
         kinds = _cam_kinds(kind) if kind else ("function", "method")
@@ -82,7 +84,44 @@ class CamGraph:
         """
         return [_node(r) for r in self.conn.execute(q, kinds).fetchall()]
 
+    def members(self, node_ids: list[str]) -> list[Node]:
+        if not node_ids:
+            return []
+        placeholders = ",".join("?" * len(node_ids))
+        rows = self.conn.execute(
+            f"""
+            SELECT DISTINCT n.* FROM edges e
+            JOIN nodes n ON n.id = e.target
+            WHERE e.source IN ({placeholders}) AND e.kind = 'contains'
+              AND n.kind != 'file'
+            """,
+            node_ids,
+        ).fetchall()
+        kids = [_node(r) for r in rows]
+        if kids:
+            return kids
+        files = {n.file_path for nid in node_ids if (n := self.node_by_id(nid))}
+        out: list[Node] = []
+        for f in files:
+            out.extend(self.file_symbols(f))
+        return out
+
+    def implementors(self, node_ids: list[str]) -> list[Node]:
+        if not node_ids:
+            return []
+        placeholders = ",".join("?" * len(node_ids))
+        rows = self.conn.execute(
+            f"""
+            SELECT DISTINCT n.* FROM edges e
+            JOIN nodes n ON n.id = e.source
+            WHERE e.target IN ({placeholders}) AND e.kind = 'implements'
+            """,
+            node_ids,
+        ).fetchall()
+        return [_node(r) for r in rows]
+
     def resolve_stable(self, stable_id: str, trailing: str, path_hint: str) -> list[Node]:
+        del stable_id
         nodes = self.nodes_named(trailing)
         if path_hint:
             hinted = [n for n in nodes if path_matches(n.file_path, path_hint)]
@@ -104,10 +143,10 @@ def _node(row: sqlite3.Row) -> Node:
 
 def _cam_kinds(kind: str | None) -> tuple[str, ...]:
     if not kind:
-        return ("function", "method", "class", "struct")
+        return ("function", "method", "class", "struct", "trait", "enum", "type_alias")
     k = kind.lower()
     if k in {"struct", "class", "type", "enum", "trait"}:
-        return ("struct", "class")
+        return ("struct", "class", "trait", "enum", "type_alias")
     if k in {"function", "fn", "method"}:
         return ("function", "method")
     return (k,)
