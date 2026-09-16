@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""LongMemCode JSON-over-stdio adapter backed by cam's SQLite graph.
+"""LongMemCode JSON-over-stdio adapter backed by cam or codegraph SQLite.
 
 Translation table: SCIP-style ids collected from the scenario file, keyed by
-trailing identifier. Graph facts come from cam (index + edges). implementors
-are not in cam v1 and return [].
+trailing identifier. Graph facts come from the chosen indexer.
 """
 
 from __future__ import annotations
@@ -67,10 +66,7 @@ def answer(query: dict, graph: CamGraph, catalog: dict[str, list[str]]) -> list[
     if op == "contained_by":
         sid = query.get("sym_stable_id") or ""
         nodes = graph.resolve_stable(sid, trailing_ident(sid), path_hint(sid))
-        files = {n.file_path for n in nodes}
-        kids: list = []
-        for f in files:
-            kids.extend(graph.file_symbols(f))
+        kids = graph.members([n.id for n in nodes])
         return map_nodes(kids, catalog, path_hint(sid))
 
     if op == "file_symbols":
@@ -92,7 +88,10 @@ def answer(query: dict, graph: CamGraph, catalog: dict[str, list[str]]) -> list[
         return map_nodes(nodes, catalog)
 
     if op == "implementors":
-        return []
+        sid = query.get("sym_stable_id") or ""
+        nodes = graph.resolve_stable(sid, trailing_ident(sid), path_hint(sid))
+        impls = graph.implementors([n.id for n in nodes])
+        return map_nodes(impls, catalog)
 
     return []
 
@@ -105,9 +104,10 @@ def load_catalog(scenario_path: Path | None) -> dict[str, list[str]]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="cam LongMemCode adapter")
-    p.add_argument("--corpus", required=True, help="project root (cam index lives in .cam/)")
-    p.add_argument("--db", default="", help="override path to cam.db")
+    p = argparse.ArgumentParser(description="LongMemCode adapter (cam or codegraph)")
+    p.add_argument("--corpus", required=True, help="project root")
+    p.add_argument("--db", default="", help="override path to sqlite db")
+    p.add_argument("--backend", default="cam", choices=("cam", "codegraph"))
     p.add_argument(
         "--scenarios",
         default="",
@@ -115,17 +115,26 @@ def main() -> int:
     )
     args = p.parse_args()
     root = Path(args.corpus)
-    db = Path(args.db) if args.db else root / ".cam" / "cam.db"
+    if args.db:
+        db = Path(args.db)
+    elif args.backend == "codegraph":
+        db = root / ".codegraph" / "codegraph.db"
+    else:
+        db = root / ".cam" / "cam.db"
     if not db.exists():
+        need = "codegraph index" if args.backend == "codegraph" else "cam index"
         print(
-            json.dumps(
-                {"results": [], "cost_usd": 0.0, "error": f"missing {db}; run cam index"}
-            ),
+            json.dumps({"results": [], "cost_usd": 0.0, "error": f"missing {db}; run {need}"}),
             flush=True,
         )
         return 1
     catalog = load_catalog(Path(args.scenarios) if args.scenarios else None)
-    graph = CamGraph(db)
+    if args.backend == "codegraph":
+        from codegraph_graph import CodegraphGraph
+
+        graph = CodegraphGraph(db, root)
+    else:
+        graph = CamGraph(db)
 
     for line in sys.stdin:
         line = line.strip()

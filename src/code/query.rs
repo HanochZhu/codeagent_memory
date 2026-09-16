@@ -126,12 +126,12 @@ pub fn refs(project: &Project, symbol: &str, dir: RefDir) -> Result<RefResult> {
         RefDir::In => {
             "SELECT n.id, n.name, n.file_path, n.start_line, n.kind, e.line
              FROM edges e JOIN nodes n ON n.id = e.source
-             WHERE e.target = ?1 AND e.kind = 'calls'"
+             WHERE e.target = ?1 AND e.kind IN ('calls', 'references', 'implements')"
         }
         RefDir::Out => {
             "SELECT n.id, n.name, n.file_path, n.start_line, n.kind, e.line
              FROM edges e JOIN nodes n ON n.id = e.target
-             WHERE e.source = ?1 AND e.kind = 'calls'"
+             WHERE e.source = ?1 AND e.kind IN ('calls', 'references', 'implements')"
         }
     };
     let mut stmt = conn.prepare(sql)?;
