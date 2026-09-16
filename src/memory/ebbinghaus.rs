@@ -1,4 +1,4 @@
-//! Ebbinghaus retention for solution memories.
+//! Ebbinghaus retention for memories.
 //!
 //! R = exp(-t / S) as used by MemoryBank (Zhong et al., 2023) and SuperMemo-style
 //! stability. C0 is `recalled_at` (falls back to `created_at`).

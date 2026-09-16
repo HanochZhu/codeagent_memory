@@ -37,7 +37,7 @@ pub fn add_solution(
             |row| row.get(0),
         )?;
         if exists == 0 {
-            bail!("parent solution not found: {parent}");
+            bail!("parent memory not found: {parent}");
         }
     }
 
