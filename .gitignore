@@ -1,5 +1,6 @@
 /target
 /.cam
+/.codely-cli
 *.db
 .DS_Store
 eval/longmemcode/corpora/

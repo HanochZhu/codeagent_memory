@@ -2,15 +2,13 @@ use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use cam::code::{
     clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, RefDir,
     DEFAULT_DEBOUNCE_MS,
 };
-use cam::memory::{
-    add_solution, format_tree, show_solution, solution_tree, Embedder, Fusion, HashEmbedder,
-    Model2VecEmbedder,
-};
+use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion};
+use cam::ops::{load_embedder, resolve_project};
 use cam::output::{emit_json, emit_text};
 use cam::project::Project;
 use clap::{Parser, Subcommand};
@@ -86,6 +84,8 @@ enum Command {
         #[command(subcommand)]
         cmd: MemCmd,
     },
+    /// Start an MCP stdio server for the main coding agent
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -117,8 +117,11 @@ fn run() -> Result<()> {
                 emit_text(format!("initialized {}", payload.root));
             }
         }
+        Command::Mcp => {
+            cam::mcp::serve_stdio(cli.path.as_deref())?;
+        }
         Command::Index { path } => {
-            let project = resolve(cli.path.as_deref().or(path.as_deref()))?;
+            let project = resolve_project(cli.path.as_deref().or(path.as_deref()))?;
             project.ensure_initialized()?;
             let report = index_project(&project)?;
             if cli.json {
@@ -131,7 +134,7 @@ fn run() -> Result<()> {
             }
         }
         Command::Sync { path } => {
-            let project = resolve(cli.path.as_deref().or(path.as_deref()))?;
+            let project = resolve_project(cli.path.as_deref().or(path.as_deref()))?;
             project.ensure_initialized()?;
             let report = sync_project(&project)?;
             if cli.json {
@@ -141,7 +144,7 @@ fn run() -> Result<()> {
             }
         }
         Command::Watch { path, debounce_ms } => {
-            let project = resolve(cli.path.as_deref().or(path.as_deref()))?;
+            let project = resolve_project(cli.path.as_deref().or(path.as_deref()))?;
             project.ensure_initialized()?;
             let debounce_ms = clamp_debounce_ms(debounce_ms);
             if !cli.json {
@@ -171,7 +174,7 @@ fn run() -> Result<()> {
             )?;
         }
         Command::Ls { virt_path } => {
-            let project = resolve(cli.path.as_deref())?;
+            let project = resolve_project(cli.path.as_deref())?;
             let entries = ls(&project, virt_path.as_deref())?;
             if cli.json {
                 emit_json(&entries)?;
@@ -186,7 +189,7 @@ fn run() -> Result<()> {
             }
         }
         Command::Read { virt_path, full } => {
-            let project = resolve(cli.path.as_deref())?;
+            let project = resolve_project(cli.path.as_deref())?;
             let result = read(&project, &virt_path, full)?;
             if cli.json {
                 emit_json(&result)?;
@@ -200,7 +203,7 @@ fn run() -> Result<()> {
             }
         }
         Command::Ref { symbol, dir } => {
-            let project = resolve(cli.path.as_deref())?;
+            let project = resolve_project(cli.path.as_deref())?;
             let result = refs(&project, &symbol, dir)?;
             if cli.json {
                 emit_json(&result)?;
@@ -218,7 +221,7 @@ fn run() -> Result<()> {
             fusion,
             hash_embed,
         } => {
-            let project = resolve(cli.path.as_deref())?;
+            let project = resolve_project(cli.path.as_deref())?;
             let embedder = load_embedder(hash_embed)?;
             let hits = cam::memory::recall(&project, embedder.as_ref(), &query, limit, fusion)?;
             if cli.json {
@@ -262,7 +265,7 @@ fn run() -> Result<()> {
             file,
             hash_embed,
         } => {
-            let project = resolve(cli.path.as_deref())?;
+            let project = resolve_project(cli.path.as_deref())?;
             let body = read_body(file.as_ref())?;
             let embedder = load_embedder(hash_embed)?;
             let added = add_solution(
@@ -279,7 +282,7 @@ fn run() -> Result<()> {
             }
         }
         Command::Mem { cmd } => {
-            let project = resolve(cli.path.as_deref())?;
+            let project = resolve_project(cli.path.as_deref())?;
             match cmd {
                 MemCmd::Tree => {
                     let tree = solution_tree(&project)?;
@@ -308,27 +311,6 @@ fn run() -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn resolve(path: Option<&std::path::Path>) -> Result<Project> {
-    Project::resolve(path)
-}
-
-fn load_embedder(hash: bool) -> Result<Box<dyn Embedder>> {
-    if hash {
-        return Ok(Box::new(HashEmbedder::default()));
-    }
-    let require = std::env::var_os("CAM_REQUIRE_MODEL2VEC").is_some();
-    match Model2VecEmbedder::load() {
-        Ok(m) => Ok(Box::new(m)),
-        Err(err) if require => {
-            Err(err).context("CAM_REQUIRE_MODEL2VEC is set; refusing hash fallback")
-        }
-        Err(err) => {
-            eprintln!("warn: model2vec unavailable ({err}); falling back to hash embedder");
-            Ok(Box::new(HashEmbedder::default()))
-        }
-    }
 }
 
 fn read_body(file: Option<&PathBuf>) -> Result<String> {

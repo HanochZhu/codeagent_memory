@@ -1,0 +1,206 @@
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use serde_json::{json, Value};
+use tempfile::tempdir;
+
+fn cam_bin() -> PathBuf {
+    env!("CARGO_BIN_EXE_cam").into()
+}
+
+struct McpChild {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<std::process::ChildStdout>,
+}
+
+impl McpChild {
+    fn spawn(default_path: Option<&std::path::Path>) -> Self {
+        let mut cmd = Command::new(cam_bin());
+        cmd.arg("mcp")
+            .env("CAM_HASH_EMBED", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(path) = default_path {
+            cmd.arg("--path").arg(path);
+        }
+        let mut child = cmd.spawn().expect("spawn cam mcp");
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("stdout"));
+        Self {
+            child,
+            stdin,
+            stdout,
+        }
+    }
+
+    fn send(&mut self, req: &Value) -> Value {
+        writeln!(self.stdin, "{}", req).expect("write mcp request");
+        self.stdin.flush().expect("flush mcp request");
+        let mut line = String::new();
+        self.stdout
+            .read_line(&mut line)
+            .expect("read mcp response");
+        assert!(
+            !line.trim().is_empty(),
+            "mcp server closed stdout without a response"
+        );
+        serde_json::from_str(line.trim()).unwrap_or_else(|err| {
+            panic!("invalid mcp json {err}: {line}");
+        })
+    }
+
+    fn notify(&mut self, req: &Value) {
+        writeln!(self.stdin, "{}", req).expect("write mcp notification");
+        self.stdin.flush().expect("flush mcp notification");
+    }
+}
+
+impl Drop for McpChild {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn rpc(id: u64, method: &str, params: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params
+    })
+}
+
+fn initialize(mcp: &mut McpChild) {
+    let resp = mcp.send(&rpc(
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": { "name": "cam-test", "version": "0" }
+        }),
+    ));
+    assert_eq!(resp["result"]["protocolVersion"], "2025-03-26");
+    assert_eq!(resp["result"]["serverInfo"]["name"], "cam");
+    mcp.notify(&json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    }));
+}
+
+fn call_tool(mcp: &mut McpChild, id: u64, name: &str, arguments: Value) -> Value {
+    mcp.send(&rpc(
+        id,
+        "tools/call",
+        json!({ "name": name, "arguments": arguments }),
+    ))
+}
+
+fn tool_payload(resp: &Value) -> Value {
+    assert_eq!(resp["result"]["isError"], false, "{resp}");
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
+    serde_json::from_str(text).expect("tool payload json")
+}
+
+fn call_ok(mcp: &mut McpChild, id: u64, name: &str, arguments: Value) -> Value {
+    tool_payload(&call_tool(mcp, id, name, arguments))
+}
+
+#[test]
+fn mcp_stdio_init_add_recall() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().display().to_string();
+    let mut mcp = McpChild::spawn(Some(dir.path()));
+    initialize(&mut mcp);
+
+    let listed = mcp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+    }));
+    let names: Vec<_> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(names.contains(&"cam_recall"));
+    assert!(names.contains(&"cam_add"));
+
+    let ping = mcp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "ping"
+    }));
+    assert!(ping.get("result").is_some());
+
+    let init_payload = call_ok(
+        &mut mcp,
+        4,
+        "cam_init",
+        json!({ "path": root }),
+    );
+    assert!(init_payload["root"].as_str().is_some());
+
+    let added_payload = call_ok(
+        &mut mcp,
+        5,
+        "cam_add",
+        json!({
+            "path": root,
+            "summary": "BM25 与向量多路召回",
+            "body": "Use FTS5 BM25 plus cosine vectors, min-max each path, then sum scores.",
+            "hash_embed": true
+        }),
+    );
+    let id = added_payload["id"].as_str().unwrap();
+
+    let hits = call_ok(
+        &mut mcp,
+        6,
+        "cam_recall",
+        json!({
+            "path": root,
+            "query": "如何做 BM25 和向量的多路召回",
+            "hash_embed": true
+        }),
+    );
+    assert!(hits.as_array().unwrap().iter().any(|h| h["id"] == id));
+
+    let nodes = call_ok(
+        &mut mcp,
+        7,
+        "cam_mem_tree",
+        json!({ "path": root }),
+    );
+    assert_eq!(nodes.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn mcp_unknown_tool_is_error() {
+    let mut mcp = McpChild::spawn(None);
+    initialize(&mut mcp);
+    let resp = call_tool(
+        &mut mcp,
+        9,
+        "not_a_tool",
+        json!({}),
+    );
+    assert_eq!(resp["error"]["code"], -32602);
+}
+
+#[test]
+fn mcp_help_lists_command() {
+    let out = Command::new(cam_bin())
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("mcp"), "{text}");
+}
