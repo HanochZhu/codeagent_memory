@@ -16,7 +16,7 @@ Check for a `.cam/` directory at the project root. If the repo is not initialize
 
 | Caller | Interface |
 | --- | --- |
-| **Main agent** (this session) | MCP tools `cam_recall`, `cam_ls`, `cam_read`, `cam_ref`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
+| **Main agent** (this session) | MCP tools `cam_init`, `cam_index`, `cam_ls`, `cam_read`, `cam_ref`, `cam_recall`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
 | **Subagent** (Task / explore / delegated) | `cam --json …` in a shell — subagents usually do not get MCP |
 | No MCP wired | Fall back to `cam --json …` |
 
@@ -38,6 +38,7 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 cam init [path]                                  # create .cam/, register the project
 cam index [path]                                 # tree-sitter → .cam/cam.db
 cam sync [path]                                  # incremental update for changed files
+cam watch [path] [--debounce-ms N]               # auto-sync on file changes
 cam ls [virt_path]                               # dirs / files / symbols
 cam read <virt_path> [--full]                    # outline, or a symbol body
 cam ref <symbol> --dir in|out                    # one-hop callers / callees
@@ -58,4 +59,4 @@ Global flags: `--json` for structured output; `--path <project>` when the cwd is
 
 ## Wiring MCP
 
-Main agent hosts register a stdio server: command `cam`, args `["mcp"]` (optional `["--path", "/abs/project", "mcp"]`). Full per-IDE configs: `docs/mcp.md`. Agent prompts: `docs/agents.md`.
+Main agent hosts register a stdio server: command `cam`, args `["mcp"]` — optionally `["--path", "/abs/project", "mcp"]` when the host cwd is not the repo. Logs go to stderr; stdout is JSON-RPC only. Restart the host after editing its MCP config. Per-IDE configs and copy-paste prompts ship in the cam repository (`docs/mcp.md`, `docs/agents.md`).
