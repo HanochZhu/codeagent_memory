@@ -16,6 +16,13 @@ struct McpChild {
 
 impl McpChild {
     fn spawn(default_path: Option<&std::path::Path>) -> Self {
+        Self::spawn_with(default_path, None)
+    }
+
+    fn spawn_with(
+        default_path: Option<&std::path::Path>,
+        cam_project: Option<&std::path::Path>,
+    ) -> Self {
         let mut cmd = Command::new(cam_bin());
         cmd.arg("mcp")
             .env("CAM_HASH_EMBED", "1")
@@ -24,6 +31,9 @@ impl McpChild {
             .stderr(Stdio::piped());
         if let Some(path) = default_path {
             cmd.arg("--path").arg(path);
+        }
+        if let Some(path) = cam_project {
+            cmd.env("CAM_PROJECT", path);
         }
         let mut child = cmd.spawn().expect("spawn cam mcp");
         let stdin = child.stdin.take().expect("stdin");
@@ -179,6 +189,41 @@ fn mcp_stdio_init_add_recall() {
         json!({ "path": root }),
     );
     assert_eq!(nodes.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn mcp_cam_project_beats_server_path() {
+    let server_dir = tempdir().unwrap();
+    let env_dir = tempdir().unwrap();
+    let mut mcp = McpChild::spawn_with(Some(server_dir.path()), Some(env_dir.path()));
+    initialize(&mut mcp);
+
+    let payload = call_ok(&mut mcp, 4, "cam_init", json!({}));
+    let root = payload["root"].as_str().unwrap();
+    assert_eq!(
+        std::fs::canonicalize(root).unwrap(),
+        std::fs::canonicalize(env_dir.path()).unwrap()
+    );
+}
+
+#[test]
+fn mcp_tool_path_beats_cam_project() {
+    let env_dir = tempdir().unwrap();
+    let tool_dir = tempdir().unwrap();
+    let mut mcp = McpChild::spawn_with(None, Some(env_dir.path()));
+    initialize(&mut mcp);
+
+    let payload = call_ok(
+        &mut mcp,
+        4,
+        "cam_init",
+        json!({ "path": tool_dir.path().display().to_string() }),
+    );
+    let root = payload["root"].as_str().unwrap();
+    assert_eq!(
+        std::fs::canonicalize(root).unwrap(),
+        std::fs::canonicalize(tool_dir.path()).unwrap()
+    );
 }
 
 #[test]

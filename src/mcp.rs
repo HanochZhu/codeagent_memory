@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::code::{index_project, ls, read, refs, RefDir};
 use crate::memory::{add_solution, show_solution, solution_tree, Embedder, Fusion};
-use crate::ops::{load_embedder, resolve_project_from_strings};
+use crate::ops::{init_project_from_strings, load_embedder, resolve_project_from_strings};
 use crate::project::Project;
 
 const SERVER_NAME: &str = "cam";
@@ -200,10 +200,9 @@ fn name_unknown(name: &str) -> bool {
 fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String> {
     match name {
         "cam_init" => {
-            let path = arg_str(args, "path")
-                .map(Path::new)
-                .or(ctx.default_path.as_deref());
-            let project = Project::init(path).map_err(err_str)?;
+            let project =
+                init_project_from_strings(arg_str(args, "path"), ctx.default_path.as_deref())
+                    .map_err(err_str)?;
             let _ = crate::open_db(&project.db_path()).map_err(err_str)?;
             Ok(json!({
                 "root": project.root.display().to_string(),
@@ -298,7 +297,7 @@ fn tool_defs() -> Vec<Value> {
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Project root. Defaults to server cwd / CAM_PROJECT." }
+                    "path": { "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --path, then the server cwd." }
                 },
                 "additionalProperties": false
             }),
