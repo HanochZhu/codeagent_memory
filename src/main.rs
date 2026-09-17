@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 #[derive(Parser)]
-#[command(name = "cam", version, about = "CodeAgent memory: code graph + solution recall")]
+#[command(name = "cam", version, about = "CodeAgent memory: code graph + memory (CLI + MCP)")]
 struct Cli {
     /// Project root (otherwise CAM_PROJECT, then walk up for .cam / .git)
     #[arg(long, global = true, value_name = "DIR")]
@@ -79,7 +79,7 @@ enum Command {
         #[arg(long, hide = true)]
         hash_embed: bool,
     },
-    /// Add a solution (body from --body, --file, or stdin)
+    /// Add a memory (body from --body, --file, or stdin)
     Add {
         #[arg(long)]
         summary: String,
@@ -94,7 +94,7 @@ enum Command {
         #[arg(long, hide = true)]
         hash_embed: bool,
     },
-    /// Browse the solution tree
+    /// Browse the memory tree
     Mem {
         #[command(subcommand)]
         cmd: MemCmd,

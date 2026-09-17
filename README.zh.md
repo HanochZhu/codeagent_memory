@@ -6,7 +6,7 @@
 
 ### 给 Claude Code、Cursor、Codex、Windsurf、Copilot、JetBrains 一套本地记忆 — 主 Agent 走 MCP，Subagent 走 CLI
 
-**代码图 + 解法召回 · 按符号读代码 · 100% 本地 · MCP + CLI**
+**代码图 + 记忆 · 按符号读代码 · 100% 本地 · MCP + CLI**
 
 **内核用 Rust 写成**
 
@@ -122,12 +122,12 @@ cam add --summary "..." < notes.md
 
 ## 为什么需要 cam？
 
-Agent 理解代码、复用已经找到的解法时，通常靠 grep / glob / Read 一份份翻。下一轮对话又重来一遍。
+Agent 理解代码、复用已经记下的项目结论时，通常靠 grep / glob / Read 一份份翻。下一轮对话又重来一遍。
 
 **cam 给 Agent 两样东西，一条 shell 命令就能查：**
 
 1. **代码图** — 已索引的文件和符号做成虚拟文件系统，外加一跳 callers / callees。
-2. **解法树** — 以前写过的说明，用向量 + BM25 召回，避免重解同一类问题。
+2. **记忆树** — 用户习惯、项目事实、设计方案、解法说明；用向量 + BM25 召回，避免把同一项目再学一遍。
 
 按符号读，而不是整文件扫。记忆落在本地磁盘，100% 本地。
 
@@ -141,7 +141,7 @@ cam 有两面检索。每一面只和**同一语料上最近的开源系统**比
 
 | 面 | 最近对照 | 共用基准 |
 |---|---|---|
-| 解法记忆 | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + 分词 **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
+| 记忆 | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + 分词 **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
 | 代码图 | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
 | Token | 全文塞进上下文 | [DeepSeek 多轮](eval/llm_multiturn/README.md) |
 
@@ -151,13 +151,13 @@ Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进�
 
 | | **cam** | **agentmemory** | **codegraph** |
 |---|---|---|---|
-| 存什么 | 代码图 + 解法树 | 会话 / 聊天记忆 | 代码图 |
+| 存什么 | 代码图 + 记忆树 | 会话 / 聊天记忆 | 代码图 |
 | 怎么查 | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
 | 接入 | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
 | 融合 | 向量 + BM25 + **RRF** | BM25 + 向量 + rerank | FTS5 + 图遍历 |
 | 本地 / 费用 | 100% 本地，检索 `$0` | 本地 server | 本地 |
 
-### 解法记忆 — coding-agent-life-v1
+### 记忆 — coding-agent-life-v1
 
 15 段会话、15 条查询、k=5。计分与 agentmemory `score.ts` 相同。P@5 天花板 0.240。
 
@@ -198,14 +198,14 @@ P95 ≈ 6.5 ms，`$/1k` = 0。
 
 | 线 | n | full 正确率 | cam 正确率 | full token | cam token | 节省 |
 |---|---:|---:|---:|---:|---:|---:|
-| 解法（coding-agent-life） | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
+| 记忆（coding-agent-life） | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
 | 代码（本仓 `cam index`） | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
 
 ![DeepSeek 多轮 prompt token 柱状图](eval/charts/multiturn-bars.svg)
 
 ![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
 
-平均每轮 prompt：解法 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
+平均每轮 prompt：记忆 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
@@ -226,7 +226,7 @@ python3 eval/charts/generate.py
 | **虚拟路径** | `src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号 |
 | **多路召回** | 向量 + BM25，默认 **RRF**（k=60）；`--fusion sum` 仍是 min-max 后求和 |
 | **艾宾浩斯保留** | `R = exp(-t / S)` 加进召回分；过期和遗忘只打标，不删除 |
-| **解法树** | `add` 追加节点（可挂 `--parent`）；旧说明留在树上 |
+| **记忆树** | `add` 追加节点（可挂 `--parent`）；旧条目留在树上 |
 | **MCP + CLI** | 主 Agent：`cam_*` 工具。Subagent：`cam --json …`。同一个二进制 |
 | **100% 本地** | 无 API key。SQLite + 可选的本地向量模型（`~/.cam/models/`） |
 | **5 种语言** | Rust、Python、TypeScript、JavaScript、Go |
@@ -249,7 +249,7 @@ python3 eval/charts/generate.py
 │                              cam CLI                              │
 │                                                                   │
 │  ls / read / ref     →  代码图（tree-sitter）                      │
-│  recall / add / mem  →  解法树（向量 + BM25 + FTS5）               │
+│  recall / add / mem  →  记忆树（向量 + BM25 + FTS5）               │
 │                                 │                                 │
 │                                 ▼                                 │
 │                       本地 SQLite  (.cam/cam.db)                  │
@@ -260,7 +260,7 @@ python3 eval/charts/generate.py
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
 3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），两路排序用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。再加上保留率 `R`。
-4. **写回** — Agent 解完后 `add` 存摘要和正文。同一路径上新节点标 `latest`。
+4. **写回** — Agent 有需要长期留下的结论时，`add` 存摘要和正文。同一路径上新节点标 `latest`。
 
 设计细节见 [DESIGN.md](DESIGN.md)。
 
@@ -268,7 +268,7 @@ python3 eval/charts/generate.py
 
 ## Agent 怎么用
 
-探索仓库前先 `recall`；没有命中再读代码图；解完再 `add`。
+探索仓库前先 `recall`；没有命中再读代码图；有需要长期留下的结论再 `add`。
 
 **主 Agent（MCP）：** `cam_recall` → `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。MCP 可用时不要开 shell。全文：[docs/agents.zh.md](docs/agents.zh.md)。
 
@@ -302,8 +302,8 @@ cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
 cam ref <symbol> --dir in|out            # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
 cam recall "<query>" [--limit N] [--fusion rrf|sum]  # 多路召回：向量 + BM25，默认 RRF
-cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # 写入解法（正文：--body / --file / stdin）
-cam mem tree                             # 打印解法树
+cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
+cam mem tree                             # 打印记忆树
 cam mem show <id>                        # 查看一条记忆
 cam status                               # 当前项目、数据库统计与配置
 cam config get | config set stale_days N # 读取或更新 ~/.cam/config.toml
@@ -320,9 +320,9 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees |
 | `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和 |
-| `cam add --summary "..." [--parent ID]` | 写入解法（正文来自 `--body`、`--file` 或 stdin） |
+| `cam add --summary "..." [--parent ID]` | 写入记忆（正文来自 `--body`、`--file` 或 stdin） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
-| `cam status` | 当前项目根、数据库路径、节点/边/解法数与配置 |
+| `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |
 | `cam config get` / `cam config set stale_days N` | 读取或更新 `~/.cam/config.toml` |
 | `cam mcp` | stdio MCP 服务（主 Agent）。见 [docs/mcp.zh.md](docs/mcp.zh.md) |
 

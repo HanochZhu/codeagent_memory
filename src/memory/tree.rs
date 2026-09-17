@@ -77,7 +77,7 @@ pub fn show_solution(project: &Project, id: &str) -> Result<SolutionView> {
     let (id, parent_id, summary, body, created_at, updated_at, recalled_at, stability) = match found
     {
         Ok(v) => v,
-        Err(rusqlite::Error::QueryReturnedNoRows) => bail!("solution not found: {id}"),
+        Err(rusqlite::Error::QueryReturnedNoRows) => bail!("memory not found: {id}"),
         Err(e) => return Err(e.into()),
     };
     let now = chrono::Utc::now().timestamp();
