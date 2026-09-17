@@ -4,12 +4,12 @@
 
 ```bash
 cam mcp
-cam --path /path/to/project mcp
+cam --project /path/to/project mcp
 ```
 
 Logs go to stderr. stdout is JSON-RPC only.
 
-Project resolution for every tool: argument `path` → env `CAM_PROJECT` → `--path` used to start the server → walk up for `.cam` / `.git`.
+Project resolution for every tool: argument `path` → env `CAM_PROJECT` → `--project` used to start the server → walk up for `.cam` / `.git`.
 
 Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USERPROFILE%\.cargo\bin`. If the host cannot find `cam`, put the full path to `cam` / `cam.exe` in `command`.
 
@@ -19,13 +19,13 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 
 | Tool | CLI equivalent |
 | --- | --- |
-| `cam_init` | `cam init [path]` |
-| `cam_index` | `cam index [path]` |
+| `cam_init` | `cam init` |
+| `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
-| `cam_add` | `cam add --summary "..." [--parent ID]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
@@ -49,7 +49,7 @@ Optional default project (useful when the host cwd is not the repo):
 ```json
 {
   "command": "cam",
-  "args": ["--path", "/absolute/path/to/project", "mcp"]
+  "args": ["--project", "/absolute/path/to/project", "mcp"]
 }
 ```
 

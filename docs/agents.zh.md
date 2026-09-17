@@ -21,7 +21,7 @@
 
 虚拟路径：`src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号。
 
-项目根：`--path` / 工具参数 `path` / 环境变量 `CAM_PROJECT` / 向上找 `.cam` 或 `.git`。
+项目根：`--project` / 工具参数 `path` / 环境变量 `CAM_PROJECT` / 向上找 `.cam` 或 `.git`。
 
 ---
 
@@ -59,17 +59,17 @@ Subagent 通常没有 MCP。委派时让它们在项目目录执行 `cam --json`
 
 Task / explore / `claude -p` / Codex exec / Copilot CLI 脚本里的 subagent **通常看不到 MCP**，必须调二进制。
 
-优先 `--json`。工作目录可能不是仓库时，一律带 `--path`。
+优先 `--json`。工作目录可能不是仓库时，一律带 `--project`。
 
 ```bash
-cam --json --path <project> recall "如何做 BM25 和向量的多路召回"
-cam --json --path <project> ls src/
-cam --json --path <project> read src/memory/recall.rs/fuse_scores
-cam --json --path <project> ref fuse_scores --dir in
-cam --json --path <project> add --summary "..." --file notes.md
-# 或：printf '%s' "$BODY" | cam --json --path <project> add --summary "..."
-cam --json --path <project> mem tree
-cam --json --path <project> mem show <id>
+cam --json --project <project> recall "如何做 BM25 和向量的多路召回"
+cam --json --project <project> ls src/
+cam --json --project <project> read src/memory/recall.rs/fuse_scores
+cam --json --project <project> ref fuse_scores --dir in
+cam --json --project <project> add --summary "..." --file notes.md
+# 或：printf '%s' "$BODY" | cam --json --project <project> add --summary "..."
+cam --json --project <project> mem tree
+cam --json --project <project> mem show <id>
 ```
 
 不加 `--json` 时是给人看的短文本，不适合程序解析。
@@ -79,13 +79,13 @@ cam --json --path <project> mem show <id>
 ```text
 你没有 cam 的 MCP 工具。请在项目目录用 cam CLI。
 
-cam --json --path <PROJECT> recall "<一句话>"
-cam --json --path <PROJECT> ls [virt_path]
-cam --json --path <PROJECT> read <virt_path> [--full]
-cam --json --path <PROJECT> ref <symbol> --dir in|out
-cam --json --path <PROJECT> add --summary "<一行摘要>" --file <path>
-cam --json --path <PROJECT> mem tree
-cam --json --path <PROJECT> mem show <id>
+cam --json --project <PROJECT> recall "<一句话>"
+cam --json --project <PROJECT> ls [virt_path]
+cam --json --project <PROJECT> read <virt_path> [--full]
+cam --json --project <PROJECT> ref <symbol> --dir in|out
+cam --json --project <PROJECT> add --summary "<一行摘要>" --file <path>
+cam --json --project <PROJECT> mem tree
+cam --json --project <PROJECT> mem show <id>
 
 先 recall。未命中再 ls → read 符号路径 → ref。解完 add。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
 ```
@@ -94,15 +94,19 @@ cam --json --path <PROJECT> mem show <id>
 
 | MCP（主 Agent） | CLI（Subagent） |
 | --- | --- |
-| `cam_init` | `cam init [path]` |
-| `cam_index` | `cam index [path]` |
+| `cam_init` | `cam init` |
+| `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--file PATH]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
+
+仅 CLI（无 MCP 工具）：`cam sync`、`cam watch`、`cam status`、`cam config get|set stale_days N`。
+
+`--json` 下失败会在 stdout 输出 `{"error":{"code":…,"message":…}}` 并返回非零退出码；`--pretty` 输出缩进 JSON。
 
 ---
 

@@ -281,27 +281,32 @@ cam --json ls src/
 cam --json read src/memory/recall.rs/fuse_scores
 cam --json ref fuse_scores --dir in
 cam --json recall "如何做 BM25 和向量的多路召回"
-cam --json add --summary "..." --parent <id>
+cam --json add --summary "..." --body "..."
 cam --json mem tree
 cam --json mem show <id>
+cam --json status
 ```
 
-全局参数：`--json`、`--path <project>`。未指定 `--path` 时向上查找 `.cam` 或 `.git`。MCP 服务：`cam mcp`（可加 `--path`）。
+全局参数：`--project <dir>`、`--json`（紧凑 JSON）、`--pretty`（美化 JSON，隐含 `--json`）。未指定 `--project` 时依次用 `CAM_PROJECT`、向上查找 `.cam` / `.git`。`--json` 下失败会在 stdout 输出 `{"error":{"code":…,"message":…}}` 并返回非零退出码。MCP 服务：`cam mcp`（可加 `--project`）。
 
 ---
 
 ## 命令一览
 
 ```bash
-cam init [path]                          # 创建 .cam/ 并登记项目
-cam index [path]                         # tree-sitter 解析进 SQLite
+cam init                                 # 创建 .cam/ 并登记项目
+cam index                                # tree-sitter 解析进 SQLite
+cam watch [--debounce-ms N]              # 监听源文件；--json 每次 sync 输出一行
+cam sync                                 # 按内容哈希增量更新图
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
-cam ref <symbol> --dir in|out            # 一跳 callers (in) 或 callees (out)
+cam ref <symbol> --dir in|out            # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
 cam recall "<query>" [--limit N] [--fusion rrf|sum]  # 多路召回：向量 + BM25，默认 RRF
-cam add --summary "..." [--parent ID] [--file PATH]   # 写入解法（正文：stdin 或 --file）
+cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # 写入解法（正文：--body / --file / stdin）
 cam mem tree                             # 打印解法树
 cam mem show <id>                        # 查看一条记忆
+cam status                               # 当前项目、数据库统计与配置
+cam config get | config set stale_days N # 读取或更新 ~/.cam/config.toml
 cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 ```
 
@@ -309,12 +314,16 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | --- | --- |
 | `cam init` | 创建 `.cam/`，登记当前项目 |
 | `cam index` | tree-sitter 解析进 SQLite（`.cam/cam.db`） |
+| `cam sync` | 按内容哈希增量更新图 |
+| `cam watch` | 文件监听，静默窗口后自动 `sync` |
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees |
 | `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和 |
-| `cam add --summary "..." [--parent ID]` | 写入解法（正文来自 stdin 或 `--file`） |
+| `cam add --summary "..." [--parent ID]` | 写入解法（正文来自 `--body`、`--file` 或 stdin） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
+| `cam status` | 当前项目根、数据库路径、节点/边/解法数与配置 |
+| `cam config get` / `cam config set stale_days N` | 读取或更新 `~/.cam/config.toml` |
 | `cam mcp` | stdio MCP 服务（主 Agent）。见 [docs/mcp.zh.md](docs/mcp.zh.md) |
 
 虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。

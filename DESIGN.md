@@ -59,7 +59,8 @@ cam --json recall "如何做 BM25 和向量的多路召回"
 cam --json add --summary "..." --parent <id>
 cam --json mem tree
 cam --json mem show <id>
+cam --json status
 cam mcp
 ```
 
-全局 `--json`、`--path <project>`。输出默认尽量短。MCP 服务：`cam mcp`。
+全局 `--project <dir>`、`--json`（紧凑）、`--pretty`（美化）。输出默认尽量短；`--json` 下失败输出 `{"error":{"code":…,"message":…}}` 并返回非零退出码。项目根解析：`--project` → `CAM_PROJECT` → 向上查找 `.cam` / `.git`。MCP 服务：`cam mcp`。

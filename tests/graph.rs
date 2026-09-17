@@ -40,7 +40,7 @@ fn index_ls_read_ref() {
     write_fixture(dir.path());
 
     let status = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .arg("init")
         .status()
@@ -48,7 +48,7 @@ fn index_ls_read_ref() {
     assert!(status.success());
 
     let out = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .arg("index")
         .output()
@@ -59,7 +59,7 @@ fn index_ls_read_ref() {
     assert!(report["nodes"].as_u64().unwrap() >= 6);
 
     let ls = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["ls", "src/lib.rs"])
         .output()
@@ -74,7 +74,7 @@ fn index_ls_read_ref() {
     assert!(names.contains(&"run"));
 
     let read = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["read", "src/lib.rs/add"])
         .output()
@@ -84,7 +84,7 @@ fn index_ls_read_ref() {
     assert!(body["source"].as_str().unwrap().contains("fn add"));
 
     let callers = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["ref", "add", "--dir", "in"])
         .output()
@@ -100,7 +100,7 @@ fn index_ls_read_ref() {
     assert!(names.contains(&"run"), "{refs}");
 
     let callees = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["ref", "src/lib.rs/run", "--dir", "out"])
         .output()
@@ -123,7 +123,7 @@ fn sync_updates_changed_added_and_removed_files() {
     write_fixture(dir.path());
 
     let status = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .arg("init")
         .status()
@@ -131,7 +131,7 @@ fn sync_updates_changed_added_and_removed_files() {
     assert!(status.success());
 
     let index = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .arg("index")
         .output()
@@ -139,7 +139,7 @@ fn sync_updates_changed_added_and_removed_files() {
     assert!(index.status.success(), "{}", String::from_utf8_lossy(&index.stderr));
 
     let noop = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .arg("sync")
         .output()
@@ -162,7 +162,7 @@ pub fn extra() { let _ = add(1, 2); }
     fs::remove_file(dir.path().join("py/mod.py")).unwrap();
 
     let sync = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .arg("sync")
         .output()
@@ -174,7 +174,7 @@ pub fn extra() { let _ = add(1, 2); }
     assert_eq!(report["files_removed"], 1, "{report}");
 
     let ls = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["ls", "src/lib.rs"])
         .output()
@@ -188,7 +188,7 @@ pub fn extra() { let _ = add(1, 2); }
     assert!(!names.contains(&"run"), "{entries:?}");
 
     let ls_new = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["ls", "src/new.rs"])
         .output()

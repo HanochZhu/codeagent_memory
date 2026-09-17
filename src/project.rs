@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::config::{walk_up_for, Config};
+use crate::config::walk_up_for;
 
 pub const CAM_DIR: &str = ".cam";
 pub const DB_NAME: &str = "cam.db";
@@ -31,14 +31,6 @@ impl Project {
             return Ok(Self { root });
         }
 
-        let cfg = Config::load()?;
-        if let Some(stored) = cfg.current_project {
-            let root = PathBuf::from(stored);
-            if root.exists() {
-                return Ok(Self { root });
-            }
-        }
-
         bail!("no project found; run `cam init` in a project directory")
     }
 
@@ -59,9 +51,6 @@ impl Project {
         };
         let project = Self { root };
         fs::create_dir_all(project.cam_dir())?;
-        let mut cfg = Config::load()?;
-        cfg.current_project = Some(project.root.to_string_lossy().into_owned());
-        cfg.save()?;
         Ok(project)
     }
 

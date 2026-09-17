@@ -21,7 +21,7 @@ Same order for both entry points:
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol.
 
-Project root: `--path` / tool argument `path` / env `CAM_PROJECT` / walk up for `.cam` or `.git`.
+Project root: `--project` / tool argument `path` / env `CAM_PROJECT` / walk up for `.cam` or `.git`.
 
 ---
 
@@ -59,17 +59,17 @@ Subagents have no MCP. When you delegate, tell them to run `cam --json` in the p
 
 Subagents launched by Task / explore / `claude -p` / Codex exec / Copilot CLI scripts typically **cannot see MCP**. They must call the binary.
 
-Prefer `--json`. Always pass `--path` if cwd might not be the repo.
+Prefer `--json`. Always pass `--project` if cwd might not be the repo.
 
 ```bash
-cam --json --path <project> recall "how does hybrid recall fuse BM25 and vectors"
-cam --json --path <project> ls src/
-cam --json --path <project> read src/memory/recall.rs/fuse_scores
-cam --json --path <project> ref fuse_scores --dir in
-cam --json --path <project> add --summary "..." --file notes.md
-# or:  printf '%s' "$BODY" | cam --json --path <project> add --summary "..."
-cam --json --path <project> mem tree
-cam --json --path <project> mem show <id>
+cam --json --project <project> recall "how does hybrid recall fuse BM25 and vectors"
+cam --json --project <project> ls src/
+cam --json --project <project> read src/memory/recall.rs/fuse_scores
+cam --json --project <project> ref fuse_scores --dir in
+cam --json --project <project> add --summary "..." --file notes.md
+# or:  printf '%s' "$BODY" | cam --json --project <project> add --summary "..."
+cam --json --project <project> mem tree
+cam --json --project <project> mem show <id>
 ```
 
 Without `--json`, output is compact text (fine for humans; worse for parsers).
@@ -79,13 +79,13 @@ Without `--json`, output is compact text (fine for humans; worse for parsers).
 ```text
 You do not have cam MCP tools. Use the cam CLI in the project directory.
 
-cam --json --path <PROJECT> recall "<one sentence>"
-cam --json --path <PROJECT> ls [virt_path]
-cam --json --path <PROJECT> read <virt_path> [--full]
-cam --json --path <PROJECT> ref <symbol> --dir in|out
-cam --json --path <PROJECT> add --summary "<one line>" --file <path>
-cam --json --path <PROJECT> mem tree
-cam --json --path <PROJECT> mem show <id>
+cam --json --project <PROJECT> recall "<one sentence>"
+cam --json --project <PROJECT> ls [virt_path]
+cam --json --project <PROJECT> read <virt_path> [--full]
+cam --json --project <PROJECT> ref <symbol> --dir in|out
+cam --json --project <PROJECT> add --summary "<one line>" --file <path>
+cam --json --project <PROJECT> mem tree
+cam --json --project <PROJECT> mem show <id>
 
 Recall first. On miss, ls → read symbol paths → ref. After solving, add. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
 ```
@@ -94,15 +94,19 @@ Recall first. On miss, ls → read symbol paths → ref. After solving, add. Vir
 
 | MCP (main agent) | CLI (subagent) |
 | --- | --- |
-| `cam_init` | `cam init [path]` |
-| `cam_index` | `cam index [path]` |
+| `cam_init` | `cam init` |
+| `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--file PATH]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
+
+CLI-only (no MCP tool): `cam sync`, `cam watch`, `cam status`, `cam config get|set stale_days N`.
+
+With `--json`, failures print `{"error":{"code":…,"message":…}}` to stdout and exit non-zero. `--pretty` adds indentation.
 
 ---
 

@@ -4,12 +4,12 @@
 
 ```bash
 cam mcp
-cam --path /path/to/project mcp
+cam --project /path/to/project mcp
 ```
 
 日志只写 stderr。stdout 只能是 JSON-RPC。
 
-每个工具解析项目根的顺序：参数 `path` → 环境变量 `CAM_PROJECT` → 启动服务时的 `--path` → 向上找 `.cam` / `.git`。
+每个工具解析项目根的顺序：参数 `path` → 环境变量 `CAM_PROJECT` → 启动服务时的 `--project` → 向上找 `.cam` / `.git`。
 
 宿主进程必须能在 PATH 里找到 `cam`。Windows 安装位置一般是 `%USERPROFILE%\.cargo\bin`。找不到就在 `command` 里写 `cam.exe` 的绝对路径。
 
@@ -19,13 +19,13 @@ cam --path /path/to/project mcp
 
 | 工具 | 对应 CLI |
 | --- | --- |
-| `cam_init` | `cam init [path]` |
-| `cam_index` | `cam index [path]` |
+| `cam_init` | `cam init` |
+| `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
-| `cam_add` | `cam add --summary "..." [--parent ID]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
@@ -49,7 +49,7 @@ cam --path /path/to/project mcp
 ```json
 {
   "command": "cam",
-  "args": ["--path", "/absolute/path/to/project", "mcp"]
+  "args": ["--project", "/absolute/path/to/project", "mcp"]
 }
 ```
 

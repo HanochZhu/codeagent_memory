@@ -35,20 +35,22 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 ## Commands
 
 ```text
-cam init [path]                                  # create .cam/, register the project
-cam index [path]                                 # tree-sitter → .cam/cam.db
-cam sync [path]                                  # incremental update for changed files
-cam watch [path] [--debounce-ms N]               # auto-sync on file changes
+cam init                                         # create .cam/, register the project
+cam index                                        # tree-sitter → .cam/cam.db
+cam sync                                         # incremental update for changed files
+cam watch [--debounce-ms N]                      # auto-sync on file changes
 cam ls [virt_path]                               # dirs / files / symbols
 cam read <virt_path> [--full]                    # outline, or a symbol body
 cam ref <symbol> --dir in|out                    # one-hop callers / callees
 cam recall "<query>" [--limit N] [--fusion rrf|sum]
-cam add --summary "..." [--parent ID] [--file PATH]   # body: --file or stdin
+cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]   # body: --body, --file, or stdin
 cam mem tree | cam mem show <id>
+cam status                                       # resolved project, db counts, config
+cam config get | config set stale_days N         # read/update ~/.cam/config.toml
 cam mcp                                          # stdio MCP server (main agent)
 ```
 
-Global flags: `--json` for structured output; `--path <project>` when the cwd is not the repo. Project root resolution: `--path` / tool `path` → env `CAM_PROJECT` → walk up for `.cam` / `.git`.
+Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compact structured output; `--pretty` to indent JSON. In `--json` mode a failure prints `{"error":{"code":…,"message":…}}` to stdout and exits non-zero. Project root resolution: `--project` → env `CAM_PROJECT` → walk up for `.cam` / `.git`.
 
 ## Memory rules
 
@@ -59,4 +61,4 @@ Global flags: `--json` for structured output; `--path <project>` when the cwd is
 
 ## Wiring MCP
 
-Main agent hosts register a stdio server: command `cam`, args `["mcp"]` — optionally `["--path", "/abs/project", "mcp"]` when the host cwd is not the repo. Logs go to stderr; stdout is JSON-RPC only. Restart the host after editing its MCP config. Per-IDE configs and copy-paste prompts ship in the cam repository (`docs/mcp.md`, `docs/agents.md`).
+Main agent hosts register a stdio server: command `cam`, args `["mcp"]` — optionally `["--project", "/abs/project", "mcp"]` when the host cwd is not the repo. Logs go to stderr; stdout is JSON-RPC only. Restart the host after editing its MCP config. Per-IDE configs and copy-paste prompts ship in the cam repository (`docs/mcp.md`, `docs/agents.md`).

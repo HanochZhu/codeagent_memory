@@ -29,7 +29,7 @@ pub fn resolve_project(explicit: Option<&Path>) -> Result<Project> {
 
 /// Resolve a project root for an MCP tool call.
 ///
-/// Order: tool `path`, `CAM_PROJECT`, the server `--path`, then `.cam` / `.git` walk-up.
+/// Order: tool `path`, `CAM_PROJECT`, the server `--project`, then `.cam` / `.git` walk-up.
 pub fn resolve_project_from_strings(
     tool_path: Option<&str>,
     default_path: Option<&Path>,
@@ -45,7 +45,7 @@ pub fn resolve_project_from_strings(
 
 /// Initialize a project from an MCP tool call.
 ///
-/// Order: tool `path`, `CAM_PROJECT`, the server `--path`, then the server cwd.
+/// Order: tool `path`, `CAM_PROJECT`, the server `--project`, then the server cwd.
 pub fn init_project_from_strings(
     tool_path: Option<&str>,
     default_path: Option<&Path>,

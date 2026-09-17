@@ -31,7 +31,7 @@ Workflow:
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description).
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
-Global project override: tool argument `path`, else CAM_PROJECT, else the directory used to start this server."#;
+Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd. cam_init defaults to the server cwd instead of walking up."#;
 
 #[derive(Debug, Clone, Default)]
 pub struct McpContext {
@@ -286,34 +286,34 @@ fn tool_text(payload: Value, is_error: bool) -> Value {
 }
 
 fn path_prop() -> Value {
-    json!({ "type": "string", "description": "Project root." })
+    json!({ "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd." })
 }
 
 fn tool_defs() -> Vec<Value> {
     vec![
         tool(
             "cam_init",
-            "Create .cam/ and register the project. Equivalent CLI: cam init [path]",
+            "Create .cam/ and initialize the project database. Equivalent CLI: cam init",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --path, then the server cwd." }
+                    "path": { "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then the server cwd." }
                 },
                 "additionalProperties": false
             }),
             false,
-            false,
+            true,
         ),
         tool(
             "cam_index",
-            "Parse the project with tree-sitter into .cam/cam.db. Equivalent CLI: cam index [path]",
+            "Parse the project with tree-sitter into .cam/cam.db. Equivalent CLI: cam index",
             json!({
                 "type": "object",
                 "properties": { "path": path_prop() },
                 "additionalProperties": false
             }),
             false,
-            false,
+            true,
         ),
         tool(
             "cam_ls",
@@ -381,7 +381,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_add",
-            "Store a solution (summary + full body). Optionally hang it under --parent. Equivalent CLI: cam add --summary \"...\" [--parent ID] (body via stdin or --file)",
+            "Store a solution (summary + full body). Optionally hang it under --parent. Equivalent CLI: cam add --summary \"...\" [--parent ID] --body \"...\" (or --file / stdin)",
             json!({
                 "type": "object",
                 "properties": {
@@ -563,6 +563,24 @@ mod tests {
         assert!(names.contains(&"cam_recall"));
         assert!(names.contains(&"cam_add"));
         assert!(names.contains(&"cam_read"));
+    }
+
+    #[test]
+    fn project_tool_metadata_is_compatible() {
+        assert!(INSTRUCTIONS.contains("--project"));
+        assert!(!INSTRUCTIONS.contains("--path"));
+        for def in tool_defs() {
+            assert_eq!(def["inputSchema"]["properties"]["path"]["type"], "string");
+            assert!(!def.to_string().contains("--path"));
+            match def["name"].as_str().unwrap() {
+                "cam_init" | "cam_index" | "cam_recall" => {
+                    assert_eq!(def["annotations"]["readOnlyHint"], false);
+                    assert_eq!(def["annotations"]["idempotentHint"], true);
+                }
+                "cam_add" => assert_eq!(def["annotations"]["idempotentHint"], false),
+                _ => {}
+            }
+        }
     }
 
     #[test]

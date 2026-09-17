@@ -8,21 +8,26 @@ use cam::code::{
     DEFAULT_DEBOUNCE_MS,
 };
 use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion};
-use cam::ops::{load_embedder, resolve_project};
-use cam::output::{emit_json, emit_text};
+use cam::ops::{init_project_from_strings, load_embedder, resolve_project};
+use cam::output::{emit_error_json, emit_json, emit_text};
 use cam::project::Project;
+use cam::Config;
+use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 #[derive(Parser)]
 #[command(name = "cam", version, about = "CodeAgent memory: code graph + solution recall")]
 struct Cli {
-    /// Print JSON instead of compact text
+    /// Project root (otherwise CAM_PROJECT, then walk up for .cam / .git)
+    #[arg(long, global = true, value_name = "DIR")]
+    project: Option<PathBuf>,
+    /// Print compact JSON instead of text
     #[arg(long, global = true)]
     json: bool,
-    /// Project root (otherwise walk up for .cam / .git)
+    /// Pretty-print JSON (implies --json)
     #[arg(long, global = true)]
-    path: Option<PathBuf>,
+    pretty: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -30,14 +35,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Create .cam/ and register the project
-    Init { path: Option<PathBuf> },
+    Init,
     /// Parse the project with tree-sitter into SQLite
-    Index { path: Option<PathBuf> },
+    Index,
     /// Incrementally update the graph for files that changed
-    Sync { path: Option<PathBuf> },
+    Sync,
     /// Watch the project and update the graph when files change
     Watch {
-        path: Option<PathBuf>,
         /// Quiet window in ms after the last relevant event (default 2000)
         #[arg(long, default_value_t = DEFAULT_DEBOUNCE_MS)]
         debounce_ms: u64,
@@ -53,8 +57,15 @@ enum Command {
     /// One-hop callers (in) or callees (out)
     Ref {
         symbol: String,
+        /// Direction: in = callers, out = callees
         #[arg(long, value_enum)]
-        dir: RefDir,
+        dir: Option<RefDir>,
+        /// Shorthand for --dir in
+        #[arg(long, conflicts_with_all = ["dir", "callees"])]
+        callers: bool,
+        /// Shorthand for --dir out
+        #[arg(long, conflicts_with_all = ["dir", "callers"])]
+        callees: bool,
     },
     /// Hybrid recall: vector + BM25, fused with min-max sum or RRF
     Recall {
@@ -68,14 +79,18 @@ enum Command {
         #[arg(long, hide = true)]
         hash_embed: bool,
     },
-    /// Add a solution (summary + body from --file or stdin)
+    /// Add a solution (body from --body, --file, or stdin)
     Add {
         #[arg(long)]
         summary: String,
         #[arg(long)]
         parent: Option<String>,
-        #[arg(long)]
+        /// Read the body from a file
+        #[arg(long, conflicts_with = "body")]
         file: Option<PathBuf>,
+        /// Pass the body inline
+        #[arg(long, conflicts_with = "file")]
+        body: Option<String>,
         #[arg(long, hide = true)]
         hash_embed: bool,
     },
@@ -83,6 +98,13 @@ enum Command {
     Mem {
         #[command(subcommand)]
         cmd: MemCmd,
+    },
+    /// Show the resolved project, database, and config
+    Status,
+    /// Read or update the global config
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
     },
     /// Start an MCP stdio server for the main coding agent
     Mcp,
@@ -94,38 +116,106 @@ enum MemCmd {
     Show { id: String },
 }
 
+#[derive(Subcommand)]
+enum ConfigCmd {
+    Get,
+    Set { key: String, value: String },
+}
+
 fn main() {
-    if let Err(err) = run() {
-        eprintln!("error: {err:#}");
+    let raw: Vec<String> = std::env::args().collect();
+    let wants_json = raw.iter().any(|a| a == "--json" || a == "--pretty");
+    let wants_pretty = raw.iter().any(|a| a == "--pretty");
+
+    let cli = match Cli::try_parse_from(&raw) {
+        Ok(cli) => cli,
+        Err(err) => {
+            let help = matches!(
+                err.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayVersion
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            );
+            if wants_json && !help {
+                let message = err
+                    .to_string()
+                    .lines()
+                    .next()
+                    .unwrap_or("invalid arguments")
+                    .trim_start_matches("error: ")
+                    .to_string();
+                let _ = emit_error_json("usage", &message, wants_pretty);
+                std::process::exit(2);
+            }
+            let _ = err.print();
+            std::process::exit(err.exit_code());
+        }
+    };
+
+    let json = cli.json || cli.pretty;
+    let pretty = cli.pretty;
+    if let Err(err) = run(cli, json, pretty) {
+        if json {
+            let code = classify_error(&err);
+            let _ = emit_error_json(code, &format!("{err:#}"), pretty);
+        } else {
+            eprintln!("error: {err:#}");
+        }
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn classify_error(err: &anyhow::Error) -> &'static str {
+    if err
+        .chain()
+        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+    {
+        return "io";
+    }
+    let message = err.to_string();
+    if message.contains("ambiguous") {
+        "ambiguous"
+    } else if message.contains("not found") || message.contains("no project found") {
+        "not_found"
+    } else if message.contains("required")
+        || message.contains("specify")
+        || message.contains("must be")
+        || message.contains("does not")
+        || message.contains("unsupported")
+    {
+        "usage"
+    } else if message.contains("config") {
+        "config"
+    } else {
+        "error"
+    }
+}
+
+fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
+    let project_arg = cli.project.as_deref();
     match cli.command {
-        Command::Init { path } => {
-            let project = Project::init(path.as_deref().or(cli.path.as_deref()))?;
+        Command::Init => {
+            let project = init_project_from_strings(None, project_arg)?;
             let _ = cam::open_db(&project.db_path())?;
             let payload = InitOut {
                 root: project.root.display().to_string(),
                 db: project.db_path().display().to_string(),
             };
-            if cli.json {
-                emit_json(&payload)?;
+            if json {
+                emit_json(&payload, pretty)?;
             } else {
                 emit_text(format!("initialized {}", payload.root));
             }
         }
         Command::Mcp => {
-            cam::mcp::serve_stdio(cli.path.as_deref())?;
+            cam::mcp::serve_stdio(project_arg)?;
         }
-        Command::Index { path } => {
-            let project = resolve_project(cli.path.as_deref().or(path.as_deref()))?;
+        Command::Index => {
+            let project = resolve_project(project_arg)?;
             project.ensure_initialized()?;
             let report = index_project(&project)?;
-            if cli.json {
-                emit_json(&report)?;
+            if json {
+                emit_json(&report, pretty)?;
             } else {
                 emit_text(format!(
                     "indexed {} files, {} nodes, {} edges ({} skipped)",
@@ -133,21 +223,21 @@ fn run() -> Result<()> {
                 ));
             }
         }
-        Command::Sync { path } => {
-            let project = resolve_project(cli.path.as_deref().or(path.as_deref()))?;
+        Command::Sync => {
+            let project = resolve_project(project_arg)?;
             project.ensure_initialized()?;
             let report = sync_project(&project)?;
-            if cli.json {
-                emit_json(&report)?;
+            if json {
+                emit_json(&report, pretty)?;
             } else {
                 emit_text(format_sync(&report));
             }
         }
-        Command::Watch { path, debounce_ms } => {
-            let project = resolve_project(cli.path.as_deref().or(path.as_deref()))?;
+        Command::Watch { debounce_ms } => {
+            let project = resolve_project(project_arg)?;
             project.ensure_initialized()?;
             let debounce_ms = clamp_debounce_ms(debounce_ms);
-            if !cli.json {
+            if !json {
                 emit_text(format!(
                     "watching {} (debounce {debounce_ms}ms)",
                     project.root.display()
@@ -165,8 +255,8 @@ fn run() -> Result<()> {
                         return;
                     }
                     first = false;
-                    if cli.json {
-                        let _ = emit_json(report);
+                    if json {
+                        let _ = emit_json(report, pretty);
                     } else {
                         emit_text(format_sync(report));
                     }
@@ -174,10 +264,10 @@ fn run() -> Result<()> {
             )?;
         }
         Command::Ls { virt_path } => {
-            let project = resolve_project(cli.path.as_deref())?;
+            let project = resolve_project(project_arg)?;
             let entries = ls(&project, virt_path.as_deref())?;
-            if cli.json {
-                emit_json(&entries)?;
+            if json {
+                emit_json(&entries, pretty)?;
             } else {
                 for e in entries {
                     let extra = match (e.start_line, e.end_line) {
@@ -189,10 +279,10 @@ fn run() -> Result<()> {
             }
         }
         Command::Read { virt_path, full } => {
-            let project = resolve_project(cli.path.as_deref())?;
+            let project = resolve_project(project_arg)?;
             let result = read(&project, &virt_path, full)?;
-            if cli.json {
-                emit_json(&result)?;
+            if json {
+                emit_json(&result, pretty)?;
             } else {
                 if result.kind != "outline" {
                     if let (Some(s), Some(t)) = (result.start_line, result.end_line) {
@@ -202,11 +292,17 @@ fn run() -> Result<()> {
                 emit_text(result.source);
             }
         }
-        Command::Ref { symbol, dir } => {
-            let project = resolve_project(cli.path.as_deref())?;
+        Command::Ref {
+            symbol,
+            dir,
+            callers,
+            callees,
+        } => {
+            let dir = resolve_ref_dir(dir, callers, callees)?;
+            let project = resolve_project(project_arg)?;
             let result = refs(&project, &symbol, dir)?;
-            if cli.json {
-                emit_json(&result)?;
+            if json {
+                emit_json(&result, pretty)?;
             } else if result.refs.is_empty() {
                 emit_text("no refs");
             } else {
@@ -221,11 +317,11 @@ fn run() -> Result<()> {
             fusion,
             hash_embed,
         } => {
-            let project = resolve_project(cli.path.as_deref())?;
+            let project = resolve_project(project_arg)?;
             let embedder = load_embedder(hash_embed)?;
             let hits = cam::memory::recall(&project, embedder.as_ref(), &query, limit, fusion)?;
-            if cli.json {
-                emit_json(&hits)?;
+            if json {
+                emit_json(&hits, pretty)?;
             } else if hits.is_empty() {
                 emit_text("no memories");
             } else {
@@ -263,10 +359,11 @@ fn run() -> Result<()> {
             summary,
             parent,
             file,
+            body,
             hash_embed,
         } => {
-            let project = resolve_project(cli.path.as_deref())?;
-            let body = read_body(file.as_ref())?;
+            let project = resolve_project(project_arg)?;
+            let body = read_body(file.as_ref(), body)?;
             let embedder = load_embedder(hash_embed)?;
             let added = add_solution(
                 &project,
@@ -275,19 +372,19 @@ fn run() -> Result<()> {
                 &body,
                 parent.as_deref(),
             )?;
-            if cli.json {
-                emit_json(&added)?;
+            if json {
+                emit_json(&added, pretty)?;
             } else {
                 emit_text(format!("added {}", added.id));
             }
         }
         Command::Mem { cmd } => {
-            let project = resolve_project(cli.path.as_deref())?;
+            let project = resolve_project(project_arg)?;
             match cmd {
                 MemCmd::Tree => {
                     let tree = solution_tree(&project)?;
-                    if cli.json {
-                        emit_json(&tree)?;
+                    if json {
+                        emit_json(&tree, pretty)?;
                     } else {
                         let text = format_tree(&tree, 0);
                         if text.is_empty() {
@@ -299,27 +396,99 @@ fn run() -> Result<()> {
                 }
                 MemCmd::Show { id } => {
                     let view = show_solution(&project, &id)?;
-                    if cli.json {
-                        emit_json(&view)?;
+                    if json {
+                        emit_json(&view, pretty)?;
                     } else {
-                        println!("{}{}", view.id, if view.stale { "  stale" } else { "" });
+                        println!(
+                            "{}  R={:.2}  {}d  {}{}",
+                            view.id,
+                            view.retention,
+                            view.age_days,
+                            if view.stale { "stale " } else { "" },
+                            if view.needs_update {
+                                "needs_update"
+                            } else {
+                                "ok"
+                            }
+                        );
                         println!("{}", view.summary);
                         println!("{}", view.body);
                     }
                 }
             }
         }
+        Command::Status => {
+            let project = resolve_project(project_arg)?;
+            let out = collect_status(&project)?;
+            if json {
+                emit_json(&out, pretty)?;
+            } else {
+                println!("root         {}", out.root);
+                println!(
+                    "db           {}{}",
+                    out.db,
+                    if out.db_exists { "" } else { " (missing)" }
+                );
+                println!("files        {}", out.files);
+                println!("nodes        {}", out.nodes);
+                println!("edges        {}", out.edges);
+                println!("solutions    {}", out.solutions);
+                println!("stale_days   {}", out.stale_days);
+                println!("hash_embed   {}", out.hash_embed);
+                println!("require_model2vec {}", out.require_model2vec);
+            }
+        }
+        Command::Config { cmd } => match cmd {
+            ConfigCmd::Get => {
+                let cfg = Config::load()?;
+                if json {
+                    emit_json(&cfg, pretty)?;
+                } else {
+                    emit_text(format!("stale_days = {}", cfg.stale_days));
+                }
+            }
+            ConfigCmd::Set { key, value } => {
+                if key != "stale_days" {
+                    bail!("unsupported config key `{key}`; only `stale_days` is supported");
+                }
+                let stale_days: u32 = value
+                    .trim()
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("stale_days must be a positive integer"))?;
+                let mut cfg = Config::load()?;
+                cfg.stale_days = stale_days;
+                cfg.save()?;
+                if json {
+                    emit_json(&cfg, pretty)?;
+                } else {
+                    emit_text(format!("stale_days = {}", cfg.stale_days));
+                }
+            }
+        },
     }
     Ok(())
 }
 
-fn read_body(file: Option<&PathBuf>) -> Result<String> {
+fn resolve_ref_dir(dir: Option<RefDir>, callers: bool, callees: bool) -> Result<RefDir> {
+    if callers {
+        return Ok(RefDir::In);
+    }
+    if callees {
+        return Ok(RefDir::Out);
+    }
+    dir.ok_or_else(|| anyhow::anyhow!("specify --dir in|out (or --callers / --callees)"))
+}
+
+fn read_body(file: Option<&PathBuf>, body: Option<String>) -> Result<String> {
+    if let Some(body) = body {
+        return Ok(body);
+    }
     if let Some(path) = file {
         return Ok(fs::read_to_string(path)?);
     }
     let mut stdin = io::stdin();
     if stdin.is_terminal() {
-        bail!("provide body via stdin or --file");
+        bail!("provide body via --body, --file, or stdin");
     }
     let mut buf = String::new();
     stdin.read_to_string(&mut buf)?;
@@ -347,8 +516,51 @@ fn format_sync(report: &cam::code::SyncReport) -> String {
     )
 }
 
+fn collect_status(project: &Project) -> Result<StatusOut> {
+    let db = project.db_path();
+    let db_exists = db.is_file();
+    let cfg = Config::load()?;
+    let (files, nodes, edges, solutions) = if db_exists {
+        let conn = cam::open_db(&db)?;
+        (
+            cam::db::table_count(&conn, "files")?,
+            cam::db::table_count(&conn, "nodes")?,
+            cam::db::table_count(&conn, "edges")?,
+            cam::db::table_count(&conn, "solutions")?,
+        )
+    } else {
+        (0, 0, 0, 0)
+    };
+    Ok(StatusOut {
+        root: project.root.display().to_string(),
+        db: db.display().to_string(),
+        db_exists,
+        files,
+        nodes,
+        edges,
+        solutions,
+        stale_days: cfg.stale_days,
+        hash_embed: cam::ops::env_flag("CAM_HASH_EMBED"),
+        require_model2vec: std::env::var_os("CAM_REQUIRE_MODEL2VEC").is_some(),
+    })
+}
+
 #[derive(Serialize)]
 struct InitOut {
     root: String,
     db: String,
+}
+
+#[derive(Serialize)]
+struct StatusOut {
+    root: String,
+    db: String,
+    db_exists: bool,
+    files: i64,
+    nodes: i64,
+    edges: i64,
+    solutions: i64,
+    stale_days: u32,
+    hash_embed: bool,
+    require_model2vec: bool,
 }

@@ -284,30 +284,33 @@ cam --json ls src/
 cam --json read src/memory/recall.rs/fuse_scores
 cam --json ref fuse_scores --dir in
 cam --json recall "how to fuse BM25 and vector recall"
-cam --json add --summary "..." --parent <id>
+cam --json add --summary "..." --body "..."
 cam --json mem tree
 cam --json mem show <id>
+cam --json status
 cam mcp
 ```
 
-Global flags: `--json`, `--path <project>`. Without `--path`, `cam` walks up for `.cam` or `.git`. Start the MCP server with `cam mcp` (optional `--path`).
+Global flags: `--project <dir>`, `--json` (compact JSON), `--pretty` (pretty JSON, implies `--json`). Without `--project`, resolution is `CAM_PROJECT`, then walk up for `.cam` / `.git`. With `--json`, failures print `{"error":{"code":…,"message":…}}` to stdout and exit non-zero. Start the MCP server with `cam mcp` (optional `--project`).
 
 ---
 
 ## CLI Reference
 
 ```bash
-cam init [path]                          # Create .cam/ and register the project
-cam index [path]                         # Parse the project with tree-sitter into SQLite
-cam sync [path]                          # Incrementally update the graph for changed files
-cam watch [path]                         # Watch source files and auto-sync after a quiet window
+cam init                                 # Create .cam/ and register the project
+cam index                                # Parse the project with tree-sitter into SQLite
+cam sync                                 # Incrementally update the graph for changed files
+cam watch [--debounce-ms N]              # Watch source files; --json streams one report per sync
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
-cam ref <symbol> --dir in|out            # One-hop callers (in) or callees (out)
+cam ref <symbol> --dir in|out            # One-hop callers (in) or callees (out); --callers / --callees aliases
 cam recall "<query>" [--limit N] [--fusion rrf|sum]  # Hybrid recall: vector + BM25, RRF by default
-cam add --summary "..." [--parent ID] [--file PATH]   # Store a solution (body: stdin or --file)
+cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # Store a solution (body: --body, --file, or stdin)
 cam mem tree                             # Print the solution tree
 cam mem show <id>                        # Show one memory
+cam status                               # Resolved project, database counts, and config
+cam config get | config set stale_days N # Read or update ~/.cam/config.toml
 cam mcp                                  # MCP stdio server for the main agent
 ```
 
@@ -321,8 +324,10 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees |
 | `cam recall "<one sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum |
-| `cam add --summary "..." [--parent ID]` | Store a solution (body from stdin or `--file`) |
+| `cam add --summary "..." [--parent ID]` | Store a solution (body from `--body`, `--file`, or stdin) |
 | `cam mem tree` / `cam mem show <id>` | Browse the solution tree |
+| `cam status` | Resolved project root, db path, node/edge/solution counts, config |
+| `cam config get` / `cam config set stale_days N` | Read or update `~/.cam/config.toml` |
 | `cam mcp` | Stdio MCP server (main agent). See [docs/mcp.md](docs/mcp.md) |
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.

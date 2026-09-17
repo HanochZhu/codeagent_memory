@@ -23,14 +23,30 @@ impl McpChild {
         default_path: Option<&std::path::Path>,
         cam_project: Option<&std::path::Path>,
     ) -> Self {
+        Self::spawn_in(default_path, cam_project, None, None)
+    }
+
+    fn spawn_in(
+        default_path: Option<&std::path::Path>,
+        cam_project: Option<&std::path::Path>,
+        cwd: Option<&std::path::Path>,
+        home: Option<&std::path::Path>,
+    ) -> Self {
         let mut cmd = Command::new(cam_bin());
+        if let Some(path) = cwd {
+            cmd.current_dir(path);
+        }
+        if let Some(path) = home {
+            cmd.env("HOME", path).env("USERPROFILE", path);
+        }
         cmd.arg("mcp")
+            .env_remove("CAM_PROJECT")
             .env("CAM_HASH_EMBED", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(path) = default_path {
-            cmd.arg("--path").arg(path);
+            cmd.arg("--project").arg(path);
         }
         if let Some(path) = cam_project {
             cmd.env("CAM_PROJECT", path);
@@ -224,6 +240,74 @@ fn mcp_tool_path_beats_cam_project() {
         std::fs::canonicalize(root).unwrap(),
         std::fs::canonicalize(tool_dir.path()).unwrap()
     );
+}
+
+#[test]
+fn mcp_ignores_legacy_current_project() {
+    let home = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    let old_project = tempdir().unwrap();
+    let legacy = cam::project::Project::init(Some(old_project.path())).unwrap();
+    let embedder = cam::memory::HashEmbedder::default();
+    let added = cam::memory::add_solution(
+        &legacy,
+        &embedder,
+        "legacy memory that must not surface",
+        "old body",
+        None,
+    )
+    .unwrap();
+    let config = format!(
+        "current_project = '{}'\n",
+        old_project.path().display()
+    );
+    std::fs::create_dir(home.path().join(".cam")).unwrap();
+    std::fs::write(home.path().join(".cam/config.toml"), &config).unwrap();
+    let mut mcp = McpChild::spawn_in(None, None, Some(cwd.path()), Some(home.path()));
+    initialize(&mut mcp);
+
+    let resp = call_tool(&mut mcp, 2, "cam_mem_tree", json!({}));
+    if resp["result"]["isError"] == false {
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(!text.contains(&added.id), "legacy current_project was used: {text}");
+        assert!(
+            !text.contains("legacy memory that must not surface"),
+            "legacy current_project was used: {text}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(home.path().join(".cam/config.toml")).unwrap(),
+        config
+    );
+}
+
+#[test]
+fn mcp_init_does_not_read_or_write_global_config() {
+    for config in [None, Some("stale_days = 7\ncurrent_project = '/old/project'\n"), Some("invalid = [")] {
+        let home = tempdir().unwrap();
+        let cwd = tempdir().unwrap();
+        let config_path = home.path().join(".cam/config.toml");
+        if let Some(text) = config {
+            std::fs::create_dir(home.path().join(".cam")).unwrap();
+            std::fs::write(&config_path, text).unwrap();
+        }
+        let mut mcp = McpChild::spawn_in(None, None, Some(cwd.path()), Some(home.path()));
+        initialize(&mut mcp);
+
+        let first = call_ok(&mut mcp, 2, "cam_init", json!({}));
+        let second = call_ok(&mut mcp, 3, "cam_init", json!({}));
+        assert_eq!(first, second);
+        assert_eq!(
+            std::fs::canonicalize(first["root"].as_str().unwrap()).unwrap(),
+            std::fs::canonicalize(cwd.path()).unwrap()
+        );
+        assert!(cwd.path().join(".cam/cam.db").is_file());
+        if let Some(text) = config {
+            assert_eq!(std::fs::read_to_string(&config_path).unwrap(), text);
+        } else {
+            assert!(!home.path().join(".cam").exists());
+        }
+    }
 }
 
 #[test]

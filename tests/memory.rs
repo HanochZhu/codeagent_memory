@@ -12,7 +12,7 @@ fn cam_bin() -> PathBuf {
 fn add_and_recall_tree() {
     let dir = tempdir().unwrap();
     let init = Command::new(cam_bin())
-        .args(["--path"])
+        .args(["--project"])
         .arg(dir.path())
         .arg("init")
         .status()
@@ -20,7 +20,7 @@ fn add_and_recall_tree() {
     assert!(init.success());
 
     let mut add = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["add", "--summary", "BM25 与向量多路召回", "--hash-embed"])
         .stdin(Stdio::piped())
@@ -39,7 +39,7 @@ fn add_and_recall_tree() {
     let parent = added["id"].as_str().unwrap().to_string();
 
     let mut child = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args([
             "add",
@@ -62,7 +62,7 @@ fn add_and_recall_tree() {
     assert!(child.wait_with_output().unwrap().status.success());
 
     let recall = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args([
             "recall",
@@ -81,7 +81,7 @@ fn add_and_recall_tree() {
     assert_eq!(hits[0]["latest"], true);
 
     let tree = Command::new(cam_bin())
-        .args(["--json", "--path"])
+        .args(["--json", "--project"])
         .arg(dir.path())
         .args(["mem", "tree"])
         .output()
