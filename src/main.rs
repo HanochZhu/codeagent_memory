@@ -564,3 +564,76 @@ struct StatusOut {
     hash_embed: bool,
     require_model2vec: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_error_maps_known_codes() {
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("symbol not found: foo")),
+            "not_found"
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!(
+                "no project found; run `cam init` in a project directory"
+            )),
+            "not_found"
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("ambiguous symbol `foo`")),
+            "ambiguous"
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("unsupported config key `foo`")),
+            "usage"
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("stale_days must be a positive integer")),
+            "usage"
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("parse ~/.cam/config.toml")),
+            "config"
+        );
+        assert_eq!(classify_error(&anyhow::anyhow!("boom")), "error");
+    }
+
+    #[test]
+    fn classify_error_detects_io_source() {
+        let err = anyhow::Error::from(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing",
+        ));
+        assert_eq!(classify_error(&err), "io");
+    }
+
+    #[test]
+    fn ref_dir_flags_win_and_choice_is_required() {
+        assert!(matches!(
+            resolve_ref_dir(None, true, false).unwrap(),
+            RefDir::In
+        ));
+        assert!(matches!(
+            resolve_ref_dir(None, false, true).unwrap(),
+            RefDir::Out
+        ));
+        assert!(matches!(
+            resolve_ref_dir(Some(RefDir::Out), false, false).unwrap(),
+            RefDir::Out
+        ));
+        assert!(resolve_ref_dir(None, false, false).is_err());
+    }
+
+    #[test]
+    fn trim_body_clips_on_char_boundary() {
+        assert_eq!(trim_body("hello", 10), "hello");
+        assert_eq!(trim_body("你好世界", 2), "你好…");
+    }
+
+    #[test]
+    fn read_body_prefers_inline_body() {
+        assert_eq!(read_body(None, Some("inline".into())).unwrap(), "inline");
+    }
+}
