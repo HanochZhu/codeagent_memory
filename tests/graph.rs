@@ -250,3 +250,37 @@ pub fn extra() {}
     let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"extra"), "{names:?}");
 }
+
+#[test]
+fn empty_graph_asks_to_index() {
+    use cam::code::{ls, read, refs, RefDir};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+
+    let ls_err = ls(&project, Some("src/lib.rs")).unwrap_err().to_string();
+    assert!(ls_err.contains("not indexed"), "{ls_err}");
+
+    let read_err = read(&project, "src/lib.rs/add", false)
+        .unwrap_err()
+        .to_string();
+    assert!(read_err.contains("not indexed"), "{read_err}");
+
+    let ref_err = refs(&project, "add", RefDir::In).unwrap_err().to_string();
+    assert!(ref_err.contains("not indexed"), "{ref_err}");
+
+    let full = read(&project, "src/lib.rs", true).unwrap();
+    assert!(full.source.contains("fn add"));
+}
+
+#[test]
+fn empty_repo_without_sources_does_not_ask_to_index() {
+    use cam::code::ls;
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    let project = Project::init(Some(dir.path())).unwrap();
+    assert!(ls(&project, None).unwrap().is_empty());
+}

@@ -16,8 +16,9 @@
 两条入口顺序一样：
 
 1. **先 recall。** 命中且 `latest`、不是 `needs_update`，直接复用。
-2. **未命中 / stale / needs_update**，走代码图：`ls` → `read`（符号路径）→ `ref`。
-3. **解完再 add**（需要更新旧节点时挂 `--parent`）。
+2. **读代码前先确保已建图。** 若 `ls` / `read` / `ref` 提示未建图，对该项目跑一次 `cam_index` / `cam index`。`cam_index` 是全量重建，之后代码变动用 `cam sync`。
+3. **未命中 / stale / needs_update**，走代码图：`ls` → `read`（符号路径）→ `ref`。
+4. **解完再 add**（需要更新旧节点时挂 `--parent`）。
 
 虚拟路径：`src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号。
 
@@ -39,7 +40,7 @@
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
 | `cam_init` / `cam_index` | 每个仓库做一次（或代码大挪移之后） |
 
-工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。
+工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。图为空时 `cam_ls` / `cam_read` / `cam_ref` 会以 `not_indexed` 失败；先 `cam_index` 一次再重试。
 
 ### 贴进主 Agent 的规则 / AGENTS.md
 
@@ -48,7 +49,7 @@
 
 主 Agent：调用 MCP 工具 cam_recall / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show。MCP 可用时不要跑 cam CLI。
 
-流程：先 cam_recall。未命中或 needs_update 时用 cam_ls → cam_read（符号路径）→ cam_ref 走代码图。解完 cam_add（摘要 + 全文；更新旧节点时带 parent）。
+流程：先 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时用 cam_ls → cam_read（符号路径）→ cam_ref 走代码图。解完 cam_add（摘要 + 全文；更新旧节点时带 parent）。
 
 Subagent 通常没有 MCP。委派时让它们在项目目录执行 `cam --json`（见 docs/agents.zh.md）。
 ```
@@ -87,7 +88,7 @@ cam --json --project <PROJECT> add --summary "<一行摘要>" --file <path>
 cam --json --project <PROJECT> mem tree
 cam --json --project <PROJECT> mem show <id>
 
-先 recall。未命中再 ls → read 符号路径 → ref。解完 add。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
+先 recall。读代码前若提示未建图，先 `cam index` 一次。未命中再 ls → read 符号路径 → ref。解完 add。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
 ```
 
 ### 对照表

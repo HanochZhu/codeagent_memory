@@ -173,7 +173,9 @@ fn classify_error(err: &anyhow::Error) -> &'static str {
         return "io";
     }
     let message = err.to_string();
-    if message.contains("ambiguous") {
+    if message.contains("not indexed") {
+        "not_indexed"
+    } else if message.contains("ambiguous") {
         "ambiguous"
     } else if message.contains("not found") || message.contains("no project found") {
         "not_found"
@@ -584,6 +586,12 @@ mod tests {
         assert_eq!(
             classify_error(&anyhow::anyhow!("ambiguous symbol `foo`")),
             "ambiguous"
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!(
+                "code graph not indexed for /repo; run `cam index` (MCP cam_index) once, then retry"
+            )),
+            "not_indexed"
         );
         assert_eq!(
             classify_error(&anyhow::anyhow!("unsupported config key `foo`")),

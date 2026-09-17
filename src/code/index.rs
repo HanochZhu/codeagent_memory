@@ -417,6 +417,11 @@ fn scan_source_files(project: &Project) -> Result<(Vec<SourceFile>, usize)> {
     Ok((sources, skipped))
 }
 
+pub(crate) fn project_has_source_files(project: &Project) -> Result<bool> {
+    let (sources, _) = scan_source_files(project)?;
+    Ok(!sources.is_empty())
+}
+
 fn load_file_hashes(conn: &rusqlite::Connection) -> Result<HashMap<String, String>> {
     let mut stmt = conn.prepare("SELECT path, hash FROM files")?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;

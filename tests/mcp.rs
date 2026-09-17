@@ -311,6 +311,23 @@ fn mcp_init_does_not_read_or_write_global_config() {
 }
 
 #[test]
+fn mcp_ls_without_index_asks_to_index() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/lib.rs"), "pub fn add() {}\n").unwrap();
+    let root = dir.path().display().to_string();
+    let mut mcp = McpChild::spawn(None);
+    initialize(&mut mcp);
+
+    call_ok(&mut mcp, 4, "cam_init", json!({ "path": root }));
+
+    let resp = call_tool(&mut mcp, 5, "cam_ls", json!({ "path": root }));
+    assert_eq!(resp["result"]["isError"], true, "{resp}");
+    let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("cam_index"), "{text}");
+}
+
+#[test]
 fn mcp_unknown_tool_is_error() {
     let mut mcp = McpChild::spawn(None);
     initialize(&mut mcp);

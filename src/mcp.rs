@@ -25,10 +25,11 @@ Main agent: call these MCP tools. Do not shell out to `cam` unless a tool is mis
 
 Workflow:
 1. cam_recall first. Reuse a hit when it is latest and not needs_update.
-2. On miss / stale / needs_update: cam_ls → cam_read (prefer symbol paths) → cam_ref.
-3. After you solve it, cam_add (summary + full body). Use parent to extend an older node.
+2. Before reading code, make sure the graph is indexed: if cam_ls / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
+3. On miss / stale / needs_update: cam_ls → cam_read (prefer symbol paths) → cam_ref.
+4. After you solve it, cam_add (summary + full body). Use parent to extend an older node.
 
-Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description).
+Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
 Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd. cam_init defaults to the server cwd instead of walking up."#;
@@ -317,7 +318,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_ls",
-            "List indexed directories, files, or symbols as a virtual filesystem. Equivalent CLI: cam ls [virt_path]",
+            "List indexed directories, files, or symbols as a virtual filesystem. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ls [virt_path]",
             json!({
                 "type": "object",
                 "properties": {
@@ -331,7 +332,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_read",
-            "Read a file outline or a symbol body. Prefer symbol paths (src/main.rs/main) over --full. Equivalent CLI: cam read <virt_path> [--full]",
+            "Read a file outline or a symbol body. Prefer symbol paths (src/main.rs/main) over --full. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam read <virt_path> [--full]",
             json!({
                 "type": "object",
                 "properties": {
@@ -347,7 +348,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_ref",
-            "One-hop callers (in) or callees (out). Equivalent CLI: cam ref <symbol> --dir in|out",
+            "One-hop callers (in) or callees (out). Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ref <symbol> --dir in|out",
             json!({
                 "type": "object",
                 "properties": {

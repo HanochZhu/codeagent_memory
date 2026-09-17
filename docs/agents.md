@@ -16,8 +16,9 @@ Wire MCP first: [docs/mcp.md](mcp.md) (中文: [docs/mcp.zh.md](mcp.zh.md)).
 Same order for both entry points:
 
 1. **Recall first.** If a hit is `latest` and not `needs_update`, reuse it.
-2. **On miss / stale / needs_update**, walk the code graph: `ls` → `read` (symbol path) → `ref`.
-3. **After you solve it**, `add` a node (optionally hang it under `--parent`).
+2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` / `cam index` once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
+3. **On miss / stale / needs_update**, walk the code graph: `ls` → `read` (symbol path) → `ref`.
+4. **After you solve it**, `add` a node (optionally hang it under `--parent`).
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol.
 
@@ -39,7 +40,7 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_init` / `cam_index` | Once per repo (or after large code moves). |
 
-Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`).
+Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`). `cam_ls` / `cam_read` / `cam_ref` fail with `not_indexed` when the graph is empty; call `cam_index` once, then retry.
 
 ### Paste this into the main agent's rules / AGENTS.md
 
@@ -48,7 +49,7 @@ This repo uses cam (code graph + solution memory).
 
 Main agent: call MCP tools cam_recall / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show. Do not run the cam CLI unless MCP is unavailable.
 
-Workflow: cam_recall first. On miss or needs_update, walk the graph with cam_ls → cam_read (symbol paths) → cam_ref. After solving, cam_add (summary + full body; parent to extend an older node).
+Workflow: cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, walk the graph with cam_ls → cam_read (symbol paths) → cam_ref. After solving, cam_add (summary + full body; parent to extend an older node).
 
 Subagents have no MCP. When you delegate, tell them to run `cam --json` in the project directory (see docs/agents.md).
 ```
@@ -87,7 +88,7 @@ cam --json --project <PROJECT> add --summary "<one line>" --file <path>
 cam --json --project <PROJECT> mem tree
 cam --json --project <PROJECT> mem show <id>
 
-Recall first. On miss, ls → read symbol paths → ref. After solving, add. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
+Recall first. Before reading code, run `cam index` once if the graph is not built. On miss, ls → read symbol paths → ref. After solving, add. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
 ```
 
 ### Mapping

@@ -60,6 +60,7 @@ pub struct RefResult {
 
 pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
     let conn = db::open_db(&project.db_path())?;
+    ensure_graph(project, &conn)?;
     let virt = normalize_virt(virt_path);
     let (file, symbol) = virt_parts(&virt);
 
@@ -83,6 +84,9 @@ pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadResult
     let Some(file) = file else {
         bail!("specify a file or symbol path, e.g. src/main.rs or src/main.rs/main");
     };
+    if !full || symbol.is_some() {
+        ensure_graph(project, &conn)?;
+    }
 
     if let Some(symbol) = symbol {
         return read_symbol(&conn, &project.root, file, symbol);
@@ -109,6 +113,7 @@ pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadResult
 
 pub fn refs(project: &Project, symbol: &str, dir: RefDir) -> Result<RefResult> {
     let conn = db::open_db(&project.db_path())?;
+    ensure_graph(project, &conn)?;
     let nodes = resolve_symbols(&conn, symbol)?;
     if nodes.is_empty() {
         bail!("symbol not found: {symbol}");
@@ -152,6 +157,19 @@ pub fn refs(project: &Project, symbol: &str, dir: RefDir) -> Result<RefResult> {
         direction: dir,
         refs,
     })
+}
+
+fn ensure_graph(project: &Project, conn: &Connection) -> Result<()> {
+    if db::table_count(conn, "files")? > 0 {
+        return Ok(());
+    }
+    if !super::index::project_has_source_files(project)? {
+        return Ok(());
+    }
+    bail!(
+        "code graph not indexed for {}; run `cam index` (MCP cam_index) once, then retry",
+        project.root.display()
+    )
 }
 
 fn looks_indexed_file(conn: &Connection, file: &str) -> Result<bool> {

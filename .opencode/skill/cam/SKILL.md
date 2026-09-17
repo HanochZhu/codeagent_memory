@@ -27,8 +27,9 @@ Prefer the MCP tool when it is available. Do not shell out to `cam` if `cam_*` t
 1. **Recall first.** `cam_recall` (MCP) / `cam recall "<one sentence>"` (CLI). Query in the user's language.
    - Reuse a hit only when it is `latest` and not `needs_update`.
    - `stale` / `needs_update` / no hit → continue.
-2. **Walk the graph** on a miss: `ls` → `read` (symbol path) → `ref`.
-3. **Write back** after solving: `cam_add` with a short `summary` and the full `body`. Set `parent` to extend an older node instead of duplicating.
+2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` (MCP) / `cam index` (CLI) once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
+3. **Walk the graph** on a miss: `ls` → `read` (symbol path) → `ref`.
+4. **Write back** after solving: `cam_add` with a short `summary` and the full `body`. Set `parent` to extend an older node instead of duplicating.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Prefer symbol reads (`src/foo.rs/bar`) over `full`, and prefer `read`/`ls` over opening whole files.
 
