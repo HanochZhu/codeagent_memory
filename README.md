@@ -31,8 +31,8 @@
 
 ## Contents
 
-- [Get Started](#get-started)
 - [Why cam?](#why-cam)
+- [Get Started](#get-started)
 - [Benchmarks](#benchmarks)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
@@ -46,6 +46,21 @@
 - [License](#license)
 
 Usage details: [main agent vs subagent](docs/agents.md) · [MCP configs for each IDE](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+
+## Why cam?
+
+When an AI agent needs to understand code — or reuse what it already learned about this project — it discovers structure the slow way: grep, glob, and Read, one file at a time. Next session it does the same work again.
+
+**cam hands the agent two things it can query in one shell call:**
+
+1. A **code graph** — every indexed file and symbol as a virtual filesystem, plus one-hop callers / callees.
+2. A **memory tree** — habits, project facts, designs, write-ups; recalled with vector + BM25 so the agent does not re-learn the same project.
+
+Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
+
+> One binary, two doors: the **main agent** uses MCP (`cam mcp`); **subagents** usually have no MCP, so they run the same CLI. Configs: [docs/mcp.md](docs/mcp.md). Usage: [docs/agents.md](docs/agents.md).
+
+---
 
 ## Get Started
 
@@ -117,21 +132,6 @@ cam add --summary "..." < notes.md
 Paste that into Cursor `.cursor/mcp.json`, Claude Code `.mcp.json`, or the host's MCP settings. Per-tool files: [docs/mcp.md](docs/mcp.md). Who should call MCP vs CLI: [docs/agents.md](docs/agents.md).
 
 The first `recall` / `add` downloads `potion-multilingual-128M`. If the model is unavailable, `cam` falls back to a hash embedder.
-
----
-
-## Why cam?
-
-When an AI agent needs to understand code — or reuse what it already learned about this project — it discovers structure the slow way: grep, glob, and Read, one file at a time. Next session it does the same work again.
-
-**cam hands the agent two things it can query in one shell call:**
-
-1. A **code graph** — every indexed file and symbol as a virtual filesystem, plus one-hop callers / callees.
-2. A **memory tree** — habits, project facts, designs, write-ups; recalled with vector + BM25 so the agent does not re-learn the same project.
-
-Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
-
-> One binary, two doors: the **main agent** uses MCP (`cam mcp`); **subagents** usually have no MCP, so they run the same CLI. Configs: [docs/mcp.md](docs/mcp.md). Usage: [docs/agents.md](docs/agents.md).
 
 ---
 

@@ -31,8 +31,8 @@
 
 ## 目录
 
-- [开始](#开始)
 - [为什么需要 cam？](#为什么需要-cam)
+- [开始](#开始)
 - [评测](#评测)
 - [能力](#能力)
 - [原理](#原理)
@@ -46,6 +46,21 @@
 - [许可证](#许可证)
 
 详细用法：[主 Agent 与 Subagent](docs/agents.zh.md) · [各 IDE 的 MCP 配置](docs/mcp.zh.md) · [English](docs/agents.md)
+
+## 为什么需要 cam？
+
+Agent 理解代码、复用已经记下的项目结论时，通常靠 grep / glob / Read 一份份翻。下一轮对话又重来一遍。
+
+**cam 给 Agent 两样东西，一条 shell 命令就能查：**
+
+1. **代码图** — 已索引的文件和符号做成虚拟文件系统，外加一跳 callers / callees。
+2. **记忆树** — 用户习惯、项目事实、设计方案、解法说明；用向量 + BM25 召回，避免把同一项目再学一遍。
+
+按符号读，而不是整文件扫。记忆落在本地磁盘，100% 本地。
+
+> 一个二进制，两扇门：**主 Agent** 走 MCP（`cam mcp`）；**Subagent** 通常没有 MCP，跑同一套 CLI。配置见 [docs/mcp.zh.md](docs/mcp.zh.md)，用法见 [docs/agents.zh.md](docs/agents.zh.md)。
+
+---
 
 ## 开始
 
@@ -117,21 +132,6 @@ cam add --summary "..." < notes.md
 贴到 Cursor 的 `.cursor/mcp.json`、Claude Code 的 `.mcp.json`，或宿主自己的 MCP 设置。分工具配置：[docs/mcp.zh.md](docs/mcp.zh.md)。谁走 MCP、谁走 CLI：[docs/agents.zh.md](docs/agents.zh.md)。
 
 首次 `recall` / `add` 会下载 `potion-multilingual-128M`。模型不可用时回退 hash embedder。
-
----
-
-## 为什么需要 cam？
-
-Agent 理解代码、复用已经记下的项目结论时，通常靠 grep / glob / Read 一份份翻。下一轮对话又重来一遍。
-
-**cam 给 Agent 两样东西，一条 shell 命令就能查：**
-
-1. **代码图** — 已索引的文件和符号做成虚拟文件系统，外加一跳 callers / callees。
-2. **记忆树** — 用户习惯、项目事实、设计方案、解法说明；用向量 + BM25 召回，避免把同一项目再学一遍。
-
-按符号读，而不是整文件扫。记忆落在本地磁盘，100% 本地。
-
-> 一个二进制，两扇门：**主 Agent** 走 MCP（`cam mcp`）；**Subagent** 通常没有 MCP，跑同一套 CLI。配置见 [docs/mcp.zh.md](docs/mcp.zh.md)，用法见 [docs/agents.zh.md](docs/agents.zh.md)。
 
 ---
 
