@@ -77,7 +77,7 @@ cam --help
 <summary><b>或者把这段丢给 AI（Cursor、Claude Code、Copilot …）</b></summary>
 
 ```text
-请从 https://github.com/HanochZhu/codeagent_memory 安装 cam：先确认本机有 rustup/cargo，执行 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`，把 ~/.cargo/bin（Windows 为 %USERPROFILE%\.cargo\bin）加入 PATH，用 `cam --help` 验证。然后在当前仓库执行 `cam init` 和 `cam index`。给主 Agent 注册 MCP stdio：command 为 `cam`，args 为 `["mcp"]`（Cursor：.cursor/mcp.json；Claude Code：.mcp.json）。Subagent 在 shell 里跑 `cam --json`。不要额外写说明文档。
+请从 https://github.com/HanochZhu/codeagent_memory 安装 cam：先确认本机有 rustup/cargo，执行 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`，把 ~/.cargo/bin（Windows 为 %USERPROFILE%\.cargo\bin）加入 PATH，用 `cam --help` 验证。然后在当前仓库执行 `cam index`。给主 Agent 注册 MCP stdio：command 为 `cam`，args 为 `["mcp"]`（Cursor：.cursor/mcp.json；Claude Code：.mcp.json）。Subagent 在 shell 里跑 `cam --json`。不要额外写说明文档。
 ```
 
 | 环境 | 怎么用这段话 |
@@ -103,15 +103,14 @@ cargo install --path . --locked
 
 </details>
 
-### 2. 初始化项目
+### 2. 建图
 
 ```bash
 cd your-project
-cam init
 cam index
 ```
 
-<sub>`cam init` 创建 `.cam/` 并登记项目。`cam index` 用 tree-sitter 解析进 `.cam/cam.db`。分成两步是有意的：init 很轻，index 才是重活。</sub>
+<sub>`cam index` 会在需要时自动创建 `.cam/`，再用 tree-sitter 解析进 `.cam/cam.db`。其它命令同样：第一次调用时自动创建 `.cam/`，不用手动跑。</sub>
 
 ### 3. 先查图，再记下答案
 
@@ -275,7 +274,6 @@ python3 eval/charts/generate.py
 **Subagent（CLI）：**
 
 ```text
-cam --json init
 cam --json index
 cam --json ls src/
 cam --json read src/memory/recall.rs/fuse_scores
@@ -294,7 +292,6 @@ cam --json status
 ## 命令一览
 
 ```bash
-cam init                                 # 创建 .cam/ 并登记项目
 cam index                                # tree-sitter 解析进 SQLite
 cam watch [--debounce-ms N]              # 监听源文件；--json 每次 sync 输出一行
 cam sync                                 # 按内容哈希增量更新图
@@ -312,8 +309,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 
 | 命令 | 作用 |
 | --- | --- |
-| `cam init` | 创建 `.cam/`，登记当前项目 |
-| `cam index` | tree-sitter 解析进 SQLite（`.cam/cam.db`） |
+| `cam index` | tree-sitter 解析进 SQLite（`.cam/cam.db`）；没有 `.cam/` 时自动创建 |
 | `cam sync` | 按内容哈希增量更新图 |
 | `cam watch` | 文件监听，静默窗口后自动 `sync` |
 | `cam ls [path]` | 列目录 / 文件 / 符号 |

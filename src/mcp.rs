@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::code::{index_project, ls, read, refs, RefDir};
 use crate::memory::{add_solution, show_solution, solution_tree, Embedder, Fusion};
-use crate::ops::{init_project_from_strings, load_embedder, resolve_project_from_strings};
+use crate::ops::{load_embedder, resolve_project_from_strings};
 use crate::project::Project;
 
 const SERVER_NAME: &str = "cam";
@@ -32,7 +32,7 @@ Workflow:
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
-Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd. cam_init defaults to the server cwd instead of walking up."#;
+Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd, else the server cwd. `.cam/` and the database are created automatically on the first tool call."#;
 
 #[derive(Debug, Clone, Default)]
 pub struct McpContext {
@@ -200,19 +200,8 @@ fn name_unknown(name: &str) -> bool {
 
 fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String> {
     match name {
-        "cam_init" => {
-            let project =
-                init_project_from_strings(arg_str(args, "path"), ctx.default_path.as_deref())
-                    .map_err(err_str)?;
-            let _ = crate::open_db(&project.db_path()).map_err(err_str)?;
-            Ok(json!({
-                "root": project.root.display().to_string(),
-                "db": project.db_path().display().to_string()
-            }))
-        }
         "cam_index" => {
             let project = project_from(args, ctx)?;
-            project.ensure_initialized().map_err(err_str)?;
             to_json(index_project(&project).map_err(err_str)?)
         }
         "cam_ls" => {
@@ -287,24 +276,11 @@ fn tool_text(payload: Value, is_error: bool) -> Value {
 }
 
 fn path_prop() -> Value {
-    json!({ "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd." })
+    json!({ "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd." })
 }
 
 fn tool_defs() -> Vec<Value> {
     vec![
-        tool(
-            "cam_init",
-            "Create .cam/ and initialize the project database. Equivalent CLI: cam init",
-            json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then the server cwd." }
-                },
-                "additionalProperties": false
-            }),
-            false,
-            true,
-        ),
         tool(
             "cam_index",
             "Parse the project with tree-sitter into .cam/cam.db. Equivalent CLI: cam index",
@@ -564,6 +540,7 @@ mod tests {
         assert!(names.contains(&"cam_recall"));
         assert!(names.contains(&"cam_add"));
         assert!(names.contains(&"cam_read"));
+        assert!(!names.contains(&"cam_init"));
     }
 
     #[test]
@@ -574,7 +551,7 @@ mod tests {
             assert_eq!(def["inputSchema"]["properties"]["path"]["type"], "string");
             assert!(!def.to_string().contains("--path"));
             match def["name"].as_str().unwrap() {
-                "cam_init" | "cam_index" | "cam_recall" => {
+                "cam_index" | "cam_recall" => {
                     assert_eq!(def["annotations"]["readOnlyHint"], false);
                     assert_eq!(def["annotations"]["idempotentHint"], true);
                 }

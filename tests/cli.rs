@@ -30,14 +30,6 @@ fn json(out: &Output) -> Value {
     })
 }
 
-fn init_project(home: &Path, root: &Path) {
-    let out = output(
-        home,
-        &["--json", "--project", root.to_str().unwrap(), "init"],
-    );
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-}
-
 fn write_fixture(root: &Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
@@ -60,7 +52,6 @@ fn usage_error_is_json_on_stdout() {
 fn runtime_error_is_json_on_stdout() {
     let home = tempdir().unwrap();
     let root = tempdir().unwrap();
-    init_project(home.path(), root.path());
 
     let out = output(
         home.path(),
@@ -83,7 +74,6 @@ fn runtime_error_is_json_on_stdout() {
 fn json_is_compact_unless_pretty() {
     let home = tempdir().unwrap();
     let root = tempdir().unwrap();
-    init_project(home.path(), root.path());
     let project = root.path().to_str().unwrap();
 
     let compact = output(
@@ -111,7 +101,6 @@ fn add_body_status_and_ref_alias() {
     let home = tempdir().unwrap();
     let root = tempdir().unwrap();
     write_fixture(root.path());
-    init_project(home.path(), root.path());
     let project = root.path().to_str().unwrap();
 
     let indexed = output(
@@ -174,4 +163,25 @@ fn config_set_and_get_roundtrip() {
     let bad = output(home.path(), &["--json", "config", "set", "unknown", "1"]);
     assert_eq!(bad.status.code(), Some(1));
     assert_eq!(json(&bad)["error"]["code"], "usage", "{}", String::from_utf8_lossy(&bad.stdout));
+}
+
+#[test]
+fn first_command_auto_inits() {
+    let home = tempdir().unwrap();
+    let root = tempdir().unwrap();
+    write_fixture(root.path());
+    let project = root.path().to_str().unwrap();
+    assert!(!root.path().join(".cam").exists());
+
+    let indexed = output(
+        home.path(),
+        &["--json", "--project", project, "index"],
+    );
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    assert!(root.path().join(".cam/cam.db").is_file());
+    assert!(json(&indexed)["files"].as_i64().unwrap() >= 1);
 }

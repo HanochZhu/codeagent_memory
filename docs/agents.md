@@ -38,7 +38,7 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). |
 | `cam_add` | Persist the write-up. `summary` + full `body`. Set `parent` to update an older node. |
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
-| `cam_init` / `cam_index` | Once per repo (or after large code moves). |
+| `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
 
 Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`). `cam_ls` / `cam_read` / `cam_ref` fail with `not_indexed` when the graph is empty; call `cam_index` once, then retry.
 
@@ -95,7 +95,6 @@ Recall first. Before reading code, run `cam index` once if the graph is not buil
 
 | MCP (main agent) | CLI (subagent) |
 | --- | --- |
-| `cam_init` | `cam init` |
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |

@@ -164,14 +164,7 @@ fn mcp_stdio_init_add_recall() {
         "method": "ping"
     }));
     assert!(ping.get("result").is_some());
-
-    let init_payload = call_ok(
-        &mut mcp,
-        4,
-        "cam_init",
-        json!({ "path": root }),
-    );
-    assert!(init_payload["root"].as_str().is_some());
+    assert!(!names.contains(&"cam_init"));
 
     let added_payload = call_ok(
         &mut mcp,
@@ -214,12 +207,9 @@ fn mcp_cam_project_beats_server_path() {
     let mut mcp = McpChild::spawn_with(Some(server_dir.path()), Some(env_dir.path()));
     initialize(&mut mcp);
 
-    let payload = call_ok(&mut mcp, 4, "cam_init", json!({}));
-    let root = payload["root"].as_str().unwrap();
-    assert_eq!(
-        std::fs::canonicalize(root).unwrap(),
-        std::fs::canonicalize(env_dir.path()).unwrap()
-    );
+    call_ok(&mut mcp, 4, "cam_mem_tree", json!({}));
+    assert!(env_dir.path().join(".cam/cam.db").is_file());
+    assert!(!server_dir.path().join(".cam").exists());
 }
 
 #[test]
@@ -229,17 +219,14 @@ fn mcp_tool_path_beats_cam_project() {
     let mut mcp = McpChild::spawn_with(None, Some(env_dir.path()));
     initialize(&mut mcp);
 
-    let payload = call_ok(
+    call_ok(
         &mut mcp,
         4,
-        "cam_init",
+        "cam_mem_tree",
         json!({ "path": tool_dir.path().display().to_string() }),
     );
-    let root = payload["root"].as_str().unwrap();
-    assert_eq!(
-        std::fs::canonicalize(root).unwrap(),
-        std::fs::canonicalize(tool_dir.path()).unwrap()
-    );
+    assert!(tool_dir.path().join(".cam/cam.db").is_file());
+    assert!(!env_dir.path().join(".cam").exists());
 }
 
 #[test]
@@ -282,7 +269,7 @@ fn mcp_ignores_legacy_current_project() {
 }
 
 #[test]
-fn mcp_init_does_not_read_or_write_global_config() {
+fn mcp_first_tool_auto_inits_without_touching_global_config() {
     for config in [None, Some("stale_days = 7\ncurrent_project = '/old/project'\n"), Some("invalid = [")] {
         let home = tempdir().unwrap();
         let cwd = tempdir().unwrap();
@@ -294,13 +281,10 @@ fn mcp_init_does_not_read_or_write_global_config() {
         let mut mcp = McpChild::spawn_in(None, None, Some(cwd.path()), Some(home.path()));
         initialize(&mut mcp);
 
-        let first = call_ok(&mut mcp, 2, "cam_init", json!({}));
-        let second = call_ok(&mut mcp, 3, "cam_init", json!({}));
+        let path = cwd.path().display().to_string();
+        let first = call_ok(&mut mcp, 2, "cam_mem_tree", json!({ "path": path }));
+        let second = call_ok(&mut mcp, 3, "cam_mem_tree", json!({ "path": path }));
         assert_eq!(first, second);
-        assert_eq!(
-            std::fs::canonicalize(first["root"].as_str().unwrap()).unwrap(),
-            std::fs::canonicalize(cwd.path()).unwrap()
-        );
         assert!(cwd.path().join(".cam/cam.db").is_file());
         if let Some(text) = config {
             assert_eq!(std::fs::read_to_string(&config_path).unwrap(), text);
@@ -318,8 +302,6 @@ fn mcp_ls_without_index_asks_to_index() {
     let root = dir.path().display().to_string();
     let mut mcp = McpChild::spawn(None);
     initialize(&mut mcp);
-
-    call_ok(&mut mcp, 4, "cam_init", json!({ "path": root }));
 
     let resp = call_tool(&mut mcp, 5, "cam_ls", json!({ "path": root }));
     assert_eq!(resp["result"]["isError"], true, "{resp}");
@@ -349,4 +331,8 @@ fn mcp_help_lists_command() {
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("mcp"), "{text}");
+    assert!(
+        !text.lines().any(|line| line.trim().starts_with("init ")),
+        "{text}"
+    );
 }

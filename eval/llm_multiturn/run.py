@@ -403,7 +403,6 @@ def setup_solutions(cam: Path, data: Path, hash_embed: bool) -> tuple[Path, list
     sessions = json.loads((data / "sessions.json").read_text())
     queries = json.loads((data / "queries.json").read_text())
     tmp = Path(tempfile.mkdtemp(prefix="cam-llm-life-"))
-    cam_json(cam, tmp, ["init"])
     extra = ["--hash-embed"] if hash_embed else []
     for sess in sessions:
         body = f"{sess['id']}\n{sess.get('timestamp') or ''}\n{sess['content']}"
@@ -417,7 +416,6 @@ def setup_code(cam: Path, hash_embed: bool) -> tuple[Path, list[dict], str]:
     tmp = Path(tempfile.mkdtemp(prefix="cam-llm-code-"))
     shutil.copytree(REPO / "src", tmp / "src")
     shutil.copy2(REPO / "DESIGN.md", tmp / "DESIGN.md")
-    cam_json(cam, tmp, ["init"])
     subprocess.check_call([str(cam), "--path", str(tmp), "index"], cwd=tmp)
     extra = ["--hash-embed"] if hash_embed else []
     design = (tmp / "DESIGN.md").read_text()

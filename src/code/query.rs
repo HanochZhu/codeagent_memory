@@ -59,7 +59,7 @@ pub struct RefResult {
 }
 
 pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
-    let conn = db::open_db(&project.db_path())?;
+    let conn = project.connect()?;
     ensure_graph(project, &conn)?;
     let virt = normalize_virt(virt_path);
     let (file, symbol) = virt_parts(&virt);
@@ -78,7 +78,7 @@ pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
 }
 
 pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadResult> {
-    let conn = db::open_db(&project.db_path())?;
+    let conn = project.connect()?;
     let virt = normalize_virt(Some(virt_path));
     let (file, symbol) = virt_parts(&virt);
     let Some(file) = file else {
@@ -112,7 +112,7 @@ pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadResult
 }
 
 pub fn refs(project: &Project, symbol: &str, dir: RefDir) -> Result<RefResult> {
-    let conn = db::open_db(&project.db_path())?;
+    let conn = project.connect()?;
     ensure_graph(project, &conn)?;
     let nodes = resolve_symbols(&conn, symbol)?;
     if nodes.is_empty() {

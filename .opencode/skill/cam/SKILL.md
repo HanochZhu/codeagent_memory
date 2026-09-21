@@ -10,13 +10,13 @@ description: Use when a repo has a `.cam/` directory, or the user asks whether a
 - **Code graph** — every indexed file and symbol as a virtual filesystem, plus one-hop callers / callees.
 - **Solution tree** — past write-ups, recalled with vector + BM25 so you do not re-solve the same problem.
 
-Check for a `.cam/` directory at the project root. If the repo is not initialized yet, run `cam init` then `cam index` once.
+Check for a `.cam/` directory at the project root. If the graph is not built yet, run `cam index` once; `.cam/` is created automatically.
 
 ## Who calls what
 
 | Caller | Interface |
 | --- | --- |
-| **Main agent** (this session) | MCP tools `cam_init`, `cam_index`, `cam_ls`, `cam_read`, `cam_ref`, `cam_recall`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
+| **Main agent** (this session) | MCP tools `cam_index`, `cam_ls`, `cam_read`, `cam_ref`, `cam_recall`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
 | **Subagent** (Task / explore / delegated) | `cam --json …` in a shell — subagents usually do not get MCP |
 | No MCP wired | Fall back to `cam --json …` |
 
@@ -36,8 +36,7 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 ## Commands
 
 ```text
-cam init                                         # create .cam/, register the project
-cam index                                        # tree-sitter → .cam/cam.db
+cam index                                        # tree-sitter → .cam/cam.db (creates .cam/ if needed)
 cam sync                                         # incremental update for changed files
 cam watch [--debounce-ms N]                      # auto-sync on file changes
 cam ls [virt_path]                               # dirs / files / symbols

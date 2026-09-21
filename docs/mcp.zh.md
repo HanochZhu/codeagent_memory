@@ -9,7 +9,7 @@ cam --project /path/to/project mcp
 
 日志只写 stderr。stdout 只能是 JSON-RPC。
 
-每个工具解析项目根的顺序：参数 `path` → 环境变量 `CAM_PROJECT` → 启动服务时的 `--project` → 向上找 `.cam` / `.git`。
+每个工具解析项目根的顺序：参数 `path` → 环境变量 `CAM_PROJECT` → 启动服务时的 `--project` → 向上找 `.cam` / `.git` → 服务进程的当前目录。第一次调用工具时会自动创建 `.cam/` 和数据库。
 
 宿主进程必须能在 PATH 里找到 `cam`。Windows 安装位置一般是 `%USERPROFILE%\.cargo\bin`。找不到就在 `command` 里写 `cam.exe` 的绝对路径。
 
@@ -19,7 +19,6 @@ cam --project /path/to/project mcp
 
 | 工具 | 对应 CLI |
 | --- | --- |
-| `cam_init` | `cam init` |
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |

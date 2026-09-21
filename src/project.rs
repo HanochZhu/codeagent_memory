@@ -1,7 +1,7 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+use rusqlite::Connection;
 
 use crate::config::walk_up_for;
 
@@ -24,14 +24,10 @@ impl Project {
         }
 
         let cwd = std::env::current_dir()?;
-        if let Some(root) = walk_up_for(&cwd, CAM_DIR) {
-            return Ok(Self { root });
-        }
-        if let Some(root) = walk_up_for(&cwd, ".git") {
-            return Ok(Self { root });
-        }
-
-        bail!("no project found; run `cam init` in a project directory")
+        let root = walk_up_for(&cwd, CAM_DIR)
+            .or_else(|| walk_up_for(&cwd, ".git"))
+            .unwrap_or(cwd);
+        Ok(Self { root })
     }
 
     pub fn cam_dir(&self) -> PathBuf {
@@ -43,19 +39,21 @@ impl Project {
     }
 
     pub fn init(path: Option<&Path>) -> Result<Self> {
-        let root = match path {
-            Some(p) => p
-                .canonicalize()
-                .with_context(|| format!("cannot resolve {}", p.display()))?,
-            None => std::env::current_dir()?,
+        let project = match path {
+            Some(p) => Self::resolve(Some(p))?,
+            None => Self {
+                root: std::env::current_dir()?,
+            },
         };
-        let project = Self { root };
-        fs::create_dir_all(project.cam_dir())?;
+        project.ensure_initialized()?;
         Ok(project)
     }
 
     pub fn ensure_initialized(&self) -> Result<()> {
-        fs::create_dir_all(self.cam_dir())?;
-        Ok(())
+        self.connect().map(|_| ())
+    }
+
+    pub(crate) fn connect(&self) -> Result<Connection> {
+        crate::db::open_db(&self.db_path())
     }
 }

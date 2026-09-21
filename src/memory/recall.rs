@@ -9,7 +9,6 @@ use super::add::{escape_fts_query, tokenize_for_fts};
 use super::ebbinghaus::{c0, needs_update, retention, strengthen};
 use super::embed::{cosine, decode_f32, Embedder};
 use crate::config::Config;
-use crate::db;
 use crate::project::Project;
 
 const POOL: usize = 20;
@@ -163,7 +162,7 @@ pub fn recall(
     limit: usize,
     fusion: Fusion,
 ) -> Result<Vec<RecallHit>> {
-    let conn = db::open_db(&project.db_path())?;
+    let conn = project.connect()?;
     let cfg = Config::load()?;
     let q_vec = embedder.embed(query)?;
 

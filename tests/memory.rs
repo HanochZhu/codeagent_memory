@@ -11,13 +11,6 @@ fn cam_bin() -> PathBuf {
 #[test]
 fn add_and_recall_tree() {
     let dir = tempdir().unwrap();
-    let init = Command::new(cam_bin())
-        .args(["--project"])
-        .arg(dir.path())
-        .arg("init")
-        .status()
-        .unwrap();
-    assert!(init.success());
 
     let mut add = Command::new(cam_bin())
         .args(["--json", "--project"])

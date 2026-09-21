@@ -14,49 +14,26 @@ fn cam_project_env() -> Option<PathBuf> {
     Some(PathBuf::from(trimmed))
 }
 
-/// Resolve a project root.
+/// Resolve a project root and create `.cam/` plus the database if missing.
 ///
-/// Order: explicit path, `CAM_PROJECT`, then `.cam` / `.git` walk-up.
+/// Order: explicit path, `CAM_PROJECT`, then `.cam` / `.git` walk-up, else cwd.
 pub fn resolve_project(explicit: Option<&Path>) -> Result<Project> {
-    if let Some(path) = explicit {
-        return Project::resolve(Some(path));
-    }
-    if let Some(env_path) = cam_project_env() {
-        return Project::resolve(Some(&env_path));
-    }
-    Project::resolve(None)
+    let env_path = cam_project_env();
+    let project = Project::resolve(explicit.or(env_path.as_deref()))?;
+    project.ensure_initialized()?;
+    Ok(project)
 }
 
-/// Resolve a project root for an MCP tool call.
+/// Resolve a project root for an MCP tool call and create `.cam/` if missing.
 ///
-/// Order: tool `path`, `CAM_PROJECT`, the server `--project`, then `.cam` / `.git` walk-up.
+/// Order: tool `path`, `CAM_PROJECT`, the server `--project`, then `.cam` / `.git` walk-up, else cwd.
 pub fn resolve_project_from_strings(
     tool_path: Option<&str>,
     default_path: Option<&Path>,
 ) -> Result<Project> {
-    if let Some(path) = tool_path.filter(|s| !s.is_empty()) {
-        return resolve_project(Some(Path::new(path)));
-    }
-    if let Some(env_path) = cam_project_env() {
-        return Project::resolve(Some(&env_path));
-    }
-    resolve_project(default_path)
-}
-
-/// Initialize a project from an MCP tool call.
-///
-/// Order: tool `path`, `CAM_PROJECT`, the server `--project`, then the server cwd.
-pub fn init_project_from_strings(
-    tool_path: Option<&str>,
-    default_path: Option<&Path>,
-) -> Result<Project> {
-    if let Some(path) = tool_path.filter(|s| !s.is_empty()) {
-        return Project::init(Some(Path::new(path)));
-    }
-    if let Some(env_path) = cam_project_env() {
-        return Project::init(Some(&env_path));
-    }
-    Project::init(default_path)
+    let tool = tool_path.filter(|s| !s.is_empty()).map(Path::new);
+    let env = cam_project_env();
+    resolve_project(tool.or(env.as_deref()).or(default_path))
 }
 
 pub fn load_embedder(hash: bool) -> Result<Box<dyn Embedder>> {

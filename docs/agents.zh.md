@@ -38,7 +38,7 @@
 | `cam_ref` | 一跳 callers（`dir=in`）或 callees（`dir=out`） |
 | `cam_add` | 写入解法。`summary` + 完整 `body`。更新旧节点时带 `parent` |
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
-| `cam_init` / `cam_index` | 每个仓库做一次（或代码大挪移之后） |
+| `cam_index` | 每个仓库做一次（或代码大挪移之后）。`.cam/` 会在首次调用时自动创建。 |
 
 工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。图为空时 `cam_ls` / `cam_read` / `cam_ref` 会以 `not_indexed` 失败；先 `cam_index` 一次再重试。
 
@@ -95,7 +95,6 @@ cam --json --project <PROJECT> mem show <id>
 
 | MCP（主 Agent） | CLI（Subagent） |
 | --- | --- |
-| `cam_init` | `cam init` |
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |

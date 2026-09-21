@@ -39,14 +39,6 @@ fn index_ls_read_ref() {
     let dir = tempdir().unwrap();
     write_fixture(dir.path());
 
-    let status = Command::new(cam_bin())
-        .args(["--json", "--project"])
-        .arg(dir.path())
-        .arg("init")
-        .status()
-        .unwrap();
-    assert!(status.success());
-
     let out = Command::new(cam_bin())
         .args(["--json", "--project"])
         .arg(dir.path())
@@ -121,14 +113,6 @@ fn index_ls_read_ref() {
 fn sync_updates_changed_added_and_removed_files() {
     let dir = tempdir().unwrap();
     write_fixture(dir.path());
-
-    let status = Command::new(cam_bin())
-        .args(["--json", "--project"])
-        .arg(dir.path())
-        .arg("init")
-        .status()
-        .unwrap();
-    assert!(status.success());
 
     let index = Command::new(cam_bin())
         .args(["--json", "--project"])

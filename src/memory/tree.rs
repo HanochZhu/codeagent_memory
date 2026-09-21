@@ -2,7 +2,6 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::db;
 use crate::memory::ebbinghaus::{c0, needs_update, retention};
 use crate::project::Project;
 
@@ -28,7 +27,7 @@ pub struct SolutionView {
 }
 
 pub fn solution_tree(project: &Project) -> Result<Vec<TreeNode>> {
-    let conn = db::open_db(&project.db_path())?;
+    let conn = project.connect()?;
     let mut stmt =
         conn.prepare("SELECT id, parent_id, summary FROM solutions ORDER BY created_at")?;
     let rows = stmt
@@ -55,7 +54,7 @@ pub fn solution_tree(project: &Project) -> Result<Vec<TreeNode>> {
 }
 
 pub fn show_solution(project: &Project, id: &str) -> Result<SolutionView> {
-    let conn = db::open_db(&project.db_path())?;
+    let conn = project.connect()?;
     let cfg = Config::load()?;
     let found = conn.query_row(
         "SELECT id, parent_id, summary, body, created_at, updated_at, recalled_at, stability

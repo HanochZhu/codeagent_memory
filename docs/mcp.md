@@ -9,7 +9,7 @@ cam --project /path/to/project mcp
 
 Logs go to stderr. stdout is JSON-RPC only.
 
-Project resolution for every tool: argument `path` → env `CAM_PROJECT` → `--project` used to start the server → walk up for `.cam` / `.git`.
+Project resolution for every tool: argument `path` → env `CAM_PROJECT` → `--project` used to start the server → walk up for `.cam` / `.git` → server cwd. `.cam/` and the database are created automatically on the first tool call.
 
 Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USERPROFILE%\.cargo\bin`. If the host cannot find `cam`, put the full path to `cam` / `cam.exe` in `command`.
 
@@ -19,7 +19,6 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 
 | Tool | CLI equivalent |
 | --- | --- |
-| `cam_init` | `cam init` |
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |

@@ -77,7 +77,7 @@ cam --help
 <summary><b>Paste this into an AI instead (Cursor, Claude Code, Copilot, …)</b></summary>
 
 ```text
-Install cam from https://github.com/HanochZhu/codeagent_memory: require a working Rust toolchain (rustup), run `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, ensure ~/.cargo/bin (or %USERPROFILE%\.cargo\bin on Windows) is on PATH, then verify with `cam --help`. In this repo run `cam init` and `cam index`. For the main agent, register MCP stdio: command `cam`, args `["mcp"]` (Cursor: .cursor/mcp.json; Claude Code: .mcp.json). Subagents call `cam --json` in the shell. Do not add extra docs.
+Install cam from https://github.com/HanochZhu/codeagent_memory: require a working Rust toolchain (rustup), run `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, ensure ~/.cargo/bin (or %USERPROFILE%\.cargo\bin on Windows) is on PATH, then verify with `cam --help`. In this repo run `cam index`. For the main agent, register MCP stdio: command `cam`, args `["mcp"]` (Cursor: .cursor/mcp.json; Claude Code: .mcp.json). Subagents call `cam --json` in the shell. Do not add extra docs.
 ```
 
 | Environment | How to use it |
@@ -103,15 +103,14 @@ cargo install --path . --locked
 
 </details>
 
-### 2. Initialize the project
+### 2. Index the project
 
 ```bash
 cd your-project
-cam init
 cam index
 ```
 
-<sub>`cam init` creates `.cam/` and registers the project. `cam index` parses the tree with tree-sitter into `.cam/cam.db`. These are two steps on purpose: init is cheap, index is the work. Leave `cam watch` running if you want the graph to follow later edits.</sub>
+<sub>`cam index` creates `.cam/` if needed and parses the tree with tree-sitter into `.cam/cam.db`. Other commands do the same: they auto-init on first use. Leave `cam watch` running if you want the graph to follow later edits.</sub>
 
 ### 3. Ask the graph, then remember the answer
 
@@ -276,7 +275,6 @@ Design notes (Chinese): [DESIGN.md](DESIGN.md).
 **Subagent (CLI):**
 
 ```text
-cam --json init
 cam --json index
 cam --json sync
 cam --json watch
@@ -298,7 +296,6 @@ Global flags: `--project <dir>`, `--json` (compact JSON), `--pretty` (pretty JSO
 ## CLI Reference
 
 ```bash
-cam init                                 # Create .cam/ and register the project
 cam index                                # Parse the project with tree-sitter into SQLite
 cam sync                                 # Incrementally update the graph for changed files
 cam watch [--debounce-ms N]              # Watch source files; --json streams one report per sync
@@ -316,8 +313,7 @@ cam mcp                                  # MCP stdio server for the main agent
 
 | Command | What it does |
 | --- | --- |
-| `cam init` | Create `.cam/` and register the project |
-| `cam index` | Parse with tree-sitter into SQLite (`.cam/cam.db`) |
+| `cam index` | Parse with tree-sitter into SQLite (`.cam/cam.db`); creates `.cam/` if needed |
 | `cam sync` | Incrementally update the graph from content hashes |
 | `cam watch` | Debounced file watcher that runs `sync` on source changes |
 | `cam ls [path]` | List directories / files / symbols |

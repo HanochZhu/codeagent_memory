@@ -138,7 +138,6 @@ def main() -> int:
 
         with tempfile.TemporaryDirectory(prefix="cam-life-") as tmp:
             root = Path(tmp)
-            cam_json(cam, root, ["init"], env=env)
             for sess in sessions:
                 body = f"{sess['id']}\n{sess.get('timestamp') or ''}\n{sess['content']}"
                 summary = f"{sess['id']}: {sess['content'].splitlines()[0][:80]}"

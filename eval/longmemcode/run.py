@@ -110,7 +110,6 @@ def index_corpus(backend: str, corpus: Path) -> None:
             subprocess.check_call([bin_, "index", str(corpus)], cwd=corpus)
         return
     cam = cam_bin()
-    subprocess.check_call([str(cam), "--path", str(corpus), "init"], cwd=corpus)
     subprocess.check_call([str(cam), "--path", str(corpus), "index"], cwd=corpus)
 
 

@@ -51,7 +51,6 @@ cam 有两面：
 Subagent（CLI）：
 
 ```text
-cam --json init
 cam --json index
 cam --json sync
 cam --json watch

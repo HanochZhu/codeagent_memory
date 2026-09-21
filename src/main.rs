@@ -8,7 +8,7 @@ use cam::code::{
     DEFAULT_DEBOUNCE_MS,
 };
 use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion};
-use cam::ops::{init_project_from_strings, load_embedder, resolve_project};
+use cam::ops::{load_embedder, resolve_project};
 use cam::output::{emit_error_json, emit_json, emit_text};
 use cam::project::Project;
 use cam::Config;
@@ -19,7 +19,7 @@ use serde::Serialize;
 #[derive(Parser)]
 #[command(name = "cam", version, about = "CodeAgent memory: code graph + memory (CLI + MCP)")]
 struct Cli {
-    /// Project root (otherwise CAM_PROJECT, then walk up for .cam / .git)
+    /// Project root (otherwise CAM_PROJECT, then .cam / .git walk-up, else cwd)
     #[arg(long, global = true, value_name = "DIR")]
     project: Option<PathBuf>,
     /// Print compact JSON instead of text
@@ -34,8 +34,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create .cam/ and register the project
-    Init,
     /// Parse the project with tree-sitter into SQLite
     Index,
     /// Incrementally update the graph for files that changed
@@ -196,25 +194,11 @@ fn classify_error(err: &anyhow::Error) -> &'static str {
 fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
     let project_arg = cli.project.as_deref();
     match cli.command {
-        Command::Init => {
-            let project = init_project_from_strings(None, project_arg)?;
-            let _ = cam::open_db(&project.db_path())?;
-            let payload = InitOut {
-                root: project.root.display().to_string(),
-                db: project.db_path().display().to_string(),
-            };
-            if json {
-                emit_json(&payload, pretty)?;
-            } else {
-                emit_text(format!("initialized {}", payload.root));
-            }
-        }
         Command::Mcp => {
             cam::mcp::serve_stdio(project_arg)?;
         }
         Command::Index => {
             let project = resolve_project(project_arg)?;
-            project.ensure_initialized()?;
             let report = index_project(&project)?;
             if json {
                 emit_json(&report, pretty)?;
@@ -227,7 +211,6 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         }
         Command::Sync => {
             let project = resolve_project(project_arg)?;
-            project.ensure_initialized()?;
             let report = sync_project(&project)?;
             if json {
                 emit_json(&report, pretty)?;
@@ -237,7 +220,6 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         }
         Command::Watch { debounce_ms } => {
             let project = resolve_project(project_arg)?;
-            project.ensure_initialized()?;
             let debounce_ms = clamp_debounce_ms(debounce_ms);
             if !json {
                 emit_text(format!(
@@ -548,12 +530,6 @@ fn collect_status(project: &Project) -> Result<StatusOut> {
 }
 
 #[derive(Serialize)]
-struct InitOut {
-    root: String,
-    db: String,
-}
-
-#[derive(Serialize)]
 struct StatusOut {
     root: String,
     db: String,
@@ -578,9 +554,7 @@ mod tests {
             "not_found"
         );
         assert_eq!(
-            classify_error(&anyhow::anyhow!(
-                "no project found; run `cam init` in a project directory"
-            )),
+            classify_error(&anyhow::anyhow!("no project found")),
             "not_found"
         );
         assert_eq!(
