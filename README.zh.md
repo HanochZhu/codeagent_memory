@@ -4,7 +4,7 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### 给 Claude Code、Cursor、Codex、Windsurf、Copilot、JetBrains 一套本地记忆 — 主 Agent 走 MCP，Subagent 走 CLI
+### 更低的 token 消耗，更少的工具轮次 — 只需要一个本地记忆系统
 
 **代码图 + 记忆 · 按符号读代码 · 100% 本地 · MCP + CLI**
 

@@ -4,7 +4,7 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### Give code agent a local memory — MCP for the main agent, CLI for subagents
+### Fewer tokens, fewer tool round-trips — one local memory is all it takes
 
 **Code graph + memory · surgical reads · 100% local · MCP + CLI**
 
