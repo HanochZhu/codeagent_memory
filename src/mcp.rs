@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::code::{index_project, ls, read, refs, RefDir};
-use crate::memory::{add_solution, show_solution, solution_tree, Embedder, Fusion};
+use crate::memory::{add_solution, show_solution, solution_tree, Embedder, Fusion, RecallOptions};
 use crate::ops::{load_embedder, resolve_project_from_strings};
 use crate::project::Project;
 
@@ -223,12 +223,14 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
         "cam_recall" => {
             let project = project_from(args, ctx)?;
             let query = required_str(args, "query")?;
-            let limit = arg_usize(args, "limit").unwrap_or(3);
-            let fusion = parse_fusion(arg_str(args, "fusion"))?;
+            let opts = RecallOptions {
+                limit: arg_usize(args, "limit").unwrap_or(3),
+                fusion: parse_fusion(arg_str(args, "fusion"))?,
+                expand: arg_bool(args, "expand").unwrap_or(true),
+            };
             let embedder = embedder_from(args)?;
             to_json(
-                crate::memory::recall(&project, embedder.as_ref(), query, limit, fusion)
-                    .map_err(err_str)?,
+                crate::memory::recall(&project, embedder.as_ref(), query, opts).map_err(err_str)?,
             )
         }
         "cam_add" => {
@@ -340,13 +342,14 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_recall",
-            "Hybrid recall (vector + BM25 fused with RRF by default) plus Ebbinghaus retention. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum]",
+            "Hybrid recall (vector + BM25 fused with RRF by default) plus Ebbinghaus retention. Also pulls in the newest revision of whatever matched, so `latest` is the current answer. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand]",
             json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "One-sentence question, usually in the user's language." },
                     "limit": { "type": "integer", "minimum": 1, "default": 3 },
                     "fusion": { "type": "string", "enum": ["rrf", "sum"], "default": "rrf", "description": "Score fusion: rrf (default) or min-max sum." },
+                    "expand": { "type": "boolean", "default": true, "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list." },
                     "path": path_prop(),
                     "hash_embed": { "type": "boolean", "description": "Use the test hash embedder instead of model2vec." }
                 },

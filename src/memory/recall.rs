@@ -18,8 +18,7 @@ const POOL: usize = 20;
 const RRF_K: f32 = 60.0;
 /// Fraction of the fused score a chain tail inherits from the seed that pulled
 /// it in, so structure alone does not look like a strong topical match. It only
-/// discounts the fused part; retention is added afterwards, and `latest` sorts
-/// ahead of score, so a pulled-in tail still leads the results.
+/// discounts the fused part; Ebbinghaus retention is added on top afterwards.
 const EXPAND_DECAY: f32 = 0.5;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize)]
@@ -77,18 +76,16 @@ fn merge_hits(hits: &[RawHit]) -> HashMap<String, (Option<f32>, Option<f32>)> {
     by_id
 }
 
-pub fn fuse_scores(hits: &[RawHit]) -> Vec<(String, f32)> {
-    fuse_sum(hits)
-}
-
 pub fn fuse(hits: &[RawHit], fusion: Fusion) -> Vec<(String, f32)> {
     match fusion {
-        Fusion::Sum => fuse_sum(hits),
+        Fusion::Sum => fuse_scores(hits),
         Fusion::Rrf => fuse_rrf(hits, RRF_K),
     }
 }
 
-fn fuse_sum(hits: &[RawHit]) -> Vec<(String, f32)> {
+/// Min-max each ranked list to `[0, 1]` and sum. A document missing from a list
+/// contributes 0 for that list.
+pub fn fuse_scores(hits: &[RawHit]) -> Vec<(String, f32)> {
     let by_id = merge_hits(hits);
     let vec_vals: Vec<f32> = by_id.values().filter_map(|v| v.0).collect();
     let bm25_vals: Vec<f32> = by_id.values().filter_map(|v| v.1).collect();
@@ -160,12 +157,31 @@ fn min_max(value: Option<f32>, all: &[f32]) -> f32 {
     (value - min) / (max - min)
 }
 
+/// Knobs for one `recall` call.
+#[derive(Debug, Clone, Copy)]
+pub struct RecallOptions {
+    pub limit: usize,
+    pub fusion: Fusion,
+    /// Also pull in the newest revision of whatever the query matched, even
+    /// when that revision matches neither the vector nor the BM25 path.
+    pub expand: bool,
+}
+
+impl Default for RecallOptions {
+    fn default() -> Self {
+        Self {
+            limit: 3,
+            fusion: Fusion::Rrf,
+            expand: true,
+        }
+    }
+}
+
 pub fn recall(
     project: &Project,
     embedder: &dyn Embedder,
     query: &str,
-    limit: usize,
-    fusion: Fusion,
+    opts: RecallOptions,
 ) -> Result<Vec<RecallHit>> {
     let conn = project.connect()?;
     let cfg = Config::load()?;
@@ -225,17 +241,16 @@ pub fn recall(
         }
     }
 
-    let fused = match fusion {
-        Fusion::Sum => fuse_scores(&raw),
-        Fusion::Rrf => fuse_rrf(&raw, RRF_K),
-    };
-    let seeds = if crate::ops::env_flag("CAM_NO_EXPAND") {
-        0
-    } else {
-        limit.max(1)
-    };
+    let fused = fuse(&raw, opts.fusion);
+    let seeds = if opts.expand { opts.limit.max(1) } else { 0 };
     let mut chains = ChainIndex::default();
-    let candidates = expand_lineage(&conn, &mut chains, &fused, seeds)?;
+    let expanded = chain_tails(&conn, &mut chains, &fused, seeds)?;
+    // Structure is not a recall. A tail that only got here through its chain
+    // must not refresh retention, or a hot memory would keep its whole lineage
+    // permanently fresh.
+    let pulled_in: std::collections::HashSet<String> =
+        expanded.iter().map(|(id, _)| id.clone()).collect();
+    let candidates: Vec<(String, f32)> = fused.into_iter().chain(expanded).collect();
     let now = chrono::Utc::now().timestamp();
     let mut hits = Vec::new();
     for (id, score) in candidates {
@@ -279,30 +294,30 @@ pub fn recall(
     }
 
     hits.sort_by(|a, b| {
-        b.latest
-            .cmp(&a.latest)
-            .then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
-    hits.truncate(limit.max(1));
+    hits.truncate(opts.limit.max(1));
 
     for hit in &mut hits {
         hit.path = breadcrumb(&conn, &hit.id)?;
     }
     for hit in &hits {
-        if !hit.needs_update {
+        if !hit.needs_update && !pulled_in.contains(&hit.id) {
             refresh_c0(&conn, &hit.id, now)?;
         }
     }
     Ok(hits)
 }
 
-/// Chain-tail expansion over the top `seeds` of the fused list.
+/// Chain tails worth adding to the fused list, scored off the top `seeds`.
 ///
 /// A revision is stored as a new child rather than an edit, so the newest node
 /// on a chain often shares no wording with the query and neither the vector nor
 /// the BM25 path can reach it. Pulling the tail in keeps the current answer
 /// reachable even when the query only matches a revision several steps behind.
-fn expand_lineage(
+fn chain_tails(
     conn: &rusqlite::Connection,
     chains: &mut ChainIndex,
     fused: &[(String, f32)],
@@ -322,12 +337,9 @@ fn expand_lineage(
         *best = best.max(decayed);
     }
 
-    let mut extra: Vec<(String, f32)> = added.into_iter().collect();
-    sort_desc(&mut extra);
-
-    let mut candidates = fused.to_vec();
-    candidates.extend(extra);
-    Ok(candidates)
+    let mut tails: Vec<(String, f32)> = added.into_iter().collect();
+    sort_desc(&mut tails);
+    Ok(tails)
 }
 
 /// Memoised chain lookups. Resolving one member caches the tail for the whole
@@ -433,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_lineage_pulls_in_the_tail_two_hops_away() {
+    fn chain_tails_reaches_a_tail_two_hops_away() {
         let dir = tempdir().unwrap();
         let project = Project {
             root: dir.path().to_path_buf(),
@@ -444,17 +456,16 @@ mod tests {
 
         let conn = project.connect().unwrap();
         let mut chains = ChainIndex::default();
-        let candidates = expand_lineage(&conn, &mut chains, &[(seed.clone(), 2.0)], 1).unwrap();
+        let tails = chain_tails(&conn, &mut chains, &[(seed, 2.0)], 1).unwrap();
 
-        let scores: HashMap<String, f32> = candidates.into_iter().collect();
-        assert_eq!(scores.len(), 2, "only the tail joins the seed");
-        assert!((scores[&seed] - 2.0).abs() < 1e-5);
-        assert!((scores[&tail] - 1.0).abs() < 1e-5);
-        assert!(!scores.contains_key(&root), "a superseded ancestor stays out");
+        assert_eq!(tails.len(), 1, "a superseded ancestor stays out: {tails:?}");
+        assert_eq!(tails[0].0, tail);
+        assert!((tails[0].1 - 1.0).abs() < 1e-5);
+        assert_ne!(tails[0].0, root);
     }
 
     #[test]
-    fn expand_lineage_leaves_matched_scores_alone() {
+    fn chain_tails_skips_a_tail_the_query_already_matched() {
         let dir = tempdir().unwrap();
         let project = Project {
             root: dir.path().to_path_buf(),
@@ -464,12 +475,9 @@ mod tests {
 
         let conn = project.connect().unwrap();
         let mut chains = ChainIndex::default();
-        let fused = [(root, 2.0), (tail.clone(), 0.2)];
-        let candidates = expand_lineage(&conn, &mut chains, &fused, 2).unwrap();
+        let tails = chain_tails(&conn, &mut chains, &[(root, 2.0), (tail, 0.2)], 2).unwrap();
 
-        assert_eq!(candidates.len(), 2);
-        let scores: HashMap<String, f32> = candidates.into_iter().collect();
-        assert!((scores[&tail] - 0.2).abs() < 1e-5);
+        assert!(tails.is_empty(), "{tails:?}");
     }
 
     #[test]
@@ -483,9 +491,9 @@ mod tests {
 
         let conn = project.connect().unwrap();
         let mut chains = ChainIndex::default();
-        let candidates = expand_lineage(&conn, &mut chains, &[(root, 2.0)], 0).unwrap();
+        let tails = chain_tails(&conn, &mut chains, &[(root, 2.0)], 0).unwrap();
 
-        assert_eq!(candidates.len(), 1);
+        assert!(tails.is_empty(), "{tails:?}");
     }
 
     #[test]
@@ -514,7 +522,16 @@ mod tests {
             Some(&mid),
         );
 
-        let hits = recall(&project, &embedder, "retry policy backoff", 5, Fusion::Rrf).unwrap();
+        let hits = recall(
+            &project,
+            &embedder,
+            "retry policy backoff",
+            RecallOptions {
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
         assert!(ids.contains(&root.as_str()), "{ids:?}");
         assert!(ids.contains(&mid.as_str()), "{ids:?}");
@@ -551,13 +568,72 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let hits = recall(&project, &embedder, "bm25 and vectors", 3, Fusion::Rrf).unwrap();
+        let hits = recall(
+            &project,
+            &embedder,
+            "bm25 and vectors",
+            RecallOptions::default(),
+        )
+        .unwrap();
         let pulled_in = hits
             .iter()
             .find(|h| h.id == revision)
             .expect("revision reached only through its parent");
         assert!(pulled_in.latest);
         assert!(!hits.iter().find(|h| h.id == old).unwrap().latest);
+    }
+
+    #[test]
+    fn a_structure_pulled_tail_does_not_refresh_retention() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let matched = add(
+            &project,
+            "multi path recall fuses bm25 and vectors",
+            "min-max each path then sum",
+            None,
+        );
+        let revision = add(&project, "zzz", "zzz", Some(&matched));
+
+        let conn = project.connect().unwrap();
+        conn.execute(
+            "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id = ?1",
+            [&revision],
+        )
+        .unwrap();
+        let before = stability_of(&conn, &revision);
+        drop(conn);
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "bm25 and vectors",
+            RecallOptions::default(),
+        )
+        .unwrap();
+        assert!(hits.iter().any(|h| h.id == revision), "{hits:?}");
+
+        let conn = project.connect().unwrap();
+        assert!(
+            (stability_of(&conn, &revision) - before).abs() < 1e-9,
+            "structure alone must not strengthen a memory"
+        );
+        assert!(
+            stability_of(&conn, &matched) > before,
+            "the genuine match is still strengthened"
+        );
+    }
+
+    fn stability_of(conn: &rusqlite::Connection, id: &str) -> f64 {
+        conn.query_row(
+            "SELECT stability FROM solutions WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap()
     }
 
     #[test]

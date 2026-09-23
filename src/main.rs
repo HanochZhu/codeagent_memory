@@ -7,7 +7,7 @@ use cam::code::{
     clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, RefDir,
     DEFAULT_DEBOUNCE_MS,
 };
-use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion};
+use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion, RecallOptions};
 use cam::ops::{load_embedder, resolve_project};
 use cam::output::{emit_error_json, emit_json, emit_text};
 use cam::project::Project;
@@ -73,6 +73,9 @@ enum Command {
         /// Score fusion: RRF (default) or min-max sum
         #[arg(long, value_enum, default_value_t = Fusion::Rrf)]
         fusion: Fusion,
+        /// Rank the raw fused list only; skip pulling in the newest revision of each match
+        #[arg(long)]
+        no_expand: bool,
         /// Skip model2vec and use the test hash embedder
         #[arg(long, hide = true)]
         hash_embed: bool,
@@ -299,11 +302,17 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             query,
             limit,
             fusion,
+            no_expand,
             hash_embed,
         } => {
             let project = resolve_project(project_arg)?;
             let embedder = load_embedder(hash_embed)?;
-            let hits = cam::memory::recall(&project, embedder.as_ref(), &query, limit, fusion)?;
+            let opts = RecallOptions {
+                limit,
+                fusion,
+                expand: !no_expand,
+            };
+            let hits = cam::memory::recall(&project, embedder.as_ref(), &query, opts)?;
             if json {
                 emit_json(&hits, pretty)?;
             } else if hits.is_empty() {

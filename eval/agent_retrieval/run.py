@@ -27,21 +27,13 @@ from agent_retrieval_bench.bcy_curve import CorpusFileCache, pack_files
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import dataset  # noqa: E402
+from eval_paths import cam_binary, dataset  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DEFAULT_BENCHMARK = dataset("agent_retrieval_benchmark")
 DEFAULT_CORPUS = dataset("agent_retrieval_corpus")
 SUPPORTED_EXTENSIONS = {".go", ".js", ".jsx", ".py", ".rs", ".ts", ".tsx"}
-
-
-def find_cam_binary() -> Path | None:
-    for name in ("cam.exe", "cam"):
-        candidate = REPO / "target" / "debug" / name
-        if candidate.exists():
-            return candidate
-    return None
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -53,17 +45,7 @@ def read_jsonl(path: Path) -> list[dict]:
 
 
 def cam_bin() -> Path:
-    configured = os.environ.get("CAM_BIN")
-    if configured:
-        return Path(configured)
-    candidate = find_cam_binary()
-    if candidate:
-        return candidate
-    subprocess.check_call(["cargo", "build", "-q"], cwd=REPO)
-    candidate = find_cam_binary()
-    if candidate:
-        return candidate
-    raise FileNotFoundError("cargo build completed but the cam binary was not found")
+    return cam_binary()
 
 
 def corpus_manifest(corpus_dir: Path) -> dict[tuple[str, str], Path]:

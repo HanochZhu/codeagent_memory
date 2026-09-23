@@ -48,11 +48,18 @@ def svg_escape(text: str) -> str:
 
 
 def latest_life() -> dict[str, dict]:
+    """Newest run per system on the flat corpus.
+
+    `--lineage` runs share the adapter and fusion of a flat run, so without the
+    corpus check a revision-chain run would silently redraw the headline chart.
+    """
     found: dict[str, tuple[float, dict]] = {}
     for path in (EVAL / "coding_life" / "results").glob("cam-life-*.json"):
         data = json.loads(path.read_text())
         summary = data["summary"]
         adapter = summary.get("adapter") or "cam"
+        if (summary.get("corpus") or "flat") != "flat":
+            continue
         fusion = summary.get("fusion")
         key = "grep" if adapter == "grep" else f"cam-{fusion or 'sum'}"
         mtime = path.stat().st_mtime
@@ -250,64 +257,78 @@ def main() -> None:
         y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
     )
 
-    cam_ops = load_op(EVAL / "longmemcode" / "results" / "cam-clap-20260915-214803.json", "cam")
-    cg_ops = load_op(EVAL / "longmemcode" / "results" / "codegraph-clap-20260914-222758.json", "codegraph")
-    bar_chart(
-        HERE / "code-graph-bars.svg",
-        title="LongMemCode clap · accuracy (cam vs codegraph)",
-        labels=OPS,
-        series=[
-            ("cam", BLUE, cam_ops),
-            ("codegraph", ORANGE, cg_ops),
-        ],
-        y_max=1.0,
-        y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
-    )
-    line_chart(
-        HERE / "code-graph.svg",
-        title="LongMemCode clap · accuracy by operation",
-        labels=OPS,
-        series=[
-            ("cam", BLUE, cam_ops, ""),
-            ("codegraph", ORANGE, cg_ops, "6 4"),
-        ],
-        y_max=1.0,
-        y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
-    )
+    # results/ is gitignored, so a checkout that only re-ran the memory bench
+    # has none of these. Redraw what the data supports instead of failing.
+    skipped = []
+    cam_path = EVAL / "longmemcode" / "results" / "cam-clap-20260915-214803.json"
+    cg_path = EVAL / "longmemcode" / "results" / "codegraph-clap-20260914-222758.json"
+    if cam_path.exists() and cg_path.exists():
+        cam_ops = load_op(cam_path, "cam")
+        cg_ops = load_op(cg_path, "codegraph")
+        bar_chart(
+            HERE / "code-graph-bars.svg",
+            title="LongMemCode clap · accuracy (cam vs codegraph)",
+            labels=OPS,
+            series=[
+                ("cam", BLUE, cam_ops),
+                ("codegraph", ORANGE, cg_ops),
+            ],
+            y_max=1.0,
+            y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
+        )
+        line_chart(
+            HERE / "code-graph.svg",
+            title="LongMemCode clap · accuracy by operation",
+            labels=OPS,
+            series=[
+                ("cam", BLUE, cam_ops, ""),
+                ("codegraph", ORANGE, cg_ops, "6 4"),
+            ],
+            y_max=1.0,
+            y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
+        )
+    else:
+        skipped.append("code-graph (eval/longmemcode/results)")
 
-    llm = json.loads((EVAL / "llm_multiturn" / "results" / "llm-multiturn-20260915-235953.json").read_text())
-    tracks = llm["summary"]["tracks"]
-    sol = tracks["solutions"]["compare"]
-    code = tracks["code"]["compare"]
-    bar_chart(
-        HERE / "multiturn-bars.svg",
-        title="DeepSeek multi-turn · prompt tokens",
-        labels=["solutions", "code"],
-        series=[
-            ("full dump", GRAY, [sol["full_tokens"], code["full_tokens"]]),
-            ("cam retrieve", BLUE, [sol["cam_tokens"], code["cam_tokens"]]),
-        ],
-        y_max=180000,
-        y_ticks=[0, 45000, 90000, 135000, 180000],
-        y_fmt="{:,.0f}",
-        value_fmt="{:,.0f}",
-        width=560,
-    )
-    line_chart(
-        HERE / "multiturn-tokens.svg",
-        title="DeepSeek multi-turn · prompt tokens (full dump vs cam)",
-        labels=["solutions", "code"],
-        series=[
-            ("full dump", GRAY, [sol["full_tokens"], code["full_tokens"]], ""),
-            ("cam retrieve", BLUE, [sol["cam_tokens"], code["cam_tokens"]], ""),
-        ],
-        y_max=180000,
-        y_ticks=[0, 45000, 90000, 135000, 180000],
-        y_fmt="{:,.0f}",
-        width=560,
-        height=300,
-    )
+    llm_path = EVAL / "llm_multiturn" / "results" / "llm-multiturn-20260915-235953.json"
+    if llm_path.exists():
+        tracks = json.loads(llm_path.read_text())["summary"]["tracks"]
+        sol = tracks["solutions"]["compare"]
+        code = tracks["code"]["compare"]
+        bar_chart(
+            HERE / "multiturn-bars.svg",
+            title="DeepSeek multi-turn · prompt tokens",
+            labels=["solutions", "code"],
+            series=[
+                ("full dump", GRAY, [sol["full_tokens"], code["full_tokens"]]),
+                ("cam retrieve", BLUE, [sol["cam_tokens"], code["cam_tokens"]]),
+            ],
+            y_max=180000,
+            y_ticks=[0, 45000, 90000, 135000, 180000],
+            y_fmt="{:,.0f}",
+            value_fmt="{:,.0f}",
+            width=560,
+        )
+        line_chart(
+            HERE / "multiturn-tokens.svg",
+            title="DeepSeek multi-turn · prompt tokens (full dump vs cam)",
+            labels=["solutions", "code"],
+            series=[
+                ("full dump", GRAY, [sol["full_tokens"], code["full_tokens"]], ""),
+                ("cam retrieve", BLUE, [sol["cam_tokens"], code["cam_tokens"]], ""),
+            ],
+            y_max=180000,
+            y_ticks=[0, 45000, 90000, 135000, 180000],
+            y_fmt="{:,.0f}",
+            width=560,
+            height=300,
+        )
+    else:
+        skipped.append("multi-turn (eval/llm_multiturn/results)")
+
     print("wrote", ", ".join(p.name for p in sorted(HERE.glob("*.svg"))))
+    if skipped:
+        print("kept as-is, results missing:", "; ".join(skipped))
 
 
 if __name__ == "__main__":

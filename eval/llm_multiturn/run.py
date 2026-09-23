@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import dataset  # noqa: E402
+from eval_paths import cam_binary, dataset  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -119,14 +119,7 @@ def load_dotenv(path: Path) -> None:
 
 
 def cam_bin() -> Path:
-    env = os.environ.get("CAM_BIN")
-    if env:
-        return Path(env)
-    debug = REPO / "target" / "debug" / "cam"
-    if debug.exists():
-        return debug
-    subprocess.check_call(["cargo", "build", "-q"], cwd=REPO)
-    return debug
+    return cam_binary()
 
 
 def cam_run(

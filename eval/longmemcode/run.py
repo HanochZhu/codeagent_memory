@@ -19,6 +19,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+
+sys.path.insert(0, str(HERE.parent))
+
+from eval_paths import cam_binary  # noqa: E402
+
 SCENARIO_URL = "https://raw.githubusercontent.com/CataDef/LongMemCode/main/scenarios/{name}.json"
 
 CORPORA = {
@@ -76,21 +81,7 @@ def ensure_corpus(name: str) -> Path:
 
 
 def cam_bin() -> Path:
-    env = os.environ.get("CAM_BIN")
-    if env:
-        return Path(env)
-    debug = REPO / "target" / "debug" / "cam"
-    cached = Path.home() / ".cargo" / "bin" / "cam"
-    if debug.exists():
-        return debug
-    if cached.exists():
-        return cached
-    subprocess.check_call(
-        ["cargo", "build", "-q"],
-        cwd=REPO,
-        env={**os.environ, "PATH": os.environ.get("PATH", "")},
-    )
-    return debug
+    return cam_binary()
 
 
 def codegraph_bin() -> str:

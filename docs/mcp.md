@@ -23,7 +23,7 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |

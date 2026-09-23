@@ -19,23 +19,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import dataset  # noqa: E402
+from eval_paths import cam_binary, dataset  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DEFAULT_DATA = dataset("coding_life")
 SESS_RE = re.compile(r"sess-\d+")
-
-
-def cam_bin() -> Path:
-    env = os.environ.get("CAM_BIN")
-    if env:
-        return Path(env)
-    debug = REPO / "target" / "debug" / "cam"
-    if debug.exists():
-        return debug
-    subprocess.check_call(["cargo", "build", "-q"], cwd=REPO)
-    return debug
 
 
 def cam_json(
@@ -222,13 +211,12 @@ def main() -> int:
             scored.update({"id": q["id"], "type": q["type"], "latency_ms": latency})
             rows.append(scored)
     else:
-        cam = cam_bin()
+        cam = cam_binary()
         embed_flag = ["--hash-embed"] if args.hash_embed else []
         env = os.environ.copy()
         if not args.hash_embed:
             env["CAM_REQUIRE_MODEL2VEC"] = "1"
-        if args.no_expand:
-            env["CAM_NO_EXPAND"] = "1"
+        expand_flag = ["--no-expand"] if args.no_expand else []
 
         with tempfile.TemporaryDirectory(prefix="cam-life-") as tmp:
             root = Path(tmp)
@@ -247,6 +235,7 @@ def main() -> int:
                         str(args.k),
                         "--fusion",
                         args.fusion,
+                        *expand_flag,
                         *embed_flag,
                     ],
                     env=env,

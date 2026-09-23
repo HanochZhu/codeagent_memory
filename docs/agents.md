@@ -15,7 +15,7 @@ Wire MCP first: [docs/mcp.md](mcp.md) (中文: [docs/mcp.zh.md](mcp.zh.md)).
 
 Same order for both entry points:
 
-1. **Recall first.** If a hit is `latest` and not `needs_update`, reuse it.
+1. **Recall first.** Hits are ranked by score, so read the flags rather than taking the first one: reuse a hit that is `latest` and not `needs_update`. A hit without `latest` has been superseded by a newer revision, which recall returns alongside it.
 2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` / `cam index` once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
 3. **On miss / stale / needs_update**, walk the code graph: `ls` → `read` (symbol path) → `ref`.
 4. **After you solve it**, `add` a node (optionally hang it under `--parent`).
@@ -99,7 +99,7 @@ Recall first. Before reading code, run `cam index` once if the graph is not buil
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |

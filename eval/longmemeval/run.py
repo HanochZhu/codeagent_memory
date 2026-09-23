@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import dataset  # noqa: E402
+from eval_paths import cam_binary, dataset  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -33,12 +33,8 @@ DEFAULT_DATA = dataset("longmemeval")
 PRINT_LOCK = threading.Lock()
 
 
-def find_cam_binary() -> Path | None:
-    for name in ("cam.exe", "cam"):
-        candidate = REPO / "target" / "debug" / name
-        if candidate.exists():
-            return candidate
-    return None
+def cam_bin() -> Path:
+    return cam_binary()
 
 
 def download(url: str, dest: Path) -> None:
@@ -51,20 +47,6 @@ def download(url: str, dest: Path) -> None:
         while chunk := response.read(1024 * 1024):
             out.write(chunk)
     partial.replace(dest)
-
-
-def cam_bin() -> Path:
-    configured = os.environ.get("CAM_BIN")
-    if configured:
-        return Path(configured)
-    candidate = find_cam_binary()
-    if candidate:
-        return candidate
-    subprocess.check_call(["cargo", "build", "-q"], cwd=REPO)
-    candidate = find_cam_binary()
-    if candidate:
-        return candidate
-    raise FileNotFoundError("cargo build completed but the cam binary was not found")
 
 
 class CamMcp:

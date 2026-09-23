@@ -52,7 +52,10 @@ fn add_and_recall_tree() {
         .unwrap()
         .write_all(b"Cut CJK with jieba so BM25 can match Chinese queries.")
         .unwrap();
-    assert!(child.wait_with_output().unwrap().status.success());
+    let revision = child.wait_with_output().unwrap();
+    assert!(revision.status.success());
+    let revision: serde_json::Value = serde_json::from_slice(&revision.stdout).unwrap();
+    let revision_id = revision["id"].as_str().unwrap().to_string();
 
     let recall = Command::new(cam_bin())
         .args(["--json", "--project"])
@@ -71,7 +74,15 @@ fn add_and_recall_tree() {
     assert!(hits[0].get("stale").is_some());
     assert!(hits[0].get("needs_update").is_some());
     assert!(hits[0]["retention"].as_f64().unwrap() > 0.9);
-    assert_eq!(hits[0]["latest"], true);
+
+    // Ranking is by score, so the best match can be a superseded revision;
+    // `latest` marks the one node that is the current answer.
+    let latest: Vec<&str> = hits
+        .iter()
+        .filter(|h| h["latest"] == true)
+        .filter_map(|h| h["id"].as_str())
+        .collect();
+    assert_eq!(latest, vec![revision_id.as_str()], "{hits:?}");
 
     let tree = Command::new(cam_bin())
         .args(["--json", "--project"])

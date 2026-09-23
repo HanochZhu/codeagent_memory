@@ -15,7 +15,7 @@
 
 两条入口顺序一样：
 
-1. **先 recall。** 命中且 `latest`、不是 `needs_update`，直接复用。
+1. **先 recall。** 结果按分数排序，所以要看标志而不是只取第一条：命中且 `latest`、不是 `needs_update` 才直接复用。没有 `latest` 的那条已被更新的修订取代，而那条修订会和它一起返回。
 2. **读代码前先确保已建图。** 若 `ls` / `read` / `ref` 提示未建图，对该项目跑一次 `cam_index` / `cam index`。`cam_index` 是全量重建，之后代码变动用 `cam sync`。
 3. **未命中 / stale / needs_update**，走代码图：`ls` → `read`（符号路径）→ `ref`。
 4. **解完再 add**（需要更新旧节点时挂 `--parent`）。
@@ -99,7 +99,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |

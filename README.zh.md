@@ -164,7 +164,7 @@ Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进�
 
 | 系统 | Hit rate | R@5 | P@5 | 来源 |
 |---|---|---:|---:|---|
-| grep（分词子串） | 15 / 15 | 0.967 | 0.227 | 本树，2026-09-16 |
+| grep（分词子串） | 15 / 15 | 0.967 | 0.227 | 本树，2026-09-23 |
 | cam `--fusion sum` | 15 / 15 | 0.933 | 0.213 | 本树，hash embed |
 | **cam RRF**（默认） | **15 / 15** | **1.000** | **0.240** | 本树，hash embed |
 | agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | 已发表 v0.9.26 |
@@ -174,6 +174,17 @@ Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进�
 ![coding-agent-life 各题型 R@5](eval/charts/solution-recall.svg)
 
 RRF 追平 hybrid 天花板，并在 `temporal`（q-015）上超过 grep。min-max 求和仍丢掉 `temporal` 和 `multi-session-causal`（q-011）的第二枚 gold。
+
+#### 修订链
+
+上表用的是扁平语料：一段会话一条记忆，不挂 `--parent`。`--lineage` 会把每一轮对话都作为上一轮的一条修订重新灌入——也就是 cam 文档里的更新模型——并多出两个指标。**newest R@k** 看 top-k 里有没有带上每条 gold 链的最新节点；**stale `latest`** 数的是返回结果里明明已被更新的修订取代、却仍标着 `latest` 的条数。
+
+| k | R@k | P@k | newest R@k | stale `latest` |
+|---:|---:|---:|---:|---:|
+| 5 | 0.967 | 0.227 | 0.567 | **0** |
+| 10 | 1.000 | 0.120 | 0.800 | **0** |
+
+`latest` 由一条递归 CTE 从数据库判定：沿 `parent_id` 上溯到链根再向下展开，所以链有多深都不影响结果。早先的版本按面包屑分组，在同样的这几轮里会标出 8–15 条过期的 `latest`。`--no-expand` 能复现上表每一个数字——链尾扩展只在某条修订与查询完全没有共同词时才会改变排序，而这个语料产生不出那种情况。hash embedder，2026-09-23。
 
 ### 长期记忆 — LongMemEval-S
 
@@ -257,6 +268,7 @@ python3 eval/charts/generate.py
 | **SQLite 代码图** | tree-sitter 解析进 `.cam/cam.db` — 列目录、读符号、跳 callers/callees，不必打开整文件 |
 | **虚拟路径** | `src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号 |
 | **多路召回** | 向量 + BM25，默认 **RRF**（k=60）；`--fusion sum` 仍是 min-max 后求和 |
+| **链尾扩展** | 召回会把命中记忆所在修订链的最新一条一并拉进来，即使它两路都匹配不上，`latest` 始终是当前结论；`--no-expand` 可关闭 |
 | **艾宾浩斯保留** | `R = exp(-t / S)` 加进召回分；过期和遗忘只打标，不删除 |
 | **记忆树** | `add` 追加节点（可挂 `--parent`）；旧条目留在树上 |
 | **MCP + CLI** | 主 Agent：`cam_*` 工具。Subagent：`cam --json …`。同一个二进制 |
@@ -271,8 +283,8 @@ python3 eval/charts/generate.py
 
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
-3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），两路排序用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。再加上保留率 `R`。
-4. **写回** — Agent 有需要长期留下的结论时，`add` 存摘要和正文。同一路径上新节点标 `latest`。
+3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），两路排序用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。再加上保留率 `R`。命中记忆所在修订链的最新一条会一并拉进来，避免只返回一条已被取代的结论。
+4. **写回** — Agent 有需要长期留下的结论时，`add` 存摘要和正文。同一条修订链上最新的节点标 `latest`。
 
 设计细节见 [DESIGN.md](DESIGN.md)。
 
@@ -311,7 +323,7 @@ cam sync                                 # 按内容哈希增量更新图
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
 cam ref <symbol> --dir in|out            # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
-cam recall "<query>" [--limit N] [--fusion rrf|sum]  # 多路召回：向量 + BM25，默认 RRF
+cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand]  # 多路召回：向量 + BM25，默认 RRF
 cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
 cam mem tree                             # 打印记忆树
 cam mem show <id>                        # 查看一条记忆
@@ -328,7 +340,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees |
-| `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和 |
+| `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和；`--no-expand` 关闭链尾扩展 |
 | `cam add --summary "..." [--parent ID]` | 写入记忆（正文来自 `--body`、`--file` 或 stdin） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
 | `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |
@@ -343,8 +355,8 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 
 - 超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`
 - 艾宾浩斯保留率 `R = exp(-t / S)` 会加进召回分；`R < 0.3` 标 `needs_update`
-- 召回成功（`needs_update = false`）时刷新 C0，并把 `S *= 1.7`
-- 记忆不删除。同路径多条并存时标 `latest`，采用更新的那条
+- 召回成功（`needs_update = false`）时刷新 C0，并把 `S *= 1.7`。仅靠链尾扩展被拉进来的节点不算召回，不刷新
+- 记忆不删除。结果按分数排序，每条修订链上最新的节点标 `latest` — 排第一的不一定是当前结论
 - 需要更新时 `add` 新节点（可挂 `--parent`），旧节点留在树上
 - 中文 BM25 先 jieba 再进 FTS5
 
