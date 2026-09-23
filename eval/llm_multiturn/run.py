@@ -33,11 +33,13 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from eval_paths import dataset  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-DEFAULT_LIFE = Path(
-    "/Users/moira/Documents/code/AI/memory/agentmemory/eval/data/coding-agent-life-v1"
-)
+DEFAULT_LIFE = dataset("coding_life")
 IDENT_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_]{2,}\b")
 STOP = {
     "the",

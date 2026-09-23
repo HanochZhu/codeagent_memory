@@ -1,0 +1,24 @@
+# Where each evaluation corpus lives, for every script under eval/.
+#
+# A path is either absolute or relative to the repository root. To point one
+# entry somewhere else for a single run, set the matching CAM_EVAL_<NAME>
+# environment variable, or pass the script's own --data / --benchmark /
+# --corpus flag; both win over this file.
+#
+# Reading this file needs Python 3.11 or newer (tomllib).
+
+[datasets]
+# agentmemory's coding-agent-life-v1 (sessions.json + queries.json), shared by
+# eval/coding_life and eval/llm_multiturn. Not redistributed here, so clone
+# https://github.com/rohitg00/agentmemory next to this repository, or point
+# this at wherever that checkout lives.
+coding_life = "../agentmemory/eval/data/coding-agent-life-v1"
+
+# LongMemEval-S cleaned split, about 265 MB. eval/longmemeval/run.py downloads
+# it to this path on first use, so change it only to keep the file elsewhere.
+longmemeval = "eval/longmemeval/data/longmemeval_s_cleaned.json"
+
+# Agent Retrieval Bench V2, fetched with `arb download-benchmark --local-dir`.
+# Both entries have to stay inside the same --local-dir.
+agent_retrieval_benchmark = "eval/agent_retrieval/data/benchmark/v2_edit2ripple"
+agent_retrieval_corpus = "eval/agent_retrieval/data/corpus/v2_edit2ripple"

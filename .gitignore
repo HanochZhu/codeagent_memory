@@ -2,8 +2,15 @@
 /.cam
 /.codely-cli
 *.db
+*.pyc
+__pycache__/
 .DS_Store
 eval/longmemcode/corpora/
 eval/longmemcode/results/
 eval/coding_life/results/
 eval/llm_multiturn/results/
+eval/longmemeval/data/
+eval/longmemeval/results/
+eval/agent_retrieval/data/
+eval/agent_retrieval/vendor/
+eval/agent_retrieval/results/
