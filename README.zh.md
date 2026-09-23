@@ -141,7 +141,9 @@ cam 有两面检索。每一面只和**同一语料上最近的开源系统**比
 | 面 | 最近对照 | 共用基准 |
 |---|---|---|
 | 记忆 | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + 分词 **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
+| 长期记忆 | BM25 / 稠密记忆检索 | [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) |
 | 代码图 | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
+| 工作流检索 | 词法 / BM25 文件检索 | [Agent Retrieval Bench V2](https://agent-retrieval-bench.github.io/) `edit2ripple` |
 | Token | 全文塞进上下文 | [DeepSeek 多轮](eval/llm_multiturn/README.md) |
 
 Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进分数表。
@@ -172,6 +174,28 @@ Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进�
 ![coding-agent-life 各题型 R@5](eval/charts/solution-recall.svg)
 
 RRF 追平 hybrid 天花板，并在 `temporal`（q-015）上超过 grep。min-max 求和仍丢掉 `temporal` 和 `multi-session-causal`（q-011）的第二枚 gold。
+
+### 长期记忆 — LongMemEval-S
+
+使用清洗版 LongMemEval-S，以固定种子 42 抽取 100 个非拒答问题。每个带日期的原始会话存成一条记忆；检索使用 hash 向量 + RRF，k=10，不接大语言模型 reader。
+
+| R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.260 | 0.512 | **0.652** | 0.420 | 0.670 | **0.810** | 0.527 |
+
+MRR = Mean Reciprocal Rank（平均倒数排名）。8 worker 并发运行时，召回 P50 / P95 为 1.28 / 2.18 秒，每题平均入库 69.6 秒。这是纯检索结果：只衡量 gold 会话能否被召回，不衡量最终回答质量。运行同时暴露了 `cam add` 反复初始化分词器是入库的主要耗时。
+
+### 工作流检索 — Agent Retrieval Bench V2
+
+`edit2ripple`：58 个锚定改动查询、44 个冻结仓库快照，无大语言模型。cam adapter 对锚定文件中各符号的图邻居文件排序。58 题全部计分；其中 55 个锚定文件属于已支持语言，3 个 Java 锚点按未命中保留。
+
+| 系统 | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
+|---|---:|---:|---:|---:|---:|
+| **cam 图邻居** | 0.292 | 0.320 | 0.364 | **0.291** | 0.292 |
+| 词法检索 | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
+| BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
+
+BCY = Budgeted Context Yield（预算内上下文命中率），按基准官方的 8K Token 文件装箱协议计算。cam 图邻居的首个命中排名最好，但词法检索的 gold 覆盖明显更高；结果指向图与词法融合，而不是单独使用图检索。cam 查询 P95 为 11.6 ms；8 worker 建立 44 个快照索引耗时 327.6 秒。
 
 ### 代码图 — LongMemCode clap
 
@@ -206,10 +230,19 @@ P95 ≈ 6.5 ms，`$/1k` = 0。
 
 平均每轮 prompt：记忆 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
 
+下面所有脚本的语料位置都集中在一个文件 [eval/datasets.toml](eval/datasets.toml)。`coding-agent-life-v1` 不随仓库分发，默认指向与本仓库同级的 `agentmemory` 检出；改这个条目即可换位置，临时换一次用 `CAM_EVAL_CODING_LIFE` 覆盖。
+
 ```bash
 python3 eval/coding_life/run.py --adapter grep
 python3 eval/coding_life/run.py --hash-embed              # 默认 RRF
 python3 eval/coding_life/run.py --hash-embed --fusion sum
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8
+git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
+  eval/agent_retrieval/vendor/agent-retrieval-bench
+python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
+arb download-benchmark --version v2_edit2ripple \
+  --local-dir eval/agent_retrieval/data --force
+python3 eval/agent_retrieval/run.py --workers 8
 python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
@@ -234,27 +267,7 @@ python3 eval/charts/generate.py
 
 ## 原理
 
-```
-┌───────────────────────────────────────────────────────────────────┐
-│                     Cursor / Claude Code / …                      │
-│                                                                   │
-│   「BM25 和向量的多路召回以前做过吗？」                             │
-│       主 Agent：MCP cam_recall     Subagent：cam recall            │
-│                                 │                                 │
-└─────────────────────────────────┬─────────────────────────────────┘
-                                  │
-                                  ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                              cam CLI                              │
-│                                                                   │
-│  ls / read / ref     →  代码图（tree-sitter）                      │
-│  recall / add / mem  →  记忆树（向量 + BM25 + FTS5）               │
-│                                 │                                 │
-│                                 ▼                                 │
-│                       本地 SQLite  (.cam/cam.db)                  │
-│          符号 · 边 · 记忆 · jieba + FTS5                          │
-└───────────────────────────────────────────────────────────────────┘
-```
+![cam 原理](docs/images/how-it-works.zh.svg)
 
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。

@@ -141,7 +141,9 @@ cam has two retrieval planes. Each is scored against the closest open system **o
 | Plane | Closest analogue | Shared bench |
 |---|---|---|
 | Memory | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid search + tokenized **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
+| Long-term memory | BM25 / dense memory retrievers | [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) |
 | Code graph | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
+| Workflow retrieval | lexical / BM25 file retrieval | [Agent Retrieval Bench V2](https://agent-retrieval-bench.github.io/) `edit2ripple` |
 | Token cost | full context dump | [DeepSeek multi-turn](eval/llm_multiturn/README.md) |
 
 Mem0, Zep, and Letta are general chat memories. They are not on these two corpora, so they are not in the score tables.
@@ -172,6 +174,28 @@ Mem0, Zep, and Letta are general chat memories. They are not on these two corpor
 ![coding-agent-life R@5 by question type](eval/charts/solution-recall.svg)
 
 RRF matches the published hybrid ceiling and beats grep on `temporal` (q-015). Min-max sum still drops the second gold on `temporal` and `multi-session-causal` (q-011).
+
+### Long-term memory — LongMemEval-S
+
+Cleaned LongMemEval-S, 100 non-abstention questions sampled with seed 42. Each raw dated session is stored as one memory; retrieval uses hash embeddings + RRF at k=10, without an LLM reader.
+
+| R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.260 | 0.512 | **0.652** | 0.420 | 0.670 | **0.810** | 0.527 |
+
+MRR = Mean Reciprocal Rank. Under the 8-worker run, retrieval P50 / P95 was 1.28 / 2.18 s and mean per-question ingestion was 69.6 s. This is a retrieval-only result: it measures whether gold sessions are returned, not final answer quality. The run also exposed repeated tokenizer initialization during `cam add` as the dominant ingestion cost.
+
+### Workflow retrieval — Agent Retrieval Bench V2
+
+`edit2ripple`: 58 anchored-change queries over 44 frozen repository snapshots, no LLM. The cam adapter ranks files connected to symbols in the anchored file. All 58 questions are scored; 55 anchor files use supported languages and three Java anchors remain misses.
+
+| system | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
+|---|---:|---:|---:|---:|---:|
+| **cam graph** | 0.292 | 0.320 | 0.364 | **0.291** | 0.292 |
+| lexical | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
+| BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
+
+BCY = Budgeted Context Yield, using the benchmark's canonical 8K-token file-packing protocol. cam graph has the best first-hit rank, while lexical retrieval has much better broad gold coverage; this points to rank fusion rather than graph-only retrieval. cam query P95 was 11.6 ms; indexing the 44 snapshots took 327.6 s with 8 workers.
 
 ### Code graph — LongMemCode clap
 
@@ -206,10 +230,19 @@ Same conversation twice: dump every session / every `src/*.rs` file, or inject `
 
 Mean prompt tokens / turn: memory 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
 
+Corpus locations for every script below live in one file, [eval/datasets.toml](eval/datasets.toml). `coding-agent-life-v1` is not redistributed here and defaults to an `agentmemory` checkout next to this repository; point the entry elsewhere, or override a single run with `CAM_EVAL_CODING_LIFE`.
+
 ```bash
 python3 eval/coding_life/run.py --adapter grep
 python3 eval/coding_life/run.py --hash-embed              # default RRF
 python3 eval/coding_life/run.py --hash-embed --fusion sum
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8
+git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
+  eval/agent_retrieval/vendor/agent-retrieval-bench
+python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
+arb download-benchmark --version v2_edit2ripple \
+  --local-dir eval/agent_retrieval/data --force
+python3 eval/agent_retrieval/run.py --workers 8
 python3 eval/llm_multiturn/run.py --track both   # needs DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
@@ -235,27 +268,7 @@ python3 eval/charts/generate.py
 
 ## How It Works
 
-```
-┌───────────────────────────────────────────────────────────────────┐
-│                     Cursor / Claude Code / …                      │
-│                                                                   │
-│   "Have we solved hybrid BM25 + vector recall before?"            │
-│       main agent: MCP cam_recall     subagent: cam recall         │
-│                                 │                                 │
-└─────────────────────────────────┬─────────────────────────────────┘
-                                  │
-                                  ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                              cam CLI                              │
-│                                                                   │
-│  ls / read / ref     →  code graph (tree-sitter)                  │
-│  recall / add / mem  →  memory tree (vector + BM25 + FTS5)        │
-│                                 │                                 │
-│                                 ▼                                 │
-│                       local SQLite  (.cam/cam.db)                 │
-│          symbols · edges · memories · jieba + FTS5                │
-└───────────────────────────────────────────────────────────────────┘
-```
+![How cam works](docs/images/how-it-works.svg)
 
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
