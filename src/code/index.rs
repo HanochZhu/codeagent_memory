@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use ignore::gitignore::GitignoreBuilder;
 use ignore::WalkBuilder;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -205,14 +206,10 @@ const CALL_KINDS: &[&str] = &["function", "method"];
 const TYPE_KINDS: &[&str] = &["struct", "class", "trait", "enum", "type_alias"];
 const TRAIT_KINDS: &[&str] = &["trait", "struct", "class"];
 const MAX_CRATE_TIES: usize = 4;
-pub(crate) const SKIP_DIR_NAMES: &[&str] = &[
-    "target",
-    "node_modules",
-    ".cam",
-    ".git",
-    "vendor",
-    "dist",
-];
+/// gitignore-syntax file honored at any depth, in addition to `.gitignore`.
+pub const CAM_IGNORE_FILE: &str = ".camignore";
+pub(crate) const SKIP_DIR_NAMES: &[&str] =
+    &["target", "node_modules", ".cam", ".git", "vendor", "dist"];
 
 #[derive(Debug, Serialize)]
 pub struct IndexReport {
@@ -309,15 +306,14 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
     let mut all_extracted = Vec::new();
     for src in added.iter().chain(modified.iter()) {
         match extract_file(project, &src.abs, src.lang) {
-            Ok((rel, defs, rels, impls)) => {
-                if added_paths.contains(&rel) {
+            Ok(extracted) => {
+                if added_paths.contains(&extracted.rel) {
                     added_ok += 1;
                 } else {
                     modified_ok += 1;
                 }
-                let parsed = (rel, src.lang, defs, rels, impls);
-                changed_extracted.push(parsed.clone());
-                all_extracted.push(parsed);
+                changed_extracted.push(extracted.clone());
+                all_extracted.push(extracted);
             }
             Err(_) => skipped += 1,
         }
@@ -336,9 +332,7 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
     }
     for src in &unchanged {
         match extract_file(project, &src.abs, src.lang) {
-            Ok((rel, defs, rels, impls)) => {
-                all_extracted.push((rel, src.lang, defs, rels, impls));
-            }
+            Ok(extracted) => all_extracted.push(extracted),
             Err(_) => skipped += 1,
         }
     }
@@ -349,9 +343,9 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [path])?;
             tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
         }
-        for (rel, lang, defs, _, _) in &changed_extracted {
-            tx.execute("DELETE FROM nodes WHERE file_path = ?1", [rel])?;
-            insert_file_and_defs(&tx, &project.root, rel, *lang, defs)?;
+        for file in &changed_extracted {
+            tx.execute("DELETE FROM nodes WHERE file_path = ?1", [&file.rel])?;
+            insert_file_and_defs(&tx, &project.root, &file.rel, file.lang, &file.parsed.defs)?;
         }
         tx.execute("DELETE FROM edges", [])?;
         tx.commit()?;
@@ -360,9 +354,10 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
     let name_index = load_name_index(&conn)?;
     {
         let tx = conn.unchecked_transaction()?;
-        for (rel, _, defs, rels, impls) in &all_extracted {
-            insert_rels(&tx, rel, defs, rels, &name_index)?;
-            insert_impls(&tx, rel, defs, impls, &name_index)?;
+        for file in &all_extracted {
+            let Parsed { defs, rels, impls } = &file.parsed;
+            insert_rels(&tx, &file.rel, defs, rels, &name_index)?;
+            insert_impls(&tx, &file.rel, defs, impls, &name_index)?;
         }
         tx.commit()?;
     }
@@ -386,9 +381,18 @@ fn scan_source_files(project: &Project) -> Result<(Vec<SourceFile>, usize)> {
         .hidden(false)
         .git_ignore(true)
         .git_exclude(true)
+        // The project root may be an umbrella folder that is not a git repo
+        // itself; still honor .gitignore / .camignore found there.
+        .require_git(false)
+        .add_custom_ignore_filename(CAM_IGNORE_FILE)
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            !skip_dir_name(&name)
+            if skip_dir_name(&name) {
+                return false;
+            }
+            // Nested git checkouts (submodules, vendored clones) are separate
+            // projects; do not fold their symbols into this graph.
+            entry.depth() == 0 || !is_linked_git_checkout(entry.path())
         })
         .build();
 
@@ -442,31 +446,76 @@ pub(crate) fn skip_dir_name(name: &str) -> bool {
     SKIP_DIR_NAMES.contains(&name)
 }
 
+/// A directory whose `.git` is a file (gitlink) is a submodule or a linked
+/// worktree: a second checkout of some other repository, not part of this one.
+/// Standalone nested clones (`.git` directory) are still indexed, so an
+/// umbrella folder holding several repos keeps working.
+pub(crate) fn is_linked_git_checkout(dir: &Path) -> bool {
+    dir.join(".git").is_file()
+}
+
+/// Cheap pre-filter used by the watcher: built-in skip dirs, the root
+/// `.camignore`, and linked git checkouts between root and `path`.
+/// `scan_source_files` remains the source of truth (it also honors nested
+/// `.gitignore` / `.camignore` files), so a false negative here only costs a
+/// no-op sync.
 pub(crate) fn path_is_skipped(root: &Path, path: &Path) -> bool {
     let rel = match path.strip_prefix(root) {
         Ok(r) => r,
         Err(_) => return true,
     };
-    rel.components()
+    if rel
+        .components()
         .any(|c| c.as_os_str().to_str().is_some_and(skip_dir_name))
+    {
+        return true;
+    }
+    let mut cursor = root.to_path_buf();
+    let mut parents = rel.components().peekable();
+    while let Some(component) = parents.next() {
+        if parents.peek().is_none() {
+            break;
+        }
+        cursor.push(component);
+        if is_linked_git_checkout(&cursor) {
+            return true;
+        }
+    }
+    let ignore_file = root.join(CAM_IGNORE_FILE);
+    if ignore_file.is_file() {
+        let mut builder = GitignoreBuilder::new(root);
+        if builder.add(&ignore_file).is_none() {
+            if let Ok(rules) = builder.build() {
+                let is_dir = path.is_dir();
+                if rules.matched_path_or_any_parents(path, is_dir).is_ignore() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub(crate) fn is_source_path(path: &Path) -> bool {
     Lang::from_path(path).is_some()
 }
 
-fn extract_file(
-    project: &Project,
-    path: &Path,
+/// One source file after tree-sitter extraction, keyed by its project-relative path.
+#[derive(Clone)]
+struct ExtractedFile {
+    rel: String,
     lang: Lang,
-) -> Result<(String, Vec<Def>, Vec<Rel>, Vec<ImplBlock>)> {
-    let source = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let rel = rel_path(&project.root, path)?;
-    let parsed = parse_source(lang, &source)?;
-    Ok((rel, parsed.defs, parsed.rels, parsed.impls))
+    parsed: Parsed,
 }
 
+fn extract_file(project: &Project, path: &Path, lang: Lang) -> Result<ExtractedFile> {
+    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let rel = rel_path(&project.root, path)?;
+    let parsed = parse_source(lang, &source)?;
+    Ok(ExtractedFile { rel, lang, parsed })
+}
+
+#[derive(Clone)]
 struct Parsed {
     defs: Vec<Def>,
     rels: Vec<Rel>,
@@ -516,12 +565,24 @@ fn parse_source(lang: Lang, source: &str) -> Result<Parsed> {
         });
     }
 
-    let mut rels = collect_named(&language, root, source, lang.call_query(), "call", RelKind::Calls)?;
+    let mut rels = collect_named(
+        &language,
+        root,
+        source,
+        lang.call_query(),
+        "call",
+        RelKind::Calls,
+    )?;
     if let Some(q) = lang.ref_query() {
-        rels.extend(collect_named(&language, root, source, q, "ref", RelKind::References)?);
-        rels.retain(|r| {
-            r.kind != RelKind::References || keep_ref_name(&r.name)
-        });
+        rels.extend(collect_named(
+            &language,
+            root,
+            source,
+            q,
+            "ref",
+            RelKind::References,
+        )?);
+        rels.retain(|r| r.kind != RelKind::References || keep_ref_name(&r.name));
     }
 
     let mut impls = Vec::new();
@@ -873,7 +934,8 @@ fn insert_rels(
             RelKind::Calls => "calls",
             RelKind::References => "references",
         };
-        for target_id in resolve_targets(index, rel, &site.name, prefer, site.qualifier.as_deref()) {
+        for target_id in resolve_targets(index, rel, &site.name, prefer, site.qualifier.as_deref())
+        {
             if source_id == target_id {
                 continue;
             }
@@ -1013,7 +1075,11 @@ fn resolve_targets(
     if preferred.len() == 1 {
         return vec![preferred[0].id.clone()];
     }
-    let pool = if preferred.is_empty() { best } else { preferred };
+    let pool = if preferred.is_empty() {
+        best
+    } else {
+        preferred
+    };
     keep_crate_ties(pool)
 }
 
@@ -1200,8 +1266,14 @@ enum Command { DoSomething { arg: String } }
         assert!(names.contains(&"Result"));
         assert!(names.contains(&"Command"));
         assert!(names.contains(&"DoSomething"));
-        assert!(parsed.defs.iter().any(|d| d.name == "Command" && d.kind == "enum"));
-        assert!(parsed.defs.iter().any(|d| d.name == "Result" && d.kind == "type_alias"));
+        assert!(parsed
+            .defs
+            .iter()
+            .any(|d| d.name == "Command" && d.kind == "enum"));
+        assert!(parsed
+            .defs
+            .iter()
+            .any(|d| d.name == "Result" && d.kind == "type_alias"));
     }
 
     #[test]
@@ -1215,9 +1287,18 @@ impl Clone for Foo {
 pub fn use_foo(x: Foo) { let _ = x.clone(); }
 "#;
         let parsed = parse_source(Lang::Rust, src).unwrap();
-        assert!(parsed.impls.iter().any(|i| i.type_name == "Foo" && i.trait_name.as_deref() == Some("Clone")));
-        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::References && r.name == "Foo"));
-        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::Calls && r.name == "clone"));
+        assert!(parsed
+            .impls
+            .iter()
+            .any(|i| i.type_name == "Foo" && i.trait_name.as_deref() == Some("Clone")));
+        assert!(parsed
+            .rels
+            .iter()
+            .any(|r| r.kind == RelKind::References && r.name == "Foo"));
+        assert!(parsed
+            .rels
+            .iter()
+            .any(|r| r.kind == RelKind::Calls && r.name == "clone"));
     }
 
     #[test]
@@ -1295,13 +1376,7 @@ pub fn use_foo(x: Foo) { let _ = x.clone(); }
                 },
             ],
         );
-        let hits = resolve_targets(
-            &idx,
-            "tests/builder/help.rs",
-            "arg",
-            CALL_KINDS,
-            None,
-        );
+        let hits = resolve_targets(&idx, "tests/builder/help.rs", "arg", CALL_KINDS, None);
         assert_eq!(hits, vec!["cmd_arg", "group_arg"]);
     }
 
@@ -1318,13 +1393,7 @@ pub fn use_foo(x: Foo) { let _ = x.clone(); }
                 })
                 .collect(),
         );
-        let hits = resolve_targets(
-            &idx,
-            "tests/builder/help.rs",
-            "new",
-            CALL_KINDS,
-            None,
-        );
+        let hits = resolve_targets(&idx, "tests/builder/help.rs", "new", CALL_KINDS, None);
         assert!(hits.is_empty(), "{hits:?}");
     }
 
@@ -1342,16 +1411,27 @@ pub fn run(x: Foo) {
 }
 "#;
         let parsed = parse_source(Lang::Rust, src).unwrap();
-        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::Calls && r.name == "new" && r.qualifier.as_deref() == Some("Foo")));
-        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::Calls && r.name == "get_one"));
-        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::References && r.name == "Foo"));
+        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::Calls
+            && r.name == "new"
+            && r.qualifier.as_deref() == Some("Foo")));
+        assert!(parsed
+            .rels
+            .iter()
+            .any(|r| r.kind == RelKind::Calls && r.name == "get_one"));
+        assert!(parsed
+            .rels
+            .iter()
+            .any(|r| r.kind == RelKind::References && r.name == "Foo"));
     }
 
     #[test]
     fn parse_js_class_heritage() {
         let src = "class Foo extends Bar { method() { this.x(); } }\nclass Bar {}\n";
         let parsed = parse_source(Lang::JavaScript, src).unwrap();
-        assert!(parsed.impls.iter().any(|i| i.type_name == "Foo" && i.trait_name.as_deref() == Some("Bar")));
+        assert!(parsed
+            .impls
+            .iter()
+            .any(|i| i.type_name == "Foo" && i.trait_name.as_deref() == Some("Bar")));
     }
 
     #[test]

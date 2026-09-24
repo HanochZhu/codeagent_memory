@@ -76,13 +76,13 @@ fn json_is_compact_unless_pretty() {
     let root = tempdir().unwrap();
     let project = root.path().to_str().unwrap();
 
-    let compact = output(
-        home.path(),
-        &["--json", "--project", project, "status"],
-    );
+    let compact = output(home.path(), &["--json", "--project", project, "status"]);
     assert!(compact.status.success());
     assert_eq!(
-        String::from_utf8_lossy(&compact.stdout).trim().lines().count(),
+        String::from_utf8_lossy(&compact.stdout)
+            .trim()
+            .lines()
+            .count(),
         1
     );
 
@@ -92,7 +92,11 @@ fn json_is_compact_unless_pretty() {
     );
     assert!(pretty.status.success());
     assert!(
-        String::from_utf8_lossy(&pretty.stdout).trim().lines().count() > 1
+        String::from_utf8_lossy(&pretty.stdout)
+            .trim()
+            .lines()
+            .count()
+            > 1
     );
 }
 
@@ -103,11 +107,12 @@ fn add_body_status_and_ref_alias() {
     write_fixture(root.path());
     let project = root.path().to_str().unwrap();
 
-    let indexed = output(
-        home.path(),
-        &["--json", "--project", project, "index"],
+    let indexed = output(home.path(), &["--json", "--project", project, "index"]);
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
     );
-    assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
 
     let added = output(
         home.path(),
@@ -122,13 +127,14 @@ fn add_body_status_and_ref_alias() {
             "body text",
         ],
     );
-    assert!(added.status.success(), "{}", String::from_utf8_lossy(&added.stderr));
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
     assert!(json(&added)["id"].as_str().is_some());
 
-    let status = output(
-        home.path(),
-        &["--json", "--project", project, "status"],
-    );
+    let status = output(home.path(), &["--json", "--project", project, "status"]);
     let value = json(&status);
     assert_eq!(value["db_exists"], true, "{value}");
     assert_eq!(value["solutions"], 1, "{value}");
@@ -138,7 +144,11 @@ fn add_body_status_and_ref_alias() {
         home.path(),
         &["--json", "--project", project, "ref", "add", "--callers"],
     );
-    assert!(callers.status.success(), "{}", String::from_utf8_lossy(&callers.stderr));
+    assert!(
+        callers.status.success(),
+        "{}",
+        String::from_utf8_lossy(&callers.stderr)
+    );
     let callers_json = json(&callers);
     let names: Vec<_> = callers_json["refs"]
         .as_array()
@@ -154,7 +164,11 @@ fn config_set_and_get_roundtrip() {
     let home = tempdir().unwrap();
 
     let set = output(home.path(), &["--json", "config", "set", "stale_days", "7"]);
-    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
     assert_eq!(json(&set)["stale_days"], 7);
 
     let get = output(home.path(), &["--json", "config", "get"]);
@@ -162,7 +176,12 @@ fn config_set_and_get_roundtrip() {
 
     let bad = output(home.path(), &["--json", "config", "set", "unknown", "1"]);
     assert_eq!(bad.status.code(), Some(1));
-    assert_eq!(json(&bad)["error"]["code"], "usage", "{}", String::from_utf8_lossy(&bad.stdout));
+    assert_eq!(
+        json(&bad)["error"]["code"],
+        "usage",
+        "{}",
+        String::from_utf8_lossy(&bad.stdout)
+    );
 }
 
 #[test]
@@ -173,10 +192,7 @@ fn first_command_auto_inits() {
     let project = root.path().to_str().unwrap();
     assert!(!root.path().join(".cam").exists());
 
-    let indexed = output(
-        home.path(),
-        &["--json", "--project", project, "index"],
-    );
+    let indexed = output(home.path(), &["--json", "--project", project, "index"]);
     assert!(
         indexed.status.success(),
         "{}",

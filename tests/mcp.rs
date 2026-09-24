@@ -1,7 +1,7 @@
+use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use serde_json::{json, Value};
 use tempfile::tempdir;
 
 fn cam_bin() -> PathBuf {
@@ -65,9 +65,7 @@ impl McpChild {
         writeln!(self.stdin, "{}", req).expect("write mcp request");
         self.stdin.flush().expect("flush mcp request");
         let mut line = String::new();
-        self.stdout
-            .read_line(&mut line)
-            .expect("read mcp response");
+        self.stdout.read_line(&mut line).expect("read mcp response");
         assert!(
             !line.trim().is_empty(),
             "mcp server closed stdout without a response"
@@ -191,12 +189,7 @@ fn mcp_stdio_init_add_recall() {
     );
     assert!(hits.as_array().unwrap().iter().any(|h| h["id"] == id));
 
-    let nodes = call_ok(
-        &mut mcp,
-        7,
-        "cam_mem_tree",
-        json!({ "path": root }),
-    );
+    let nodes = call_ok(&mut mcp, 7, "cam_mem_tree", json!({ "path": root }));
     assert_eq!(nodes.as_array().unwrap().len(), 1);
 }
 
@@ -244,10 +237,7 @@ fn mcp_ignores_legacy_current_project() {
         None,
     )
     .unwrap();
-    let config = format!(
-        "current_project = '{}'\n",
-        old_project.path().display()
-    );
+    let config = format!("current_project = '{}'\n", old_project.path().display());
     std::fs::create_dir(home.path().join(".cam")).unwrap();
     std::fs::write(home.path().join(".cam/config.toml"), &config).unwrap();
     let mut mcp = McpChild::spawn_in(None, None, Some(cwd.path()), Some(home.path()));
@@ -256,7 +246,10 @@ fn mcp_ignores_legacy_current_project() {
     let resp = call_tool(&mut mcp, 2, "cam_mem_tree", json!({}));
     if resp["result"]["isError"] == false {
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(!text.contains(&added.id), "legacy current_project was used: {text}");
+        assert!(
+            !text.contains(&added.id),
+            "legacy current_project was used: {text}"
+        );
         assert!(
             !text.contains("legacy memory that must not surface"),
             "legacy current_project was used: {text}"
@@ -270,7 +263,11 @@ fn mcp_ignores_legacy_current_project() {
 
 #[test]
 fn mcp_first_tool_auto_inits_without_touching_global_config() {
-    for config in [None, Some("stale_days = 7\ncurrent_project = '/old/project'\n"), Some("invalid = [")] {
+    for config in [
+        None,
+        Some("stale_days = 7\ncurrent_project = '/old/project'\n"),
+        Some("invalid = ["),
+    ] {
         let home = tempdir().unwrap();
         let cwd = tempdir().unwrap();
         let config_path = home.path().join(".cam/config.toml");
@@ -310,24 +307,87 @@ fn mcp_ls_without_index_asks_to_index() {
 }
 
 #[test]
+fn mcp_ref_ambiguity_is_a_result_not_an_error() {
+    let dir = tempdir().unwrap();
+    for repo in ["app", "mirror"] {
+        std::fs::create_dir_all(dir.path().join(repo).join(".git")).unwrap();
+        std::fs::create_dir_all(dir.path().join(repo).join("src")).unwrap();
+        std::fs::write(
+            dir.path().join(repo).join("src/lib.rs"),
+            "pub fn add() {}\npub fn run() { add(); }\n",
+        )
+        .unwrap();
+    }
+    let root = dir.path().display().to_string();
+    let mut mcp = McpChild::spawn(None);
+    initialize(&mut mcp);
+    call_ok(&mut mcp, 2, "cam_index", json!({ "path": root }));
+
+    let listed = call_ok(&mut mcp, 3, "cam_ls", json!({ "path": root }));
+    let kinds: Vec<(&str, &str)> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["name"].as_str().unwrap(), e["kind"].as_str().unwrap()))
+        .collect();
+    assert!(kinds.contains(&("app", "project")), "{listed}");
+    assert!(kinds.contains(&("mirror", "project")), "{listed}");
+
+    let ambiguous = call_ok(
+        &mut mcp,
+        4,
+        "cam_ref",
+        json!({ "path": root, "symbol": "add", "dir": "in" }),
+    );
+    assert_eq!(ambiguous["status"], "ambiguous", "{ambiguous}");
+    assert_eq!(ambiguous["total_candidates"], 2);
+    let first_id = ambiguous["candidates"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let by_id = call_ok(
+        &mut mcp,
+        5,
+        "cam_ref",
+        json!({ "path": root, "symbol": first_id, "dir": "in" }),
+    );
+    assert_eq!(by_id["status"], "ok", "{by_id}");
+    assert_eq!(by_id["resolved"]["id"], first_id);
+    assert_eq!(by_id["refs"][0]["name"], "run");
+
+    let scoped = call_ok(
+        &mut mcp,
+        6,
+        "cam_ref",
+        json!({ "path": root, "symbol": "add", "dir": "in", "scope": "mirror" }),
+    );
+    assert_eq!(scoped["status"], "ok", "{scoped}");
+    assert_eq!(scoped["resolved"]["file_path"], "mirror/src/lib.rs");
+
+    let hinted = call_ok(
+        &mut mcp,
+        7,
+        "cam_ref",
+        json!({ "path": root, "symbol": "add", "dir": "in", "file": "app/", "kind": "function" }),
+    );
+    assert_eq!(
+        hinted["resolved"]["file_path"], "app/src/lib.rs",
+        "{hinted}"
+    );
+}
+
+#[test]
 fn mcp_unknown_tool_is_error() {
     let mut mcp = McpChild::spawn(None);
     initialize(&mut mcp);
-    let resp = call_tool(
-        &mut mcp,
-        9,
-        "not_a_tool",
-        json!({}),
-    );
+    let resp = call_tool(&mut mcp, 9, "not_a_tool", json!({}));
     assert_eq!(resp["error"]["code"], -32602);
 }
 
 #[test]
 fn mcp_help_lists_command() {
-    let out = Command::new(cam_bin())
-        .arg("--help")
-        .output()
-        .unwrap();
+    let out = Command::new(cam_bin()).arg("--help").output().unwrap();
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("mcp"), "{text}");

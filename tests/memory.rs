@@ -27,7 +27,11 @@ fn add_and_recall_tree() {
         .write_all(b"Use FTS5 BM25 plus cosine vectors, min-max each path, then sum scores.")
         .unwrap();
     let out = add.wait_with_output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let added: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let parent = added["id"].as_str().unwrap().to_string();
 
@@ -60,17 +64,17 @@ fn add_and_recall_tree() {
     let recall = Command::new(cam_bin())
         .args(["--json", "--project"])
         .arg(dir.path())
-        .args([
-            "recall",
-            "如何做 BM25 和向量的多路召回",
-            "--hash-embed",
-        ])
+        .args(["recall", "如何做 BM25 和向量的多路召回", "--hash-embed"])
         .output()
         .unwrap();
-    assert!(recall.status.success(), "{}", String::from_utf8_lossy(&recall.stderr));
+    assert!(
+        recall.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recall.stderr)
+    );
     let hits: Vec<serde_json::Value> = serde_json::from_slice(&recall.stdout).unwrap();
     assert!(!hits.is_empty());
-    assert!(hits[0]["path"].as_array().unwrap().len() >= 1);
+    assert!(!hits[0]["path"].as_array().unwrap().is_empty());
     assert!(hits[0].get("stale").is_some());
     assert!(hits[0].get("needs_update").is_some());
     assert!(hits[0]["retention"].as_f64().unwrap() > 0.9);

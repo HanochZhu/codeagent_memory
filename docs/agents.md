@@ -35,7 +35,7 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_recall` | Before exploring. Query in the user's language, one sentence. |
 | `cam_ls` | List a directory, file, or the symbols in a file. |
 | `cam_read` | File outline, or a symbol body. Prefer `src/foo.rs/bar` over `full=true`. |
-| `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). |
+| `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). On `status: ambiguous`, re-call with a candidate `id` or add `file` / `kind` / `scope`. |
 | `cam_add` | Persist the write-up. `summary` + full `body`. Set `parent` to update an older node. |
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
@@ -98,7 +98,7 @@ Recall first. Before reading code, run `cam index` once if the graph is not buil
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
-| `cam_ref` | `cam ref <symbol> --dir in\|out` |
+| `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |

@@ -119,6 +119,20 @@ mod tests {
     }
 
     #[test]
+    fn ignores_camignore_matches_and_linked_checkouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join(".camignore"), "gen/\n*.generated.ts\n").unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+
+        assert!(!path_should_sync(root, &root.join("gen/a.rs")));
+        assert!(!path_should_sync(root, &root.join("src/api.generated.ts")));
+        assert!(!path_should_sync(root, &root.join("sub/lib.rs")));
+        assert!(path_should_sync(root, &root.join("src/lib.rs")));
+    }
+
+    #[test]
     fn reacts_to_source_create() {
         let event = Event {
             kind: EventKind::Create(CreateKind::File),

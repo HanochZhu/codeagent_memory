@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use cam::code::{
-    clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, RefDir,
-    DEFAULT_DEBOUNCE_MS,
+    clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, Ambiguous,
+    ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
 };
 use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion, RecallOptions};
 use cam::ops::{load_embedder, resolve_project};
@@ -17,7 +17,11 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 #[derive(Parser)]
-#[command(name = "cam", version, about = "CodeAgent memory: code graph + memory (CLI + MCP)")]
+#[command(
+    name = "cam",
+    version,
+    about = "CodeAgent memory: code graph + memory (CLI + MCP)"
+)]
 struct Cli {
     /// Project root (otherwise CAM_PROJECT, then .cam / .git walk-up, else cwd)
     #[arg(long, global = true, value_name = "DIR")]
@@ -46,7 +50,7 @@ enum Command {
     },
     /// List the indexed graph as a virtual filesystem
     Ls { virt_path: Option<String> },
-    /// Read a file outline or a symbol body
+    /// Read a file outline, a symbol body, or a node id from an ambiguous answer
     Read {
         virt_path: String,
         #[arg(long)]
@@ -54,6 +58,7 @@ enum Command {
     },
     /// One-hop callers (in) or callees (out)
     Ref {
+        /// Symbol name, virtual path (src/lib.rs/add), or node id
         symbol: String,
         /// Direction: in = callers, out = callees
         #[arg(long, value_enum)]
@@ -64,6 +69,15 @@ enum Command {
         /// Shorthand for --dir out
         #[arg(long, conflicts_with_all = ["dir", "callers"])]
         callees: bool,
+        /// Disambiguate: case-insensitive substring of the defining file path
+        #[arg(long, value_name = "SUBSTR")]
+        file: Option<String>,
+        /// Disambiguate: node kind (function, method, struct, class, trait, enum, ...)
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        /// Scope to a sub-directory (a nested repo shown as `project` by `cam ls`)
+        #[arg(long, value_name = "DIR")]
+        scope: Option<String>,
     },
     /// Hybrid recall: vector + BM25, fused with min-max sum or RRF
     Recall {
@@ -236,8 +250,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                 std::time::Duration::from_millis(debounce_ms),
                 None,
                 |report| {
-                    let changed =
-                        report.files_added + report.files_modified + report.files_removed;
+                    let changed = report.files_added + report.files_modified + report.files_removed;
                     if !first && changed == 0 {
                         return;
                     }
@@ -267,16 +280,21 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         }
         Command::Read { virt_path, full } => {
             let project = resolve_project(project_arg)?;
-            let result = read(&project, &virt_path, full)?;
+            let outcome = read(&project, &virt_path, full)?;
             if json {
-                emit_json(&result, pretty)?;
+                emit_json(&outcome, pretty)?;
             } else {
-                if result.kind != "outline" {
-                    if let (Some(s), Some(t)) = (result.start_line, result.end_line) {
-                        eprintln!("{}  {}-{}", result.path, s, t);
+                match outcome {
+                    ReadOutcome::Ok(result) => {
+                        if result.kind != "outline" {
+                            if let (Some(s), Some(t)) = (result.start_line, result.end_line) {
+                                eprintln!("{}  {}-{}", result.path, s, t);
+                            }
+                        }
+                        emit_text(result.source);
                     }
+                    ReadOutcome::Ambiguous(ambiguous) => print_ambiguous(&ambiguous),
                 }
-                emit_text(result.source);
             }
         }
         Command::Ref {
@@ -284,17 +302,38 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             dir,
             callers,
             callees,
+            file,
+            kind,
+            scope,
         } => {
             let dir = resolve_ref_dir(dir, callers, callees)?;
             let project = resolve_project(project_arg)?;
-            let result = refs(&project, &symbol, dir)?;
+            let hints = SymbolHints {
+                file: file.as_deref(),
+                kind: kind.as_deref(),
+                scope: scope.as_deref(),
+            };
+            let outcome = refs(&project, &symbol, dir, hints)?;
             if json {
-                emit_json(&result, pretty)?;
-            } else if result.refs.is_empty() {
-                emit_text("no refs");
+                emit_json(&outcome, pretty)?;
             } else {
-                for r in result.refs {
-                    println!("{}  {}:{}", r.name, r.file_path, r.start_line);
+                match outcome {
+                    RefOutcome::Ok(result) => {
+                        eprintln!(
+                            "{}  {}:{}",
+                            result.resolved.id,
+                            result.resolved.file_path,
+                            result.resolved.start_line
+                        );
+                        if result.refs.is_empty() {
+                            emit_text("no refs");
+                        } else {
+                            for r in result.refs {
+                                println!("{}  {}:{}", r.name, r.file_path, r.start_line);
+                            }
+                        }
+                    }
+                    RefOutcome::Ambiguous(ambiguous) => print_ambiguous(&ambiguous),
                 }
             }
         }
@@ -462,6 +501,23 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
     Ok(())
 }
 
+fn print_ambiguous(ambiguous: &Ambiguous) {
+    eprintln!("{}", ambiguous.message);
+    for c in &ambiguous.candidates {
+        println!(
+            "{:.2}  {:<10} {}  {}:{}-{}",
+            c.score, c.kind, c.id, c.file_path, c.start_line, c.end_line
+        );
+    }
+    if ambiguous.total_candidates > ambiguous.candidates.len() {
+        eprintln!(
+            "(showing {} of {})",
+            ambiguous.candidates.len(),
+            ambiguous.total_candidates
+        );
+    }
+}
+
 fn resolve_ref_dir(dir: Option<RefDir>, callers: bool, callees: bool) -> Result<RefDir> {
     if callers {
         return Ok(RefDir::In);
@@ -593,10 +649,7 @@ mod tests {
 
     #[test]
     fn classify_error_detects_io_source() {
-        let err = anyhow::Error::from(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "missing",
-        ));
+        let err = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
         assert_eq!(classify_error(&err), "io");
     }
 

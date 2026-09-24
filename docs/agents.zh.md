@@ -35,7 +35,7 @@
 | `cam_recall` | 探索前先查。用用户的语言写一句话。 |
 | `cam_ls` | 列目录、文件，或文件里的符号 |
 | `cam_read` | 文件大纲，或符号源码。优先 `src/foo.rs/bar`，少用 `full=true` |
-| `cam_ref` | 一跳 callers（`dir=in`）或 callees（`dir=out`） |
+| `cam_ref` | 一跳 callers（`dir=in`）或 callees（`dir=out`）。返回 `status: ambiguous` 时，用候选 `id` 重查，或加 `file` / `kind` / `scope` |
 | `cam_add` | 写入解法。`summary` + 完整 `body`。更新旧节点时带 `parent` |
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
 | `cam_index` | 每个仓库做一次（或代码大挪移之后）。`.cam/` 会在首次调用时自动创建。 |
@@ -98,7 +98,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
-| `cam_ref` | `cam ref <symbol> --dir in\|out` |
+| `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |

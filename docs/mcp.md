@@ -22,13 +22,15 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
-| `cam_ref` | `cam ref <symbol> --dir in\|out` |
+| `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
 `initialize` also returns `instructions` describing the recall → graph → add workflow.
+
+`cam_ref` and `cam_read` return `{"status":"ambiguous", "candidates":[…]}` (not `isError`) when a bare name matches several definitions. Each candidate carries an `id`; pass it back as `symbol` / `virt_path`, or narrow `cam_ref` with `file` (path substring), `kind`, or `scope` (a sub-directory, e.g. a nested repo that `cam_ls` lists with kind `project`). Resolved answers carry `status: "ok"` and a `resolved` block naming the node that was used.
 
 ---
 

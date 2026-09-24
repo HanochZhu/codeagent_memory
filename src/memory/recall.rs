@@ -124,10 +124,7 @@ pub fn fuse_rrf(hits: &[RawHit], k: f32) -> Vec<(String, f32)> {
     add_rrf_ranks(&mut scores, &bm25_ranked, k);
 
     let scale = k + 1.0;
-    let mut fused: Vec<(String, f32)> = scores
-        .into_iter()
-        .map(|(id, s)| (id, s * scale))
-        .collect();
+    let mut fused: Vec<(String, f32)> = scores.into_iter().map(|(id, s)| (id, s * scale)).collect();
     sort_desc(&mut fused);
     fused
 }
@@ -745,7 +742,10 @@ mod tests {
 
     #[test]
     fn fuse_dispatches_rrf() {
-        let hits = [hit("a", Some(1.0), Some(10.0)), hit("b", Some(0.0), Some(0.0))];
+        let hits = [
+            hit("a", Some(1.0), Some(10.0)),
+            hit("b", Some(0.0), Some(0.0)),
+        ];
         let summed = fuse(&hits, Fusion::Sum);
         let rrfd = fuse(&hits, Fusion::Rrf);
         assert_eq!(summed[0].0, "a");

@@ -46,8 +46,8 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("read config {}", path.display()))?;
+        let text =
+            fs::read_to_string(&path).with_context(|| format!("read config {}", path.display()))?;
         toml::from_str(&text).context("parse ~/.cam/config.toml")
     }
 
@@ -88,7 +88,8 @@ mod tests {
 
     #[test]
     fn legacy_current_project_is_read_but_not_written() {
-        let cfg: Config = toml::from_str("stale_days = 7\ncurrent_project = '/old/project'\n").unwrap();
+        let cfg: Config =
+            toml::from_str("stale_days = 7\ncurrent_project = '/old/project'\n").unwrap();
         assert_eq!(cfg.stale_days, 7);
         assert_eq!(cfg.current_project.as_deref(), Some("/old/project"));
         let serialized = toml::to_string(&cfg).unwrap();

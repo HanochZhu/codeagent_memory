@@ -22,13 +22,15 @@ cam --project /path/to/project mcp
 | `cam_index` | `cam index` |
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
-| `cam_ref` | `cam ref <symbol> --dir in\|out` |
+| `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
 `initialize` 会带上 `instructions`，说明 recall → 代码图 → add 的流程。
+
+裸名匹配到多个定义时，`cam_ref` / `cam_read` 返回 `{"status":"ambiguous", "candidates":[…]}`（不是 `isError`）。每个候选带 `id`，可直接回传为 `symbol` / `virt_path`；也可给 `cam_ref` 传 `file`（路径子串）、`kind`、`scope`（子目录，例如 `cam_ls` 里类型为 `project` 的嵌套仓库）收窄。解析成功的响应带 `status: "ok"` 和 `resolved` 块，说明实际使用的节点。
 
 ---
 

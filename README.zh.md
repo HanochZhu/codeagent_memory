@@ -322,7 +322,7 @@ cam watch [--debounce-ms N]              # 监听源文件；--json 每次 sync 
 cam sync                                 # 按内容哈希增量更新图
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
-cam ref <symbol> --dir in|out            # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
+cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
 cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand]  # 多路召回：向量 + BM25，默认 RRF
 cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
 cam mem tree                             # 打印记忆树
@@ -339,7 +339,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam watch` | 文件监听，静默窗口后自动 `sync` |
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
-| `cam ref <symbol> --dir in\|out` | 一跳 callers / callees |
+| `cam ref <symbol> --dir in\|out` | 一跳 callers / callees。多个定义同名时返回 `status: ambiguous` 和按分排序的 `candidates`；用候选 `id` 重查，或用 `--file` / `--kind` / `--scope` 收窄 |
 | `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和；`--no-expand` 关闭链尾扩展 |
 | `cam add --summary "..." [--parent ID]` | 写入记忆（正文来自 `--body`、`--file` 或 stdin） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
@@ -347,7 +347,9 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam config get` / `cam config set stale_days N` | 读取或更新 `~/.cam/config.toml` |
 | `cam mcp` | stdio MCP 服务（主 Agent）。见 [docs/mcp.zh.md](docs/mcp.zh.md) |
 
-虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。
+虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。歧义响应里的节点 id（`src/main.rs:function:main:12`）可以在任何接受符号的地方直接使用。
+
+**多仓库目录。** `.gitignore` 与 `.camignore`（同语法）在任意层级生效，根目录本身不是 git 仓库也一样。submodule 与 linked worktree（`.git` 是文件的目录）会被跳过；嵌套的独立 clone 正常索引，并在 `cam ls` 里以 `project` 类型列出，可直接作为 `--scope` 传入。
 
 ---
 

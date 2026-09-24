@@ -17,9 +17,9 @@ impl Project {
     pub fn resolve(explicit: Option<&Path>) -> Result<Self> {
         if let Some(path) = explicit {
             return Ok(Self {
-                root: path.canonicalize().with_context(|| {
-                    format!("cannot resolve project path {}", path.display())
-                })?,
+                root: path
+                    .canonicalize()
+                    .with_context(|| format!("cannot resolve project path {}", path.display()))?,
             });
         }
 

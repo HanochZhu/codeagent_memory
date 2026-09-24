@@ -5,18 +5,14 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::code::{index_project, ls, read, refs, RefDir};
+use crate::code::{index_project, ls, read, refs, RefDir, SymbolHints};
 use crate::memory::{add_solution, show_solution, solution_tree, Embedder, Fusion, RecallOptions};
 use crate::ops::{load_embedder, resolve_project_from_strings};
 use crate::project::Project;
 
 const SERVER_NAME: &str = "cam";
-const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
-    "2025-11-25",
-    "2025-06-18",
-    "2025-03-26",
-    "2024-11-05",
-];
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const FALLBACK_PROTOCOL_VERSION: &str = "2025-03-26";
 
 const INSTRUCTIONS: &str = r#"cam is local code-graph + solution memory for this repo (SQLite under .cam/).
@@ -32,6 +28,8 @@ Workflow:
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
+Ambiguity: when a bare name matches several definitions, cam_ref / cam_read return status `ambiguous` with `candidates` (not an error). Re-call with a candidate `id`, or pass `file` / `kind` / `scope` hints to cam_ref. In a folder holding several repos, cam_ls lists each nested repo with kind `project`; use that path as `scope`.
+Ignore rules: `.gitignore` and `.camignore` (same syntax) at any depth; submodules and linked worktrees (a `.git` file) are skipped.
 Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd, else the server cwd. `.cam/` and the database are created automatically on the first tool call."#;
 
 #[derive(Debug, Clone, Default)]
@@ -43,10 +41,7 @@ pub fn serve_stdio(default_path: Option<&Path>) -> Result<()> {
     let ctx = McpContext {
         default_path: default_path.map(Path::to_path_buf),
     };
-    eprintln!(
-        "cam mcp {} ready (stdio)",
-        env!("CARGO_PKG_VERSION")
-    );
+    eprintln!("cam mcp {} ready (stdio)", env!("CARGO_PKG_VERSION"));
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -218,7 +213,12 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
             let project = project_from(args, ctx)?;
             let symbol = required_str(args, "symbol")?;
             let dir = parse_ref_dir(arg_str(args, "dir"))?;
-            to_json(refs(&project, symbol, dir).map_err(err_str)?)
+            let hints = SymbolHints {
+                file: arg_str(args, "file"),
+                kind: arg_str(args, "kind"),
+                scope: arg_str(args, "scope"),
+            };
+            to_json(refs(&project, symbol, dir, hints).map_err(err_str)?)
         }
         "cam_recall" => {
             let project = project_from(args, ctx)?;
@@ -258,7 +258,8 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
 }
 
 fn project_from(args: &Value, ctx: &McpContext) -> Result<Project, String> {
-    resolve_project_from_strings(arg_str(args, "path"), ctx.default_path.as_deref()).map_err(err_str)
+    resolve_project_from_strings(arg_str(args, "path"), ctx.default_path.as_deref())
+        .map_err(err_str)
 }
 
 fn embedder_from(args: &Value) -> Result<Box<dyn Embedder>, String> {
@@ -296,7 +297,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_ls",
-            "List indexed directories, files, or symbols as a virtual filesystem. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ls [virt_path]",
+            "List indexed directories, files, or symbols as a virtual filesystem. Directories that are git checkouts of their own are listed with kind `project`; pass such a path as `scope` to cam_ref in multi-repo workspaces. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ls [virt_path]",
             json!({
                 "type": "object",
                 "properties": {
@@ -310,11 +311,11 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_read",
-            "Read a file outline or a symbol body. Prefer symbol paths (src/main.rs/main) over --full. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam read <virt_path> [--full]",
+            "Read a file outline or a symbol body. Prefer symbol paths (src/main.rs/main) over --full. If the name occurs more than once in the file the result has status `ambiguous` with `candidates`; re-call with a candidate `id` as virt_path. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam read <virt_path> [--full]",
             json!({
                 "type": "object",
                 "properties": {
-                    "virt_path": { "type": "string", "description": "File (src/main.rs) or symbol (src/main.rs/main)." },
+                    "virt_path": { "type": "string", "description": "File (src/main.rs), symbol (src/main.rs/main), or a node id from an ambiguous answer." },
                     "full": { "type": "boolean", "description": "Read the whole file instead of the outline.", "default": false },
                     "path": path_prop()
                 },
@@ -326,12 +327,15 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_ref",
-            "One-hop callers (in) or callees (out). Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ref <symbol> --dir in|out",
+            "One-hop callers (in) or callees (out). A bare name that matches several definitions returns status `ambiguous` with ranked `candidates` instead of refs; re-call with a candidate `id` as symbol, or narrow with `file` / `kind` / `scope`. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]",
             json!({
                 "type": "object",
                 "properties": {
                     "symbol": { "type": "string", "description": "Symbol name, node id, or virtual path like src/lib.rs/add." },
                     "dir": { "type": "string", "enum": ["in", "out"], "description": "in = callers, out = callees." },
+                    "file": { "type": "string", "description": "Disambiguate: case-insensitive substring of the defining file path, e.g. core/src/config.ts." },
+                    "kind": { "type": "string", "description": "Disambiguate: node kind (function, method, struct, class, trait, enum, enum_variant, type_alias)." },
+                    "scope": { "type": "string", "description": "Restrict resolution and refs to this sub-directory, typically a `project` entry from cam_ls (e.g. codely-cli)." },
                     "path": path_prop()
                 },
                 "required": ["symbol", "dir"],
@@ -514,7 +518,10 @@ mod tests {
         let value = serde_json::to_value(resp).unwrap();
         assert_eq!(value["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(value["result"]["serverInfo"]["name"], "cam");
-        assert!(value["result"]["instructions"].as_str().unwrap().contains("cam_recall"));
+        assert!(value["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("cam_recall"));
     }
 
     #[test]

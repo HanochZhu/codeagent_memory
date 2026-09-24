@@ -326,7 +326,7 @@ cam sync                                 # Incrementally update the graph for ch
 cam watch [--debounce-ms N]              # Watch source files; --json streams one report per sync
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
-cam ref <symbol> --dir in|out            # One-hop callers (in) or callees (out); --callers / --callees aliases
+cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # One-hop callers (in) or callees (out); --callers / --callees aliases
 cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand]  # Hybrid recall: vector + BM25, RRF by default
 cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # Store a memory (body: --body, --file, or stdin)
 cam mem tree                             # Print the memory tree
@@ -343,7 +343,7 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam watch` | Debounced file watcher that runs `sync` on source changes |
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
-| `cam ref <symbol> --dir in\|out` | One-hop callers / callees |
+| `cam ref <symbol> --dir in\|out` | One-hop callers / callees. A name shared by several definitions returns `status: ambiguous` with ranked `candidates`; re-run with a candidate `id`, or narrow with `--file` / `--kind` / `--scope` |
 | `cam recall "<one sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum; `--no-expand` skips chain-tail expansion |
 | `cam add --summary "..." [--parent ID]` | Store a memory (body from `--body`, `--file`, or stdin) |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
@@ -351,7 +351,9 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam config get` / `cam config set stale_days N` | Read or update `~/.cam/config.toml` |
 | `cam mcp` | Stdio MCP server (main agent). See [docs/mcp.md](docs/mcp.md) |
 
-Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
+Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Node ids (`src/main.rs:function:main:12`) from an ambiguous answer are accepted wherever a symbol is.
+
+**Multi-repo folders.** `.gitignore` and `.camignore` (same syntax) are honored at any depth, even when the root itself is not a git repo. Submodules and linked worktrees (directories whose `.git` is a file) are skipped; nested standalone clones are indexed, and `cam ls` lists them with kind `project` so you can pass that path as `--scope`.
 
 ---
 
