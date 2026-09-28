@@ -346,7 +346,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_recall",
-            "Hybrid recall (vector + BM25 fused with RRF by default) plus Ebbinghaus retention. Also pulls in the newest revision of whatever matched, so `latest` is the current answer. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand]",
+            "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. `relevance` near 2 means both paths matched, near 1 only one. Also pulls in the newest revision of whatever matched, so `latest` is the current answer. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand]",
             json!({
                 "type": "object",
                 "properties": {

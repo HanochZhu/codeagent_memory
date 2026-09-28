@@ -107,6 +107,32 @@ fn migrate(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < FTS_TOKENIZER_VERSION {
+        retokenize_solutions(conn)?;
+        conn.execute_batch(&format!("PRAGMA user_version = {FTS_TOKENIZER_VERSION}"))?;
+    }
+    Ok(())
+}
+
+/// Bumped whenever `tokenize_for_fts` changes, so stored `fts_text` is rebuilt
+/// with the tokenizer queries are now cut with.
+const FTS_TOKENIZER_VERSION: i64 = 1;
+
+fn retokenize_solutions(conn: &Connection) -> Result<()> {
+    let rows: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, summary, body FROM solutions")?;
+        let mapped = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        mapped.collect::<rusqlite::Result<_>>()?
+    };
+    let tx = conn.unchecked_transaction()?;
+    for (id, summary, body) in rows {
+        tx.execute(
+            "UPDATE solutions SET fts_text = ?1 WHERE id = ?2",
+            rusqlite::params![crate::memory::add::tokenize_for_fts(&summary, &body), id],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }
 

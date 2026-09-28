@@ -54,7 +54,7 @@ Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compa
 
 ## Memory rules
 
-- Recall score is vector + BM25 fused with **RRF by default** (`--fusion sum` for min-max sum), plus Ebbinghaus retention `R = exp(-t / S)`.
+- Recall score is vector + BM25 fused with **RRF by default** (`--fusion sum` for min-max sum), scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `relevance` is the fused score before retention: about 2 means both paths matched, about 1 means only one did.
 - `R < 0.3` → `needs_update`; older than `stale_days` (default 30) → `stale`.
 - A successful recall refreshes retention (`S *= 1.7`).
 - Memories are never deleted. Newer nodes on the same path are `latest`; update by adding a child with `parent`.

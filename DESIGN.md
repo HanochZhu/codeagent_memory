@@ -27,6 +27,9 @@ cam 有两面：
 树状存储，多路召回。一条记忆可以是习惯、事实、设计或解法，schema 相同；类型写在摘要和正文里。探索项目前先 `recall`；没有命中再搜代码；需要长期留下的结论再 `add`。
 
 - `cam recall "<一句话>" [--no-expand]`：向量 + BM25，默认 **RRF**（k=60；分数乘以 k+1，使单路第一名=1、双路第一名=2）。`--fusion sum` 则两路 min-max 到 `[0,1]` 后求和
+- 融合前每路先过门槛：向量分不到本路第一名的 80%、BM25 分不到本路第一名的 30% 的，不算在该路命中。RRF 只看名次，不设门槛时库里每条记忆都会进向量名单，只共享一个 `ts` 这类近零 IDF 词的文档也会进 BM25 名单
+- 输出带 `relevance`（融合分）、`vec_score`、`bm25_score`；双路命中约为 2，单路约为 1
+- BM25 查询去掉中英文虚词（是否、由、或、the、how…）；驼峰标识符入库时整词和拆开的词都存，`bundledToolSchemas` 也能被 `bundled tool schemas` 命中。分词规则变了会用 `PRAGMA user_version` 触发一次 `fts_text` 重建
 - `cam add --summary "..." [--parent ID]`：必须提供全文（stdin / `--file`）和摘要
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新
 
@@ -34,7 +37,9 @@ cam 有两面：
 
 ## 遗忘
 
-用艾宾浩斯 / MemoryBank 公式算保留率，并加到召回分数上：`R = exp(-t / S)`。`t` 是距 C0（`recalled_at`，没有则用 `created_at`）的天数，初始 `S = 7` 天。
+用艾宾浩斯 / MemoryBank 公式算保留率：`R = exp(-t / S)`。`t` 是距 C0（`recalled_at`，没有则用 `created_at`）的天数，初始 `S = 7` 天。
+
+排序分是 `relevance × (0.9 + 0.1 × R)`：保留率最多改变 10%。它说明记忆新不新，不说明它答不答得上这个问题；早先直接把 `R` 加到融合分上，R 与 RRF 分同量级，常被召回的记忆会压过更相关的一条，而每次被返回又会再加强一次，形成正反馈。
 
 - 召回成功（`needs_update = false`）时刷新 C0，并把 `S *= 1.7`（SM-2 默认难度）。仅靠链尾扩展被拉进来的节点不算召回，不刷新
 - `R < 0.3` 标 `needs_update`（遗忘带；不用 FSRS 的 0.9，那是复习间隔目标，不是“该重写”）

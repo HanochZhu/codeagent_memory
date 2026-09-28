@@ -269,7 +269,7 @@ python3 eval/charts/generate.py
 | **虚拟路径** | `src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号 |
 | **多路召回** | 向量 + BM25，默认 **RRF**（k=60）；`--fusion sum` 仍是 min-max 后求和 |
 | **链尾扩展** | 召回会把命中记忆所在修订链的最新一条一并拉进来，即使它两路都匹配不上，`latest` 始终是当前结论；`--no-expand` 可关闭 |
-| **艾宾浩斯保留** | `R = exp(-t / S)` 加进召回分；过期和遗忘只打标，不删除 |
+| **艾宾浩斯保留** | `R = exp(-t / S)` 最多调整召回分 10%；过期和遗忘只打标，不删除 |
 | **记忆树** | `add` 追加节点（可挂 `--parent`）；旧条目留在树上 |
 | **MCP + CLI** | 主 Agent：`cam_*` 工具。Subagent：`cam --json …`。同一个二进制 |
 | **100% 本地** | 无 API key。SQLite + 可选的本地向量模型（`~/.cam/models/`） |
@@ -283,7 +283,7 @@ python3 eval/charts/generate.py
 
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
-3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），两路排序用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。再加上保留率 `R`。命中记忆所在修订链的最新一条会一并拉进来，避免只返回一条已被取代的结论。
+3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），每路先去掉远低于本路第一名的结果，再用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。最后乘以 `0.9 + 0.1 × R`。命中记忆所在修订链的最新一条会一并拉进来，避免只返回一条已被取代的结论。
 4. **写回** — Agent 有需要长期留下的结论时，`add` 存摘要和正文。同一条修订链上最新的节点标 `latest`。
 
 设计细节见 [DESIGN.md](DESIGN.md)。
@@ -356,7 +356,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 ## 记忆规则
 
 - 超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`
-- 艾宾浩斯保留率 `R = exp(-t / S)` 会加进召回分；`R < 0.3` 标 `needs_update`
+- 艾宾浩斯保留率 `R = exp(-t / S)`：排序分为 `relevance × (0.9 + 0.1 × R)`；`R < 0.3` 标 `needs_update`
 - 召回成功（`needs_update = false`）时刷新 C0，并把 `S *= 1.7`。仅靠链尾扩展被拉进来的节点不算召回，不刷新
 - 记忆不删除。结果按分数排序，每条修订链上最新的节点标 `latest` — 排第一的不一定是当前结论
 - 需要更新时 `add` 新节点（可挂 `--parent`），旧节点留在树上

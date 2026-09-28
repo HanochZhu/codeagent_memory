@@ -270,7 +270,7 @@ python3 eval/charts/generate.py
 | **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
 | **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) by default; `--fusion sum` keeps min-max + sum |
 | **Chain-tail expansion** | Recall also pulls in the newest revision of whatever matched, so `latest` is the current answer even when that revision matches neither path; `--no-expand` turns it off |
-| **Ebbinghaus retention** | `R = exp(-t / S)` is added to the recall score; stale and forgotten entries are flagged, never deleted |
+| **Ebbinghaus retention** | `R = exp(-t / S)` moves the recall score by at most 10%; stale and forgotten entries are flagged, never deleted |
 | **Memory tree** | `add` appends a node (optionally `--parent`); the old entry stays on the tree |
 | **MCP + CLI** | Main agent: `cam_*` tools. Subagent: `cam --json …`. Same binary |
 | **100% local** | No API keys. SQLite + an optional on-disk embedding model under `~/.cam/models/` |
@@ -284,7 +284,7 @@ python3 eval/charts/generate.py
 
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
-3. **Recall** — `recall` embeds the query, runs BM25 (jieba first for Chinese), and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. Retention `R` is added on top. The newest revision of each top match is pulled in alongside it, so a superseded node cannot be the only thing returned.
+3. **Recall** — `recall` embeds the query, runs BM25 (jieba first for Chinese), drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. The result is scaled by `0.9 + 0.1 × R`. The newest revision of each top match is pulled in alongside it, so a superseded node cannot be the only thing returned.
 4. **Write-back** — after the agent learns something worth keeping, `add` stores summary + body. Same chain, newest node wins as `latest`.
 
 Design notes (Chinese): [DESIGN.md](DESIGN.md).
@@ -360,7 +360,7 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 ## Memory Rules
 
 - Entries older than `stale_days` in `~/.cam/config.toml` (default 30) are marked `stale`
-- Ebbinghaus retention `R = exp(-t / S)` is added to the recall score; `R < 0.3` is marked `needs_update`
+- Ebbinghaus retention `R = exp(-t / S)`: the sort score is `relevance × (0.9 + 0.1 × R)`; `R < 0.3` is marked `needs_update`
 - A successful recall (`needs_update = false`) refreshes C0 and multiplies `S` by 1.7. A node pulled in by chain-tail expansion alone is not a recall and is not refreshed
 - Memories are never deleted. Hits are ranked by score, and the newest node of each revision chain is flagged `latest` — the top hit is not always the current answer
 - To update, `add` a new node (optionally `--parent`); the old node stays on the tree

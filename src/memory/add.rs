@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::{bail, Result};
 use jieba_rs::Jieba;
 use serde::Serialize;
@@ -70,16 +72,147 @@ pub fn add_solution(
     })
 }
 
-pub fn tokenize_for_fts(summary: &str, body: &str) -> String {
-    let jieba = Jieba::new();
-    let text = format!("{summary} {body}");
-    jieba
-        .cut(&text, false)
+fn jieba() -> &'static Jieba {
+    static JIEBA: OnceLock<Jieba> = OnceLock::new();
+    JIEBA.get_or_init(Jieba::new)
+}
+
+fn cut(text: &str) -> impl Iterator<Item = &str> {
+    jieba()
+        .cut(text, false)
         .into_iter()
         .map(str::trim)
-        .filter(|t| !t.is_empty() && *t != " ")
+        .filter(|t| !t.is_empty())
+}
+
+/// Text stored for BM25. A camelCase identifier is kept whole and also split
+/// into its words, so `bundledToolSchemas` matches both itself and a query
+/// that spells it `bundled tool schemas`.
+pub fn tokenize_for_fts(summary: &str, body: &str) -> String {
+    let text = format!("{summary} {body}");
+    let mut out = Vec::new();
+    for token in cut(&text) {
+        out.push(token.to_string());
+        let words = camel_words(token);
+        if words.len() > 1 {
+            out.extend(words);
+        }
+    }
+    out.join(" ")
+}
+
+/// Query terms for BM25. Function words are dropped: the query is an OR of
+/// every term, so a word like 是否 or `the` only adds documents that share
+/// nothing else with the question.
+pub fn tokenize_query(query: &str) -> String {
+    cut(query)
+        .filter(|t| !is_stopword(t))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn camel_words(token: &str) -> Vec<String> {
+    let chars: Vec<char> = token.chars().collect();
+    if !chars.iter().all(|c| c.is_ascii_alphanumeric()) {
+        return Vec::new();
+    }
+    let mut words = Vec::new();
+    let mut start = 0;
+    for i in 1..chars.len() {
+        let (prev, cur) = (chars[i - 1], chars[i]);
+        let next_lower = chars.get(i + 1).is_some_and(|c| c.is_ascii_lowercase());
+        let boundary = (prev.is_ascii_lowercase() && cur.is_ascii_uppercase())
+            || (prev.is_ascii_uppercase() && cur.is_ascii_uppercase() && next_lower)
+            || (prev.is_ascii_alphabetic() != cur.is_ascii_alphabetic());
+        if boundary {
+            words.push(chars[start..i].iter().collect());
+            start = i;
+        }
+    }
+    words.push(chars[start..].iter().collect());
+    words
+}
+
+const STOPWORDS: &[&str] = &[
+    "的",
+    "了",
+    "是",
+    "否",
+    "是否",
+    "由",
+    "或",
+    "或者",
+    "和",
+    "与",
+    "及",
+    "在",
+    "吗",
+    "呢",
+    "吧",
+    "啊",
+    "把",
+    "被",
+    "就",
+    "都",
+    "也",
+    "还",
+    "又",
+    "要",
+    "会",
+    "能",
+    "可以",
+    "这",
+    "那",
+    "这个",
+    "那个",
+    "这是",
+    "一个",
+    "有",
+    "没有",
+    "怎么",
+    "怎样",
+    "如何",
+    "什么",
+    "为什么",
+    "哪",
+    "哪里",
+    "哪个",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "do",
+    "does",
+    "did",
+    "of",
+    "to",
+    "in",
+    "on",
+    "for",
+    "by",
+    "with",
+    "or",
+    "and",
+    "it",
+    "this",
+    "that",
+    "how",
+    "what",
+    "why",
+    "which",
+    "where",
+    "when",
+    "who",
+    "whether",
+];
+
+fn is_stopword(token: &str) -> bool {
+    STOPWORDS.iter().any(|s| s.eq_ignore_ascii_case(token))
 }
 
 pub fn escape_fts_query(tokens: &str) -> String {

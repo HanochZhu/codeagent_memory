@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::ValueEnum;
 use serde::Serialize;
 
-use super::add::{escape_fts_query, tokenize_for_fts};
+use super::add::{escape_fts_query, tokenize_query};
 use super::ebbinghaus::{c0, needs_update, retention, strengthen};
 use super::embed::{cosine, decode_f32, Embedder};
 use crate::config::Config;
@@ -14,12 +14,21 @@ use crate::project::Project;
 const POOL: usize = 20;
 /// Cormack et al. RRF constant. Raw RRF is scaled by `(k + 1)` so a rank-1
 /// hit on one list scores 1.0 and a rank-1 hit on both lists scores 2.0 —
-/// the same range as min-max sum fusion — before Ebbinghaus retention is added.
+/// the same range as min-max sum fusion — before Ebbinghaus retention scales it.
 const RRF_K: f32 = 60.0;
 /// Fraction of the fused score a chain tail inherits from the seed that pulled
-/// it in, so structure alone does not look like a strong topical match. It only
-/// discounts the fused part; Ebbinghaus retention is added on top afterwards.
+/// it in, so structure alone does not look like a strong topical match.
 const EXPAND_DECAY: f32 = 0.5;
+/// Share of a path's best score a memory needs to count as matched on that
+/// path. RRF only sees ranks, so without a gate every memory the vector path
+/// returns, and every document sharing one near-zero-IDF token such as `ts`,
+/// scores almost like a real match.
+const VEC_KEEP: f32 = 0.8;
+const BM25_KEEP: f32 = 0.3;
+/// Largest share of the final score Ebbinghaus retention can move. Retention
+/// says how fresh a memory is, not whether it answers the query, so it must
+/// not outweigh a difference in relevance.
+const RETENTION_WEIGHT: f32 = 0.1;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,7 +61,12 @@ pub struct RecallHit {
     pub id: String,
     pub summary: String,
     pub body: String,
+    /// `relevance` scaled by retention; what results are sorted by.
     pub score: f32,
+    /// Fused vector + BM25 score before retention.
+    pub relevance: f32,
+    pub vec_score: Option<f32>,
+    pub bm25_score: Option<f32>,
     pub path: Vec<String>,
     pub stale: bool,
     pub needs_update: bool,
@@ -139,6 +153,19 @@ fn sort_desc(items: &mut [(String, f32)]) {
     items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 }
 
+/// Drop entries below `ratio` of the best one. `items` must be sorted
+/// descending. The best entry always stays, even when it is not positive.
+fn keep_near_top(items: &mut Vec<(String, f32)>, ratio: f32) {
+    let Some(&(_, top)) = items.first() else {
+        return;
+    };
+    if top <= 0.0 {
+        items.truncate(1);
+        return;
+    }
+    items.retain(|(_, s)| *s >= top * ratio);
+}
+
 fn min_max(value: Option<f32>, all: &[f32]) -> f32 {
     let Some(value) = value else {
         return 0.0;
@@ -197,20 +224,12 @@ pub fn recall(
             vec_hits.push((id, cosine(&q_vec, &emb)));
         }
     }
-    vec_hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    sort_desc(&mut vec_hits);
     vec_hits.truncate(POOL);
+    keep_near_top(&mut vec_hits, VEC_KEEP);
 
-    let mut raw = Vec::new();
-    for (id, score) in vec_hits {
-        raw.push(RawHit {
-            id,
-            vec_score: Some(score),
-            bm25_score: None,
-        });
-    }
-
-    let fts = tokenize_for_fts(query, "");
-    let match_q = escape_fts_query(&fts);
+    let mut bm25_hits = Vec::new();
+    let match_q = escape_fts_query(&tokenize_query(query));
     if !match_q.is_empty() {
         let sql = format!(
             "SELECT s.id, bm25(solutions_fts) FROM solutions_fts
@@ -229,14 +248,27 @@ pub fn recall(
                     continue;
                 };
                 // FTS5 bm25 is lower (more negative) is better.
-                raw.push(RawHit {
-                    id,
-                    vec_score: None,
-                    bm25_score: Some(-bm25 as f32),
-                });
+                bm25_hits.push((id, -bm25 as f32));
             }
         }
     }
+    keep_near_top(&mut bm25_hits, BM25_KEEP);
+
+    let vec_of: HashMap<String, f32> = vec_hits.iter().cloned().collect();
+    let bm25_of: HashMap<String, f32> = bm25_hits.iter().cloned().collect();
+    let raw: Vec<RawHit> = vec_hits
+        .into_iter()
+        .map(|(id, s)| RawHit {
+            id,
+            vec_score: Some(s),
+            bm25_score: None,
+        })
+        .chain(bm25_hits.into_iter().map(|(id, s)| RawHit {
+            id,
+            vec_score: None,
+            bm25_score: Some(s),
+        }))
+        .collect();
 
     let fused = fuse(&raw, opts.fusion);
     let seeds = if opts.expand { opts.limit.max(1) } else { 0 };
@@ -250,7 +282,7 @@ pub fn recall(
     let candidates: Vec<(String, f32)> = fused.into_iter().chain(expanded).collect();
     let now = chrono::Utc::now().timestamp();
     let mut hits = Vec::new();
-    for (id, score) in candidates {
+    for (id, relevance) in candidates {
         let (summary, body, created_at, updated_at, recalled_at, stability): (
             String,
             String,
@@ -276,10 +308,13 @@ pub fn recall(
         let r = retention(now, c0(recalled_at, created_at), stability);
         let latest = chains.tail_of(&conn, &id)? == id;
         hits.push(RecallHit {
+            score: relevance * (1.0 - RETENTION_WEIGHT + RETENTION_WEIGHT * r as f32),
+            relevance,
+            vec_score: vec_of.get(&id).copied(),
+            bm25_score: bm25_of.get(&id).copied(),
             id,
             summary,
             body,
-            score: score + r as f32,
             path: Vec::new(),
             stale: cfg.is_stale(updated_at),
             needs_update: needs_update(r),
@@ -622,6 +657,84 @@ mod tests {
             stability_of(&conn, &matched) > before,
             "the genuine match is still strengthened"
         );
+    }
+
+    #[test]
+    fn retention_does_not_outrank_a_better_match() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let exact = add(
+            &project,
+            "bundledToolSchemas holds the five vfs tool schemas",
+            "bundledToolSchemas.ts is kept in sync with toolMetadata.ts",
+            None,
+        );
+        let hot = add(
+            &project,
+            "vfs_replace zeroes m_Script",
+            "status missing maps to fileID 0 in yamlCompactInvert.ts",
+            None,
+        );
+        // FTS5 clamps IDF to ~0 in a two-document store, which would make every
+        // BM25 score equal; unrelated memories give the terms real weight.
+        for topic in [
+            "serve lock",
+            "ndjson line limit",
+            "query worker",
+            "index build",
+        ] {
+            add(
+                &project,
+                topic,
+                &format!("{topic} notes for the daemon"),
+                None,
+            );
+        }
+        let conn = project.connect().unwrap();
+        conn.execute(
+            "UPDATE solutions SET recalled_at = recalled_at - 20 * 86400 WHERE id = ?1",
+            [&exact],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE solutions SET stability = 7000 WHERE id = ?1",
+            [&hot],
+        )
+        .unwrap();
+        drop(conn);
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "bundledToolSchemas.ts 是否由脚本生成或更新",
+            RecallOptions {
+                limit: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hits[0].id, exact, "{hits:?}");
+        assert!(hits[0].retention < 0.1, "{hits:?}");
+        if let Some(h) = hits.iter().find(|h| h.id == hot) {
+            assert!(
+                h.bm25_score.is_none(),
+                "a shared `ts` is not a lexical match: {h:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keep_near_top_keeps_the_best_even_when_not_positive() {
+        let mut items = vec![("a".to_string(), 2.0), ("b".into(), 0.7), ("c".into(), 0.5)];
+        keep_near_top(&mut items, 0.3);
+        assert_eq!(items.len(), 2);
+
+        let mut flat = vec![("a".to_string(), 0.0), ("b".into(), 0.0)];
+        keep_near_top(&mut flat, 0.3);
+        assert_eq!(flat, vec![("a".to_string(), 0.0)]);
     }
 
     fn stability_of(conn: &rusqlite::Connection, id: &str) -> f64 {
