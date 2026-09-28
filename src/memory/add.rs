@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use anyhow::{bail, Result};
-use jieba_rs::Jieba;
+use rust_stemmers::{Algorithm, Stemmer};
 use serde::Serialize;
+use unicode_script::{Script, UnicodeScript};
 use uuid::Uuid;
 
 use super::ebbinghaus::INITIAL_STABILITY_DAYS;
@@ -30,6 +32,8 @@ pub fn add_solution(
     if body.trim().is_empty() {
         bail!("body is required (stdin or --file)");
     }
+    require_english("summary", summary)?;
+    require_english("body", body)?;
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
     if let Some(parent) = parent_id {
@@ -72,43 +76,89 @@ pub fn add_solution(
     })
 }
 
-fn jieba() -> &'static Jieba {
-    static JIEBA: OnceLock<Jieba> = OnceLock::new();
-    JIEBA.get_or_init(Jieba::new)
+pub fn require_english(field: &str, text: &str) -> Result<()> {
+    if let Some(ch) = text.chars().find(|ch| {
+        ch.is_alphabetic()
+            && !matches!(
+                ch.script(),
+                Script::Latin | Script::Common | Script::Inherited
+            )
+    }) {
+        bail!(
+            "{field} must be written in English; found non-Latin character `{ch}` (U+{:04X})",
+            ch as u32
+        );
+    }
+    Ok(())
 }
 
-fn cut(text: &str) -> impl Iterator<Item = &str> {
-    jieba()
-        .cut(text, false)
-        .into_iter()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
+fn stemmer() -> &'static Stemmer {
+    static STEMMER: OnceLock<Stemmer> = OnceLock::new();
+    STEMMER.get_or_init(|| Stemmer::create(Algorithm::English))
 }
 
 /// Text stored for BM25. A camelCase identifier is kept whole and also split
 /// into its words, so `bundledToolSchemas` matches both itself and a query
-/// that spells it `bundled tool schemas`.
+/// that spells it `bundled tool schemas`. English words are stored in both
+/// surface and stemmed forms, so inflections such as `stores` and `stored`
+/// share a lexical term.
 pub fn tokenize_for_fts(summary: &str, body: &str) -> String {
     let text = format!("{summary} {body}");
-    let mut out = Vec::new();
-    for token in cut(&text) {
-        out.push(token.to_string());
-        let words = camel_words(token);
-        if words.len() > 1 {
-            out.extend(words);
-        }
-    }
-    out.join(" ")
+    english_terms(&text, false).join(" ")
 }
 
 /// Query terms for BM25. Function words are dropped: the query is an OR of
-/// every term, so a word like 是否 or `the` only adds documents that share
-/// nothing else with the question.
+/// every term, so a word like `the` only adds documents that share nothing
+/// else with the question.
 pub fn tokenize_query(query: &str) -> String {
-    cut(query)
-        .filter(|t| !is_stopword(t))
-        .collect::<Vec<_>>()
-        .join(" ")
+    english_terms(query, true).join(" ")
+}
+
+fn english_terms(text: &str, drop_stopwords: bool) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut query_seen = HashSet::new();
+    for token in text.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
+        if token.is_empty() {
+            continue;
+        }
+        let mut variants = Vec::new();
+        let mut variant_seen = HashSet::new();
+        push_term(&mut variants, &mut variant_seen, token, drop_stopwords);
+        for word in identifier_words(token) {
+            push_term(&mut variants, &mut variant_seen, &word, drop_stopwords);
+        }
+        for term in variants {
+            if !drop_stopwords || query_seen.insert(term.clone()) {
+                terms.push(term);
+            }
+        }
+    }
+    terms
+}
+
+fn push_term(
+    terms: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    term: &str,
+    drop_stopwords: bool,
+) {
+    let normalized = term.to_lowercase();
+    if normalized.is_empty() || (drop_stopwords && is_stopword(&normalized)) {
+        return;
+    }
+    if seen.insert(normalized.clone()) {
+        terms.push(normalized.clone());
+    }
+    if normalized.chars().all(|c| c.is_ascii_alphabetic()) {
+        let stemmed = stemmer().stem(&normalized).into_owned();
+        if seen.insert(stemmed.clone()) {
+            terms.push(stemmed);
+        }
+    }
+}
+
+fn identifier_words(token: &str) -> Vec<String> {
+    token.split(['_', '-']).flat_map(camel_words).collect()
 }
 
 fn camel_words(token: &str) -> Vec<String> {
@@ -134,81 +184,9 @@ fn camel_words(token: &str) -> Vec<String> {
 }
 
 const STOPWORDS: &[&str] = &[
-    "的",
-    "了",
-    "是",
-    "否",
-    "是否",
-    "由",
-    "或",
-    "或者",
-    "和",
-    "与",
-    "及",
-    "在",
-    "吗",
-    "呢",
-    "吧",
-    "啊",
-    "把",
-    "被",
-    "就",
-    "都",
-    "也",
-    "还",
-    "又",
-    "要",
-    "会",
-    "能",
-    "可以",
-    "这",
-    "那",
-    "这个",
-    "那个",
-    "这是",
-    "一个",
-    "有",
-    "没有",
-    "怎么",
-    "怎样",
-    "如何",
-    "什么",
-    "为什么",
-    "哪",
-    "哪里",
-    "哪个",
-    "a",
-    "an",
-    "the",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "do",
-    "does",
-    "did",
-    "of",
-    "to",
-    "in",
-    "on",
-    "for",
-    "by",
-    "with",
-    "or",
-    "and",
-    "it",
-    "this",
-    "that",
-    "how",
-    "what",
-    "why",
-    "which",
-    "where",
-    "when",
-    "who",
-    "whether",
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "do", "does", "did", "of", "to",
+    "in", "on", "for", "by", "with", "or", "and", "it", "this", "that", "how", "what", "why",
+    "which", "where", "when", "who", "whether",
 ];
 
 fn is_stopword(token: &str) -> bool {
@@ -232,6 +210,45 @@ pub fn escape_fts_query(tokens: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_non_latin_memory_text() {
+        let err = require_english("query", "How does 向量 recall work?").unwrap_err();
+        assert!(err.to_string().contains("must be written in English"));
+    }
+
+    #[test]
+    fn allows_english_code_and_punctuation() {
+        require_english(
+            "body",
+            "Use `bundledToolSchemas()`—it returns Vec<Result<T, E>>.",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn english_tokens_split_identifiers_and_add_stems() {
+        let terms = tokenize_for_fts(
+            "bundledToolSchemas",
+            "Stores cached results and stores metadata",
+        );
+        assert!(terms.split_whitespace().any(|term| term == "bundled"));
+        assert!(terms.split_whitespace().any(|term| term == "schemas"));
+        assert!(terms.split_whitespace().any(|term| term == "store"));
+        assert_eq!(
+            terms
+                .split_whitespace()
+                .filter(|term| *term == "stores")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn query_tokens_drop_stopwords_and_add_stems() {
+        let terms = tokenize_query("How are stored memories recalled?");
+        assert_eq!(terms, "stored store memories memori recalled recal");
+    }
 
     #[test]
     fn quotes_hyphen_and_or_tokens() {

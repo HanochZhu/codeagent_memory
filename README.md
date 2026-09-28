@@ -284,8 +284,8 @@ python3 eval/charts/generate.py
 
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
-3. **Recall** — `recall` embeds the query, runs BM25 (jieba first for Chinese), drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. The result is scaled by `0.9 + 0.1 × R`. The newest revision of each top match is pulled in alongside it, so a superseded node cannot be the only thing returned.
-4. **Write-back** — after the agent learns something worth keeping, `add` stores summary + body. Same chain, newest node wins as `latest`.
+3. **Recall** — `recall` requires an English query, embeds it, runs English-normalized BM25, drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. The result is scaled by `0.9 + 0.1 × R`. The newest revision of each top match is pulled in alongside it, so a superseded node cannot be the only thing returned.
+4. **Write-back** — after the agent learns something worth keeping, `add` stores an English summary + body. Same chain, newest node wins as `latest`.
 
 Design notes (Chinese): [DESIGN.md](DESIGN.md).
 
@@ -344,8 +344,8 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees. A name shared by several definitions returns `status: ambiguous` with ranked `candidates`; re-run with a candidate `id`, or narrow with `--file` / `--kind` / `--scope` |
-| `cam recall "<one sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum; `--no-expand` skips chain-tail expansion |
-| `cam add --summary "..." [--parent ID]` | Store a memory (body from `--body`, `--file`, or stdin) |
+| `cam recall "<one English sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum; `--no-expand` skips chain-tail expansion |
+| `cam add --summary "..." [--parent ID]` | Store an English memory (body from `--body`, `--file`, or stdin) |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
 | `cam status` | Resolved project root, db path, node/edge/memory counts, config |
 | `cam config get` / `cam config set stale_days N` | Read or update `~/.cam/config.toml` |
@@ -364,7 +364,8 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 - A successful recall (`needs_update = false`) refreshes C0 and multiplies `S` by 1.7. A node pulled in by chain-tail expansion alone is not a recall and is not refreshed
 - Memories are never deleted. Hits are ranked by score, and the newest node of each revision chain is flagged `latest` — the top hit is not always the current answer
 - To update, `add` a new node (optionally `--parent`); the old node stays on the tree
-- Chinese BM25 is jieba-tokenized before FTS5
+- Recall queries and stored memory summaries/bodies must be in English. Inputs containing non-Latin scripts are rejected
+- BM25 splits snake_case, kebab-case, and camelCase identifiers and indexes both surface and English-stemmed terms
 
 ---
 

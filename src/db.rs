@@ -117,7 +117,7 @@ fn migrate(conn: &Connection) -> Result<()> {
 
 /// Bumped whenever `tokenize_for_fts` changes, so stored `fts_text` is rebuilt
 /// with the tokenizer queries are now cut with.
-const FTS_TOKENIZER_VERSION: i64 = 1;
+const FTS_TOKENIZER_VERSION: i64 = 2;
 
 fn retokenize_solutions(conn: &Connection) -> Result<()> {
     let rows: Vec<(String, String, String)> = {

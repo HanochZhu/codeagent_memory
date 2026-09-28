@@ -32,11 +32,11 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 
 | Tool | When |
 | --- | --- |
-| `cam_recall` | Before exploring. Query in the user's language, one sentence. |
+| `cam_recall` | Before exploring. Translate the question to English and use one sentence. |
 | `cam_ls` | List a directory, file, or the symbols in a file. |
 | `cam_read` | File outline, or a symbol body. Prefer `src/foo.rs/bar` over `full=true`. |
 | `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). On `status: ambiguous`, re-call with a candidate `id` or add `file` / `kind` / `scope`. |
-| `cam_add` | Persist the write-up. `summary` + full `body`. Set `parent` to update an older node. |
+| `cam_add` | Persist the write-up in English. `summary` + full `body`. Set `parent` to update an older node. |
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
 
@@ -49,7 +49,7 @@ This repo uses cam (code graph + solution memory).
 
 Main agent: call MCP tools cam_recall / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show. Do not run the cam CLI unless MCP is unavailable.
 
-Workflow: cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, walk the graph with cam_ls → cam_read (symbol paths) → cam_ref. After solving, cam_add (summary + full body; parent to extend an older node).
+Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, walk the graph with cam_ls → cam_read (symbol paths) → cam_ref. After solving, cam_add in English (summary + full body; parent to extend an older node).
 
 Subagents have no MCP. When you delegate, tell them to run `cam --json` in the project directory (see docs/agents.md).
 ```
@@ -88,7 +88,7 @@ cam --json --project <PROJECT> add --summary "<one line>" --file <path>
 cam --json --project <PROJECT> mem tree
 cam --json --project <PROJECT> mem show <id>
 
-Recall first. Before reading code, run `cam index` once if the graph is not built. On miss, ls → read symbol paths → ref. After solving, add. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
+Translate the question to English and recall first. Before reading code, run `cam index` once if the graph is not built. On miss, ls → read symbol paths → ref. After solving, add the summary and body in English. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
 ```
 
 ### Mapping

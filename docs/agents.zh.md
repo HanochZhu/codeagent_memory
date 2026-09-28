@@ -32,11 +32,11 @@
 
 | 工具 | 何时用 |
 | --- | --- |
-| `cam_recall` | 探索前先查。用用户的语言写一句话。 |
+| `cam_recall` | 探索前先查。把问题翻译成一句英语。 |
 | `cam_ls` | 列目录、文件，或文件里的符号 |
 | `cam_read` | 文件大纲，或符号源码。优先 `src/foo.rs/bar`，少用 `full=true` |
 | `cam_ref` | 一跳 callers（`dir=in`）或 callees（`dir=out`）。返回 `status: ambiguous` 时，用候选 `id` 重查，或加 `file` / `kind` / `scope` |
-| `cam_add` | 写入解法。`summary` + 完整 `body`。更新旧节点时带 `parent` |
+| `cam_add` | 用英语写入解法。`summary` + 完整 `body`。更新旧节点时带 `parent` |
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
 | `cam_index` | 每个仓库做一次（或代码大挪移之后）。`.cam/` 会在首次调用时自动创建。 |
 
@@ -49,7 +49,7 @@
 
 主 Agent：调用 MCP 工具 cam_recall / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show。MCP 可用时不要跑 cam CLI。
 
-流程：先 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时用 cam_ls → cam_read（符号路径）→ cam_ref 走代码图。解完 cam_add（摘要 + 全文；更新旧节点时带 parent）。
+流程：先把问题翻译成英语，再 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时用 cam_ls → cam_read（符号路径）→ cam_ref 走代码图。解完用英语 cam_add（摘要 + 全文；更新旧节点时带 parent）。
 
 Subagent 通常没有 MCP。委派时让它们在项目目录执行 `cam --json`（见 docs/agents.zh.md）。
 ```
@@ -63,7 +63,7 @@ Task / explore / `claude -p` / Codex exec / Copilot CLI 脚本里的 subagent **
 优先 `--json`。工作目录可能不是仓库时，一律带 `--project`。
 
 ```bash
-cam --json --project <project> recall "如何做 BM25 和向量的多路召回"
+cam --json --project <project> recall "how does hybrid recall fuse BM25 and vectors"
 cam --json --project <project> ls src/
 cam --json --project <project> read src/memory/recall.rs/fuse_scores
 cam --json --project <project> ref fuse_scores --dir in
@@ -88,7 +88,7 @@ cam --json --project <PROJECT> add --summary "<一行摘要>" --file <path>
 cam --json --project <PROJECT> mem tree
 cam --json --project <PROJECT> mem show <id>
 
-先 recall。读代码前若提示未建图，先 `cam index` 一次。未命中再 ls → read 符号路径 → ref。解完 add。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
+先把问题翻译成英语再 recall。读代码前若提示未建图，先 `cam index` 一次。未命中再 ls → read 符号路径 → ref。解完用英语写 summary 和 body 后 add。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
 ```
 
 ### 对照表

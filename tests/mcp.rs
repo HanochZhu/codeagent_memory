@@ -170,7 +170,7 @@ fn mcp_stdio_init_add_recall() {
         "cam_add",
         json!({
             "path": root,
-            "summary": "BM25 与向量多路召回",
+            "summary": "BM25 and vector hybrid recall",
             "body": "Use FTS5 BM25 plus cosine vectors, min-max each path, then sum scores.",
             "hash_embed": true
         }),
@@ -183,7 +183,7 @@ fn mcp_stdio_init_add_recall() {
         "cam_recall",
         json!({
             "path": root,
-            "query": "如何做 BM25 和向量的多路召回",
+            "query": "How does BM25 and vector hybrid recall work?",
             "hash_embed": true
         }),
     );

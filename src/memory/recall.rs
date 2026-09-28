@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::ValueEnum;
 use serde::Serialize;
 
-use super::add::{escape_fts_query, tokenize_query};
+use super::add::{escape_fts_query, require_english, tokenize_query};
 use super::ebbinghaus::{c0, needs_update, retention, strengthen};
 use super::embed::{cosine, decode_f32, Embedder};
 use crate::config::Config;
@@ -207,6 +207,10 @@ pub fn recall(
     query: &str,
     opts: RecallOptions,
 ) -> Result<Vec<RecallHit>> {
+    if query.trim().is_empty() {
+        anyhow::bail!("query is required");
+    }
+    require_english("query", query)?;
     let conn = project.connect()?;
     let cfg = Config::load()?;
     let q_vec = embedder.embed(query)?;
@@ -709,7 +713,7 @@ mod tests {
         let hits = recall(
             &project,
             &embedder,
-            "bundledToolSchemas.ts 是否由脚本生成或更新",
+            "Is bundledToolSchemas.ts generated or updated by a script?",
             RecallOptions {
                 limit: 2,
                 ..Default::default()

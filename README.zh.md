@@ -283,8 +283,8 @@ python3 eval/charts/generate.py
 
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
-3. **召回** — `recall` 嵌入查询，跑 BM25（中文先 jieba），每路先去掉远低于本路第一名的结果，再用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。最后乘以 `0.9 + 0.1 × R`。命中记忆所在修订链的最新一条会一并拉进来，避免只返回一条已被取代的结论。
-4. **写回** — Agent 有需要长期留下的结论时，`add` 存摘要和正文。同一条修订链上最新的节点标 `latest`。
+3. **召回** — `recall` 只接受英文查询；查询经过向量化和英文归一化 BM25 后，每路先去掉远低于本路第一名的结果，再用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。最后乘以 `0.9 + 0.1 × R`。命中记忆所在修订链的最新一条会一并拉进来，避免只返回一条已被取代的结论。
+4. **写回** — Agent 有需要长期留下的结论时，`add` 存英文摘要和英文正文。同一条修订链上最新的节点标 `latest`。
 
 设计细节见 [DESIGN.md](DESIGN.md)。
 
@@ -303,7 +303,7 @@ cam --json index
 cam --json ls src/
 cam --json read src/memory/recall.rs/fuse_scores
 cam --json ref fuse_scores --dir in
-cam --json recall "如何做 BM25 和向量的多路召回"
+cam --json recall "how to fuse BM25 and vector recall"
 cam --json add --summary "..." --body "..."
 cam --json mem tree
 cam --json mem show <id>
@@ -340,8 +340,8 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees。多个定义同名时返回 `status: ambiguous` 和按分排序的 `candidates`；用候选 `id` 重查，或用 `--file` / `--kind` / `--scope` 收窄 |
-| `cam recall "<一句话>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和；`--no-expand` 关闭链尾扩展 |
-| `cam add --summary "..." [--parent ID]` | 写入记忆（正文来自 `--body`、`--file` 或 stdin） |
+| `cam recall "<一句英文问题>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和；`--no-expand` 关闭链尾扩展 |
+| `cam add --summary "..." [--parent ID]` | 写入英文记忆（正文来自 `--body`、`--file` 或 stdin） |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
 | `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |
 | `cam config get` / `cam config set stale_days N` | 读取或更新 `~/.cam/config.toml` |
@@ -360,7 +360,8 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 - 召回成功（`needs_update = false`）时刷新 C0，并把 `S *= 1.7`。仅靠链尾扩展被拉进来的节点不算召回，不刷新
 - 记忆不删除。结果按分数排序，每条修订链上最新的节点标 `latest` — 排第一的不一定是当前结论
 - 需要更新时 `add` 新节点（可挂 `--parent`），旧节点留在树上
-- 中文 BM25 先 jieba 再进 FTS5
+- 召回问题、记忆摘要和正文必须使用英语；含非拉丁文字的输入会被拒绝
+- BM25 会拆分 snake_case、kebab-case、camelCase 标识符，并同时索引英文原词与词干
 
 ---
 

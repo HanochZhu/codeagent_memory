@@ -20,10 +20,10 @@ const INSTRUCTIONS: &str = r#"cam is local code-graph + solution memory for this
 Main agent: call these MCP tools. Do not shell out to `cam` unless a tool is missing or fails.
 
 Workflow:
-1. cam_recall first. Reuse a hit when it is latest and not needs_update.
+1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update.
 2. Before reading code, make sure the graph is indexed: if cam_ls / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
 3. On miss / stale / needs_update: cam_ls → cam_read (prefer symbol paths) → cam_ref.
-4. After you solve it, cam_add (summary + full body). Use parent to extend an older node.
+4. After you solve it, cam_add with both summary and body written in English. Use parent to extend an older node.
 
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
 
@@ -346,11 +346,11 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_recall",
-            "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. `relevance` near 2 means both paths matched, near 1 only one. Also pulls in the newest revision of whatever matched, so `latest` is the current answer. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand]",
+            "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. Also pulls in the newest revision of whatever matched, so `latest` is the current answer. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand]",
             json!({
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "One-sentence question, usually in the user's language." },
+                    "query": { "type": "string", "description": "One-sentence question written in English. Non-Latin scripts are rejected." },
                     "limit": { "type": "integer", "minimum": 1, "default": 3 },
                     "fusion": { "type": "string", "enum": ["rrf", "sum"], "default": "rrf", "description": "Score fusion: rrf (default) or min-max sum." },
                     "expand": { "type": "boolean", "default": true, "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list." },
@@ -365,12 +365,12 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_add",
-            "Store a solution (summary + full body). Optionally hang it under --parent. Equivalent CLI: cam add --summary \"...\" [--parent ID] --body \"...\" (or --file / stdin)",
+            "Store a solution with its summary and full body written in English. Non-Latin scripts are rejected. Optionally hang it under --parent. Equivalent CLI: cam add --summary \"...\" [--parent ID] --body \"...\" (or --file / stdin)",
             json!({
                 "type": "object",
                 "properties": {
-                    "summary": { "type": "string", "description": "One-line title stored on the solution tree." },
-                    "body": { "type": "string", "description": "Full write-up. Required." },
+                    "summary": { "type": "string", "description": "One-line English title stored on the solution tree." },
+                    "body": { "type": "string", "description": "Full write-up in English. Required." },
                     "parent": { "type": "string", "description": "Parent solution id when this updates an older node." },
                     "path": path_prop(),
                     "hash_embed": { "type": "boolean", "description": "Use the test hash embedder instead of model2vec." }

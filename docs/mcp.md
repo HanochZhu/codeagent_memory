@@ -30,6 +30,10 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 
 `initialize` also returns `instructions` describing the recall → graph → add workflow.
 
+`cam_recall.query` must be written in English. `cam_add.summary` and
+`cam_add.body` must also be English; inputs containing non-Latin scripts are
+rejected so the BM25 and vector paths operate in one language.
+
 `cam_ref` and `cam_read` return `{"status":"ambiguous", "candidates":[…]}` (not `isError`) when a bare name matches several definitions. Each candidate carries an `id`; pass it back as `symbol` / `virt_path`, or narrow `cam_ref` with `file` (path substring), `kind`, or `scope` (a sub-directory, e.g. a nested repo that `cam_ls` lists with kind `project`). Resolved answers carry `status: "ok"` and a `resolved` block naming the node that was used.
 
 ---

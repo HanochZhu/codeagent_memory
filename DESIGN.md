@@ -33,7 +33,7 @@ cam 有两面：
 - `cam add --summary "..." [--parent ID]`：必须提供全文（stdin / `--file`）和摘要
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新
 
-向量默认 `model2vec` + `potion-multilingual-128M`（首次需下载）。模型不可用时回退到 hash embedder。中文 BM25 先用 jieba 切词再进 FTS5。
+向量默认 `model2vec` + `potion-multilingual-128M`（首次需下载）。模型不可用时回退到 hash embedder。查询、记忆摘要和正文要求使用英语；BM25 拆分英语标识符，并同时索引原词和英语词干。
 
 ## 遗忘
 
@@ -64,7 +64,7 @@ cam --json watch
 cam --json ls src/
 cam --json read src/memory/recall.rs/fuse_scores
 cam --json ref fuse_scores --dir in
-cam --json recall "如何做 BM25 和向量的多路召回"
+cam --json recall "how does hybrid recall fuse BM25 and vectors"
 cam --json add --summary "..." --parent <id>
 cam --json mem tree
 cam --json mem show <id>

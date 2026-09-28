@@ -15,7 +15,12 @@ fn add_and_recall_tree() {
     let mut add = Command::new(cam_bin())
         .args(["--json", "--project"])
         .arg(dir.path())
-        .args(["add", "--summary", "BM25 与向量多路召回", "--hash-embed"])
+        .args([
+            "add",
+            "--summary",
+            "BM25 and vector hybrid recall",
+            "--hash-embed",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -41,7 +46,7 @@ fn add_and_recall_tree() {
         .args([
             "add",
             "--summary",
-            "jieba tokenizes Chinese before FTS",
+            "English terms are normalized before FTS",
             "--parent",
             &parent,
             "--hash-embed",
@@ -54,7 +59,7 @@ fn add_and_recall_tree() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"Cut CJK with jieba so BM25 can match Chinese queries.")
+        .write_all(b"Stem English terms so BM25 can match inflected query words.")
         .unwrap();
     let revision = child.wait_with_output().unwrap();
     assert!(revision.status.success());
@@ -64,7 +69,11 @@ fn add_and_recall_tree() {
     let recall = Command::new(cam_bin())
         .args(["--json", "--project"])
         .arg(dir.path())
-        .args(["recall", "如何做 BM25 和向量的多路召回", "--hash-embed"])
+        .args([
+            "recall",
+            "How does BM25 and vector hybrid recall work?",
+            "--hash-embed",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -98,4 +107,42 @@ fn add_and_recall_tree() {
     let nodes: Vec<serde_json::Value> = serde_json::from_slice(&tree.stdout).unwrap();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0]["children"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn rejects_non_english_recall_and_memory_fields() {
+    let dir = tempdir().unwrap();
+
+    for args in [
+        vec!["recall", "如何进行向量召回", "--hash-embed"],
+        vec![
+            "add",
+            "--summary",
+            "非英文摘要",
+            "--body",
+            "English body",
+            "--hash-embed",
+        ],
+        vec![
+            "add",
+            "--summary",
+            "English summary",
+            "--body",
+            "非英文正文",
+            "--hash-embed",
+        ],
+    ] {
+        let output = Command::new(cam_bin())
+            .args(["--project"])
+            .arg(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("must be written in English"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
