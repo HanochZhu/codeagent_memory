@@ -14,7 +14,6 @@
     {
       "registryType": "oci",
       "identifier": "ghcr.io/hanochzhu/codeagent-memory:0.1.2",
-      "version": "0.1.2",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
