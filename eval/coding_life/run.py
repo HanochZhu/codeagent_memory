@@ -121,7 +121,7 @@ def ingest_flat(cam, root, sessions, embed_flag, env) -> dict[str, list[str]]:
 
 
 def ingest_lineage(cam, root, sessions, embed_flag, env) -> dict[str, list[str]]:
-    """One memory per conversation turn, each turn a `--parent` revision of the
+    """One memory per conversation turn, each turn a `--supersedes` revision of the
     previous one — the update model cam documents.
     """
     by_session = {sess["id"]: turns(sess) for sess in sessions}
@@ -137,7 +137,7 @@ def ingest_lineage(cam, root, sessions, embed_flag, env) -> dict[str, list[str]]
             head = sid if depth == 0 else f"{sid} rev{depth}"
             args = ["add", "--summary", f"{head}: {line[:80]}", *embed_flag]
             if depth:
-                args += ["--parent", chains[sid][-1]]
+                args += ["--supersedes", chains[sid][-1]]
             added = cam_json(
                 cam,
                 root,
@@ -189,7 +189,7 @@ def main() -> int:
     p.add_argument(
         "--lineage",
         action="store_true",
-        help="ingest each conversation turn as a --parent revision instead of "
+        help="ingest each conversation turn as a --supersedes revision instead of "
         "one flat memory per session",
     )
     p.add_argument(

@@ -23,7 +23,7 @@ Workflow:
 1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update.
 2. Before reading code, make sure the graph is indexed: if cam_ls / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
 3. On miss / stale / needs_update: cam_ls → cam_read (prefer symbol paths) → cam_ref.
-4. After you solve it, cam_add with both summary and body written in English. Use parent to extend an older node.
+4. After you solve it, cam_add with both summary and body written in English. Use supersedes to replace an older revision; parent only sets the structural tree parent.
 
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
 
@@ -227,6 +227,7 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
                 limit: arg_usize(args, "limit").unwrap_or(3),
                 fusion: parse_fusion(arg_str(args, "fusion"))?,
                 expand: arg_bool(args, "expand").unwrap_or(true),
+                include_superseded: arg_bool(args, "include_superseded").unwrap_or(false),
             };
             let embedder = embedder_from(args)?;
             to_json(
@@ -238,10 +239,18 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
             let summary = required_str(args, "summary")?;
             let body = required_str(args, "body")?;
             let parent = arg_str(args, "parent");
+            let supersedes = arg_str(args, "supersedes");
             let embedder = embedder_from(args)?;
             to_json(
-                add_solution(&project, embedder.as_ref(), summary, body, parent)
-                    .map_err(err_str)?,
+                add_solution(
+                    &project,
+                    embedder.as_ref(),
+                    summary,
+                    body,
+                    parent,
+                    supersedes,
+                )
+                .map_err(err_str)?,
             )
         }
         "cam_mem_tree" => {
@@ -346,7 +355,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_recall",
-            "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. Also pulls in the newest revision of whatever matched, so `latest` is the current answer. A successful hit refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand]",
+            "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]",
             json!({
                 "type": "object",
                 "properties": {
@@ -354,6 +363,7 @@ fn tool_defs() -> Vec<Value> {
                     "limit": { "type": "integer", "minimum": 1, "default": 3 },
                     "fusion": { "type": "string", "enum": ["rrf", "sum"], "default": "rrf", "description": "Score fusion: rrf (default) or min-max sum." },
                     "expand": { "type": "boolean", "default": true, "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list." },
+                    "include_superseded": { "type": "boolean", "default": false, "description": "Return older revisions as well as the latest one for history or comparison queries." },
                     "path": path_prop(),
                     "hash_embed": { "type": "boolean", "description": "Use the test hash embedder instead of model2vec." }
                 },
@@ -365,13 +375,14 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_add",
-            "Store a solution with its summary and full body written in English. Non-Latin scripts are rejected. Optionally hang it under --parent. Equivalent CLI: cam add --summary \"...\" [--parent ID] --body \"...\" (or --file / stdin)",
+            "Store a memory with its summary and full body written in English. Non-Latin scripts are rejected. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] --body \"...\" (or --file / stdin)",
             json!({
                 "type": "object",
                 "properties": {
                     "summary": { "type": "string", "description": "One-line English title stored on the solution tree." },
                     "body": { "type": "string", "description": "Full write-up in English. Required." },
-                    "parent": { "type": "string", "description": "Parent solution id when this updates an older node." },
+                    "parent": { "type": "string", "description": "Structural parent memory id. This relation may branch and does not affect latest." },
+                    "supersedes": { "type": "string", "description": "Older revision replaced by this complete current memory. Omit for a structural child or independent memory." },
                     "path": path_prop(),
                     "hash_embed": { "type": "boolean", "description": "Use the test hash embedder instead of model2vec." }
                 },
@@ -551,6 +562,25 @@ mod tests {
         assert!(names.contains(&"cam_add"));
         assert!(names.contains(&"cam_read"));
         assert!(!names.contains(&"cam_init"));
+    }
+
+    #[test]
+    fn memory_tools_expose_separate_structure_and_revision_options() {
+        let defs = tool_defs();
+        let add = defs.iter().find(|tool| tool["name"] == "cam_add").unwrap();
+        assert_eq!(add["inputSchema"]["properties"]["parent"]["type"], "string");
+        assert_eq!(
+            add["inputSchema"]["properties"]["supersedes"]["type"],
+            "string"
+        );
+        let recall = defs
+            .iter()
+            .find(|tool| tool["name"] == "cam_recall")
+            .unwrap();
+        assert_eq!(
+            recall["inputSchema"]["properties"]["include_superseded"]["default"],
+            false
+        );
     }
 
     #[test]

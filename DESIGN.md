@@ -30,7 +30,7 @@ cam 有两面：
 - 融合前每路先过门槛：向量分不到本路第一名的 80%、BM25 分不到本路第一名的 30% 的，不算在该路命中。RRF 只看名次，不设门槛时库里每条记忆都会进向量名单，只共享一个 `ts` 这类近零 IDF 词的文档也会进 BM25 名单
 - 输出带 `relevance`（融合分）、`vec_score`、`bm25_score`；双路命中约为 2，单路约为 1
 - BM25 查询去掉中英文虚词（是否、由、或、the、how…）；驼峰标识符入库时整词和拆开的词都存，`bundledToolSchemas` 也能被 `bundled tool schemas` 命中。分词规则变了会用 `PRAGMA user_version` 触发一次 `fts_text` 重建
-- `cam add --summary "..." [--parent ID]`：必须提供全文（stdin / `--file`）和摘要
+- `cam add --summary "..." [--parent ID] [--supersedes ID]`：必须提供全文（stdin / `--file`）和摘要；`parent` 是可分叉的结构层级，`supersedes` 是线性版本替代
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新
 
 向量默认 `model2vec` + `potion-multilingual-128M`（首次需下载）。模型不可用时回退到 hash embedder。查询、记忆摘要和正文要求使用英语；BM25 拆分英语标识符，并同时索引原词和英语词干。
@@ -43,13 +43,13 @@ cam 有两面：
 
 - 召回成功（`needs_update = false`）时刷新 C0，并把 `S *= 1.7`（SM-2 默认难度）。仅靠链尾扩展被拉进来的节点不算召回，不刷新
 - `R < 0.3` 标 `needs_update`（遗忘带；不用 FSRS 的 0.9，那是复习间隔目标，不是“该重写”）
-- 记忆不删除。结果按分数排序，每条修订链上最新的节点标 `latest`
+- 记忆不删除。每条 `supersedes_id` 修订链的最后节点标 `latest`
 
 ## 更新
 
-记忆不会删除，而是根据时间判断是否采用最新的记忆。需要更新时 `add` 一条新节点（可挂 `--parent`），旧节点留在树上。
+记忆不会删除。`parent_id` 只构建允许分叉的主题/推导层级；需要完整替代旧结论时，`add --supersedes <old-id>` 写一条新节点，旧节点保留用于历史查询。若没有显式传 `--parent`，新版自动继承旧版的结构父节点。
 
-召回时会用一条递归 CTE 沿 `parent_id` 上溯到链根、再向下展开整条修订链，取 `updated_at`（同秒则按 `rowid`）最大的一条作为链尾。链尾即使两路都匹配不上也会被拉进候选集，所以 `latest` 判的是数据库里的事实，而不是"本次返回结果里最新的一条"。`--no-expand` 可关闭这一步。
+`supersedes_id` 带唯一约束，因此版本替代保持线性；结构树仍可任意分叉。召回只沿 `supersedes_id` 向前找到链尾，不会跨到结构兄弟节点。链尾即使两路都匹配不上也会被拉进候选集，旧修订默认在 top-k 前折叠；`--no-expand` 可关闭扩展，`--include-superseded` 可保留历史。
 
 # Agent 速查
 
@@ -65,7 +65,8 @@ cam --json ls src/
 cam --json read src/memory/recall.rs/fuse_scores
 cam --json ref fuse_scores --dir in
 cam --json recall "how does hybrid recall fuse BM25 and vectors"
-cam --json add --summary "..." --parent <id>
+cam --json add --summary "..." --parent <structural-id>
+cam --json add --summary "..." --supersedes <old-revision-id>
 cam --json mem tree
 cam --json mem show <id>
 cam --json status

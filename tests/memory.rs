@@ -47,7 +47,7 @@ fn add_and_recall_tree() {
             "add",
             "--summary",
             "English terms are normalized before FTS",
-            "--parent",
+            "--supersedes",
             &parent,
             "--hash-embed",
         ])
@@ -83,13 +83,13 @@ fn add_and_recall_tree() {
     );
     let hits: Vec<serde_json::Value> = serde_json::from_slice(&recall.stdout).unwrap();
     assert!(!hits.is_empty());
+    assert!(!hits.iter().any(|hit| hit["id"] == parent), "{hits:?}");
     assert!(!hits[0]["path"].as_array().unwrap().is_empty());
     assert!(hits[0].get("stale").is_some());
     assert!(hits[0].get("needs_update").is_some());
     assert!(hits[0]["retention"].as_f64().unwrap() > 0.9);
 
-    // Ranking is by score, so the best match can be a superseded revision;
-    // `latest` marks the one node that is the current answer.
+    // Default recall folds the superseded revision before top-k.
     let latest: Vec<&str> = hits
         .iter()
         .filter(|h| h["latest"] == true)
@@ -105,8 +105,21 @@ fn add_and_recall_tree() {
         .unwrap();
     assert!(tree.status.success());
     let nodes: Vec<serde_json::Value> = serde_json::from_slice(&tree.stdout).unwrap();
-    assert_eq!(nodes.len(), 1);
-    assert_eq!(nodes[0]["children"].as_array().unwrap().len(), 1);
+    assert_eq!(nodes.len(), 2, "revisions share a structural position");
+    assert!(nodes
+        .iter()
+        .all(|node| node["children"].as_array().unwrap().is_empty()));
+
+    let show = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(dir.path())
+        .args(["mem", "show", &revision_id])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let view: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(view["supersedes_id"], parent);
+    assert_eq!(view["latest"], true);
 }
 
 #[test]

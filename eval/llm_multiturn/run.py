@@ -96,7 +96,7 @@ CODE_QUESTIONS = [
         "id": "c-005",
         "type": "followup",
         "question": "If a solution memory is stale, does cam delete it? How do you update it from the CLI?",
-        "answer": "Never deleted. cam add a new node (optionally --parent); newest on the path is latest.",
+        "answer": "Never deleted. Use cam add --supersedes OLD_ID with a complete replacement; parent is only structural hierarchy.",
     },
     {
         "id": "c-006",

@@ -15,7 +15,7 @@ python3 eval/coding_life/run.py --hash-embed --fusion sum
 # tokenized-substring grep baseline (same score.ts formula)
 python3 eval/coding_life/run.py --adapter grep
 
-# revision chains: one memory per turn, each a --parent revision of the last
+# revision chains: one memory per turn, each superseding the last
 python3 eval/coding_life/run.py --hash-embed --lineage
 python3 eval/coding_life/run.py --hash-embed --lineage --no-expand
 ```
@@ -37,11 +37,11 @@ Grep misses the second gold on `temporal` (q-015). Sum also misses `multi-sessio
 
 ## Revision chains
 
-`--lineage` turns each session into a chain of `--parent` revisions and reports two extra metrics: `newest_R@k` (did the top-k carry the newest node of each gold chain) and `stale_latest` (hits flagged `latest` that a newer revision had already superseded).
+`--lineage` turns each session into a chain of `--supersedes` revisions and reports two extra metrics: `newest_R@k` (did the top-k carry the newest node of each gold chain) and `stale_latest` (hits flagged `latest` that a newer revision had already superseded).
 
 | k | R@k | P@k | newest R@k | stale `latest` |
 |---:|---:|---:|---:|---:|
-| 5 | 0.967 | 0.227 | 0.567 | 0 |
-| 10 | 1.000 | 0.120 | 0.800 | 0 |
+| 5 | 1.000 | 0.240 | 1.000 | 0 |
+| 10 | 1.000 | 0.120 | 1.000 | 0 |
 
-`--no-expand` scores identically at both k on this corpus, so the chain-tail expansion is unmeasured here; it exists for the case where a revision shares no wording with the query, which these transcripts do not produce.
+Hash embedder, 2026-09-29. Revision expansion plus pre-top-k folding returns the current revision for every gold chain; compared with the 2026-09-23 parent-based lineage run, newest R@5 rose from 0.567 and newest R@10 from 0.800, with no stale `latest` hits.

@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use anyhow::Result;
 use clap::ValueEnum;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 use super::add::{escape_fts_query, require_english, tokenize_query};
@@ -16,8 +17,8 @@ const POOL: usize = 20;
 /// hit on one list scores 1.0 and a rank-1 hit on both lists scores 2.0 —
 /// the same range as min-max sum fusion — before Ebbinghaus retention scales it.
 const RRF_K: f32 = 60.0;
-/// Fraction of the fused score a chain tail inherits from the seed that pulled
-/// it in, so structure alone does not look like a strong topical match.
+/// Fraction of the fused score a revision tail inherits from the seed that pulled
+/// it in, so revision expansion alone does not look like a strong topical match.
 const EXPAND_DECAY: f32 = 0.5;
 /// Share of a path's best score a memory needs to count as matched on that
 /// path. RRF only sees ranks, so without a gate every memory the vector path
@@ -59,6 +60,7 @@ pub struct RawHit {
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallHit {
     pub id: String,
+    pub supersedes_id: Option<String>,
     pub summary: String,
     pub body: String,
     /// `relevance` scaled by retention; what results are sorted by.
@@ -189,6 +191,8 @@ pub struct RecallOptions {
     /// Also pull in the newest revision of whatever the query matched, even
     /// when that revision matches neither the vector nor the BM25 path.
     pub expand: bool,
+    /// Keep older revisions for history and comparison queries.
+    pub include_superseded: bool,
 }
 
 impl Default for RecallOptions {
@@ -197,6 +201,7 @@ impl Default for RecallOptions {
             limit: 3,
             fusion: Fusion::Rrf,
             expand: true,
+            include_superseded: false,
         }
     }
 }
@@ -275,19 +280,17 @@ pub fn recall(
         .collect();
 
     let fused = fuse(&raw, opts.fusion);
+    let direct_matches: HashSet<String> = fused.iter().map(|(id, _)| id.clone()).collect();
     let seeds = if opts.expand { opts.limit.max(1) } else { 0 };
-    let mut chains = ChainIndex::default();
-    let expanded = chain_tails(&conn, &mut chains, &fused, seeds)?;
-    // Structure is not a recall. A tail that only got here through its chain
-    // must not refresh retention, or a hot memory would keep its whole lineage
-    // permanently fresh.
-    let pulled_in: std::collections::HashSet<String> =
-        expanded.iter().map(|(id, _)| id.clone()).collect();
+    let mut revisions = RevisionIndex::default();
+    let expanded = revision_tails(&conn, &mut revisions, &fused, seeds)?;
     let candidates: Vec<(String, f32)> = fused.into_iter().chain(expanded).collect();
+    let candidate_ids: HashSet<String> = candidates.iter().map(|(id, _)| id.clone()).collect();
     let now = chrono::Utc::now().timestamp();
     let mut hits = Vec::new();
     for (id, relevance) in candidates {
-        let (summary, body, created_at, updated_at, recalled_at, stability): (
+        let (supersedes_id, summary, body, created_at, updated_at, recalled_at, stability): (
+            Option<String>,
             String,
             String,
             i64,
@@ -295,7 +298,7 @@ pub fn recall(
             Option<i64>,
             f64,
         ) = conn.query_row(
-            "SELECT summary, body, created_at, updated_at, recalled_at, stability
+            "SELECT supersedes_id, summary, body, created_at, updated_at, recalled_at, stability
              FROM solutions WHERE id = ?1",
             [&id],
             |row| {
@@ -306,17 +309,23 @@ pub fn recall(
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )?;
         let r = retention(now, c0(recalled_at, created_at), stability);
-        let latest = chains.tail_of(&conn, &id)? == id;
+        let tail = revisions.tail_of(&conn, &id)?;
+        let latest = tail == id;
+        if !opts.include_superseded && !latest && candidate_ids.contains(&tail) {
+            continue;
+        }
         hits.push(RecallHit {
             score: relevance * (1.0 - RETENTION_WEIGHT + RETENTION_WEIGHT * r as f32),
             relevance,
             vec_score: vec_of.get(&id).copied(),
             bm25_score: bm25_of.get(&id).copied(),
             id,
+            supersedes_id,
             summary,
             body,
             path: Vec::new(),
@@ -333,6 +342,7 @@ pub fn recall(
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.id.cmp(&b.id))
     });
     hits.truncate(opts.limit.max(1));
 
@@ -340,31 +350,30 @@ pub fn recall(
         hit.path = breadcrumb(&conn, &hit.id)?;
     }
     for hit in &hits {
-        if !hit.needs_update && !pulled_in.contains(&hit.id) {
+        if !hit.needs_update && direct_matches.contains(&hit.id) {
             refresh_c0(&conn, &hit.id, now)?;
         }
     }
     Ok(hits)
 }
 
-/// Chain tails worth adding to the fused list, scored off the top `seeds`.
+/// Revision tails worth adding to the fused list, scored off the top `seeds`.
 ///
-/// A revision is stored as a new child rather than an edit, so the newest node
+/// A revision is stored as a new row rather than an edit, so the newest node
 /// on a chain often shares no wording with the query and neither the vector nor
 /// the BM25 path can reach it. Pulling the tail in keeps the current answer
 /// reachable even when the query only matches a revision several steps behind.
-fn chain_tails(
+fn revision_tails(
     conn: &rusqlite::Connection,
-    chains: &mut ChainIndex,
+    revisions: &mut RevisionIndex,
     fused: &[(String, f32)],
     seeds: usize,
 ) -> Result<Vec<(String, f32)>> {
-    let matched: std::collections::HashSet<&str> =
-        fused.iter().map(|(id, _)| id.as_str()).collect();
+    let matched: HashSet<&str> = fused.iter().map(|(id, _)| id.as_str()).collect();
     let mut added: HashMap<String, f32> = HashMap::new();
 
     for (id, score) in fused.iter().take(seeds) {
-        let tail = chains.tail_of(conn, id)?;
+        let tail = revisions.tail_of(conn, id)?;
         if tail == *id || matched.contains(tail.as_str()) {
             continue;
         }
@@ -378,59 +387,49 @@ fn chain_tails(
     Ok(tails)
 }
 
-/// Memoised chain lookups. Resolving one member caches the tail for the whole
-/// chain, so a recall that touches several revisions of the same memory still
-/// costs one query.
+/// Memoised revision lookups. Structural parent/child relationships are not
+/// consulted here and may branch freely.
 #[derive(Default)]
-struct ChainIndex {
+struct RevisionIndex {
     tails: HashMap<String, String>,
 }
 
-impl ChainIndex {
+impl RevisionIndex {
     fn tail_of(&mut self, conn: &rusqlite::Connection, id: &str) -> Result<String> {
         if let Some(tail) = self.tails.get(id) {
             return Ok(tail.clone());
         }
-        let chain = lineage_chain(conn, id)?;
+        let chain = revision_chain(conn, id)?;
         let tail = chain.last().cloned().unwrap_or_else(|| id.to_string());
         for member in chain {
             self.tails.insert(member, tail.clone());
         }
-        self.tails.insert(id.to_string(), tail.clone());
         Ok(tail)
     }
 }
 
-/// Every memory on the same revision chain as `id`, oldest first, so the last
-/// entry is the tail.
-///
-/// Walks up to the root and back down again: a seed in the middle of a chain
-/// resolves to the newest revision, not just to its immediate neighbours.
-/// `updated_at` only has second resolution, so `rowid` breaks ties by insert
-/// order rather than leaving the tail up to retrieval order. `UNION`
-/// de-duplicates, so a `parent_id` cycle terminates instead of looping; such a
-/// chain has no root, yields no rows, and the caller falls back to `id`.
-fn lineage_chain(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare_cached(
-        "WITH RECURSIVE
-             ancestors(id, parent_id) AS (
-                 SELECT id, parent_id FROM solutions WHERE id = ?1
-                 UNION
-                 SELECT s.id, s.parent_id FROM solutions s
-                 JOIN ancestors a ON s.id = a.parent_id
-             ),
-             chain(id) AS (
-                 SELECT id FROM ancestors WHERE parent_id IS NULL
-                 UNION
-                 SELECT s.id FROM solutions s JOIN chain c ON s.parent_id = c.id
-             )
-         SELECT c.id FROM chain c
-         JOIN solutions s ON s.id = c.id
-         ORDER BY s.updated_at, s.rowid",
-    )?;
-    let chain = stmt
-        .query_map([id], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+/// The linear revision suffix starting at `id`, in chronological order. A
+/// unique index on `supersedes_id` guarantees at most one successor. The
+/// visited set also protects recall if a database was modified outside the
+/// append-only API.
+fn revision_chain(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
+    let mut chain = Vec::new();
+    let mut seen = HashSet::new();
+    let mut current = id.to_string();
+    while seen.insert(current.clone()) {
+        chain.push(current.clone());
+        let next = conn
+            .query_row(
+                "SELECT id FROM solutions WHERE supersedes_id = ?1",
+                [&current],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(next) = next else {
+            break;
+        };
+        current = next;
+    }
     Ok(chain)
 }
 
@@ -475,24 +474,44 @@ mod tests {
     use tempfile::tempdir;
 
     fn add(project: &Project, summary: &str, body: &str, parent: Option<&str>) -> String {
-        add_solution(project, &HashEmbedder::default(), summary, body, parent)
-            .unwrap()
-            .id
+        add_solution(
+            project,
+            &HashEmbedder::default(),
+            summary,
+            body,
+            parent,
+            None,
+        )
+        .unwrap()
+        .id
+    }
+
+    fn revise(project: &Project, summary: &str, body: &str, supersedes: &str) -> String {
+        add_solution(
+            project,
+            &HashEmbedder::default(),
+            summary,
+            body,
+            None,
+            Some(supersedes),
+        )
+        .unwrap()
+        .id
     }
 
     #[test]
-    fn chain_tails_reaches_a_tail_two_hops_away() {
+    fn revision_tails_reaches_a_tail_two_hops_away() {
         let dir = tempdir().unwrap();
         let project = Project {
             root: dir.path().to_path_buf(),
         };
         let root = add(&project, "root", "root body", None);
-        let seed = add(&project, "seed", "seed body", Some(&root));
-        let tail = add(&project, "tail", "tail body", Some(&seed));
+        let seed = revise(&project, "seed", "seed body", &root);
+        let tail = revise(&project, "tail", "tail body", &seed);
 
         let conn = project.connect().unwrap();
-        let mut chains = ChainIndex::default();
-        let tails = chain_tails(&conn, &mut chains, &[(seed, 2.0)], 1).unwrap();
+        let mut revisions = RevisionIndex::default();
+        let tails = revision_tails(&conn, &mut revisions, &[(seed, 2.0)], 1).unwrap();
 
         assert_eq!(tails.len(), 1, "a superseded ancestor stays out: {tails:?}");
         assert_eq!(tails[0].0, tail);
@@ -501,17 +520,17 @@ mod tests {
     }
 
     #[test]
-    fn chain_tails_skips_a_tail_the_query_already_matched() {
+    fn revision_tails_skips_a_tail_the_query_already_matched() {
         let dir = tempdir().unwrap();
         let project = Project {
             root: dir.path().to_path_buf(),
         };
         let root = add(&project, "root", "root body", None);
-        let tail = add(&project, "tail", "tail body", Some(&root));
+        let tail = revise(&project, "tail", "tail body", &root);
 
         let conn = project.connect().unwrap();
-        let mut chains = ChainIndex::default();
-        let tails = chain_tails(&conn, &mut chains, &[(root, 2.0), (tail, 0.2)], 2).unwrap();
+        let mut revisions = RevisionIndex::default();
+        let tails = revision_tails(&conn, &mut revisions, &[(root, 2.0), (tail, 0.2)], 2).unwrap();
 
         assert!(tails.is_empty(), "{tails:?}");
     }
@@ -523,11 +542,11 @@ mod tests {
             root: dir.path().to_path_buf(),
         };
         let root = add(&project, "root", "root body", None);
-        add(&project, "tail", "tail body", Some(&root));
+        revise(&project, "tail", "tail body", &root);
 
         let conn = project.connect().unwrap();
-        let mut chains = ChainIndex::default();
-        let tails = chain_tails(&conn, &mut chains, &[(root, 2.0)], 0).unwrap();
+        let mut revisions = RevisionIndex::default();
+        let tails = revision_tails(&conn, &mut revisions, &[(root, 2.0)], 0).unwrap();
 
         assert!(tails.is_empty(), "{tails:?}");
     }
@@ -545,17 +564,17 @@ mod tests {
             "retry policy uses fixed backoff",
             None,
         );
-        let mid = add(
+        let mid = revise(
             &project,
             "retry policy rev1 exponential backoff",
             "retry policy rev1 exponential backoff",
-            Some(&root),
+            &root,
         );
-        let tail = add(
+        let tail = revise(
             &project,
             "retry policy rev2 jittered backoff",
             "retry policy rev2 jittered backoff",
-            Some(&mid),
+            &mid,
         );
 
         let hits = recall(
@@ -564,6 +583,7 @@ mod tests {
             "retry policy backoff",
             RecallOptions {
                 limit: 5,
+                include_superseded: true,
                 ..Default::default()
             },
         )
@@ -581,6 +601,85 @@ mod tests {
     }
 
     #[test]
+    fn structural_children_are_independent_latest_memories() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let root = add(
+            &project,
+            "retry policy overview",
+            "retry policy overview",
+            None,
+        );
+        let network = add(
+            &project,
+            "network retry policy",
+            "network retry policy",
+            Some(&root),
+        );
+        let database = add(
+            &project,
+            "database retry policy",
+            "database retry policy",
+            Some(&root),
+        );
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "retry policy",
+            RecallOptions {
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        for id in [&root, &network, &database] {
+            let hit = hits.iter().find(|hit| hit.id == *id).unwrap();
+            assert!(hit.latest, "structural siblings do not supersede: {hits:?}");
+        }
+    }
+
+    #[test]
+    fn history_mode_keeps_superseded_revisions() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let old = add(
+            &project,
+            "retry policy fixed backoff",
+            "retry policy fixed backoff",
+            None,
+        );
+        let latest = revise(
+            &project,
+            "retry policy jittered backoff",
+            "retry policy jittered backoff",
+            &old,
+        );
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "retry policy backoff",
+            RecallOptions {
+                limit: 5,
+                include_superseded: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(hits.iter().any(|hit| hit.id == old && !hit.latest));
+        assert!(hits.iter().any(|hit| hit.id == latest && hit.latest));
+    }
+
+    #[test]
     fn recall_surfaces_a_revision_neither_path_can_reach() {
         let dir = tempdir().unwrap();
         let project = Project {
@@ -593,7 +692,7 @@ mod tests {
             "min-max each path then sum",
             None,
         );
-        let revision = add(&project, "zzz", "zzz", Some(&old));
+        let revision = revise(&project, "zzz", "zzz", &old);
 
         let conn = project.connect().unwrap();
         conn.execute(
@@ -608,19 +707,26 @@ mod tests {
             &project,
             &embedder,
             "bm25 and vectors",
-            RecallOptions::default(),
+            RecallOptions {
+                limit: 1,
+                ..Default::default()
+            },
         )
         .unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
         let pulled_in = hits
             .iter()
             .find(|h| h.id == revision)
-            .expect("revision reached only through its parent");
+            .expect("revision reached only through supersedes");
         assert!(pulled_in.latest);
-        assert!(!hits.iter().find(|h| h.id == old).unwrap().latest);
+        assert!(
+            !hits.iter().any(|h| h.id == old),
+            "superseded result should be folded before top-k: {hits:?}"
+        );
     }
 
     #[test]
-    fn a_structure_pulled_tail_does_not_refresh_retention() {
+    fn an_expanded_revision_does_not_refresh_retention() {
         let dir = tempdir().unwrap();
         let project = Project {
             root: dir.path().to_path_buf(),
@@ -632,7 +738,7 @@ mod tests {
             "min-max each path then sum",
             None,
         );
-        let revision = add(&project, "zzz", "zzz", Some(&matched));
+        let revision = revise(&project, "zzz", "zzz", &matched);
 
         let conn = project.connect().unwrap();
         conn.execute(
@@ -640,7 +746,8 @@ mod tests {
             [&revision],
         )
         .unwrap();
-        let before = stability_of(&conn, &revision);
+        let revision_before = stability_of(&conn, &revision);
+        let matched_before = stability_of(&conn, &matched);
         drop(conn);
 
         let hits = recall(
@@ -654,12 +761,12 @@ mod tests {
 
         let conn = project.connect().unwrap();
         assert!(
-            (stability_of(&conn, &revision) - before).abs() < 1e-9,
-            "structure alone must not strengthen a memory"
+            (stability_of(&conn, &revision) - revision_before).abs() < 1e-9,
+            "revision expansion alone must not strengthen a memory"
         );
         assert!(
-            stability_of(&conn, &matched) > before,
-            "the genuine match is still strengthened"
+            (stability_of(&conn, &matched) - matched_before).abs() < 1e-9,
+            "a matched but hidden older revision must not be strengthened"
         );
     }
 

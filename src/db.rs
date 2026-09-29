@@ -48,6 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_target_kind ON edges(target, kind);
 CREATE TABLE IF NOT EXISTS solutions (
     id TEXT PRIMARY KEY,
     parent_id TEXT,
+    supersedes_id TEXT REFERENCES solutions(id) ON DELETE SET NULL,
     summary TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -107,6 +108,17 @@ fn migrate(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+    if !column_exists(conn, "solutions", "supersedes_id")? {
+        conn.execute(
+            "ALTER TABLE solutions ADD COLUMN supersedes_id TEXT REFERENCES solutions(id) ON DELETE SET NULL",
+            [],
+        )?;
+    }
+    conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_solutions_supersedes
+         ON solutions(supersedes_id)
+         WHERE supersedes_id IS NOT NULL;",
+    )?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version < FTS_TOKENIZER_VERSION {
         retokenize_solutions(conn)?;
@@ -158,4 +170,57 @@ pub fn node_exists(conn: &Connection, id: &str) -> Result<bool> {
         .query_row("SELECT 1 FROM nodes WHERE id = ?1", [id], |row| row.get(0))
         .optional()?;
     Ok(found.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn migration_adds_revision_relation_without_reclassifying_parent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("cam.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE solutions (
+                id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                summary TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                recalled_at INTEGER,
+                stability REAL NOT NULL DEFAULT 7.0,
+                embedding BLOB,
+                fts_text TEXT NOT NULL
+            );
+            INSERT INTO solutions
+                (id, parent_id, summary, body, created_at, updated_at, stability, fts_text)
+            VALUES
+                ('root', NULL, 'Root', 'Root body', 1, 1, 7.0, 'root'),
+                ('child', 'root', 'Child', 'Child body', 2, 2, 7.0, 'child');
+            CREATE VIRTUAL TABLE solutions_fts USING fts5(
+                summary,
+                fts_text,
+                content='solutions',
+                content_rowid='rowid'
+            );
+            INSERT INTO solutions_fts(solutions_fts) VALUES('rebuild');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = open_db(&path).unwrap();
+        assert!(column_exists(&migrated, "solutions", "supersedes_id").unwrap());
+        let relations: (Option<String>, Option<String>) = migrated
+            .query_row(
+                "SELECT parent_id, supersedes_id FROM solutions WHERE id = 'child'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(relations.0.as_deref(), Some("root"));
+        assert_eq!(relations.1, None);
+    }
 }

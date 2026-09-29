@@ -23,8 +23,8 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand] [--include-superseded]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
@@ -33,6 +33,9 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 `cam_recall.query` must be written in English. `cam_add.summary` and
 `cam_add.body` must also be English; inputs containing non-Latin scripts are
 rejected so the BM25 and vector paths operate in one language.
+`cam_add.parent` is a structural hierarchy edge and may branch.
+`cam_add.supersedes` creates a linear replacement revision; recall hides the
+older revision by default, while `include_superseded` keeps it for history.
 
 `cam_ref` and `cam_read` return `{"status":"ambiguous", "candidates":[…]}` (not `isError`) when a bare name matches several definitions. Each candidate carries an `id`; pass it back as `symbol` / `virt_path`, or narrow `cam_ref` with `file` (path substring), `kind`, or `scope` (a sub-directory, e.g. a nested repo that `cam_ls` lists with kind `project`). Resolved answers carry `status: "ok"` and a `resolved` block naming the node that was used.
 
@@ -302,7 +305,7 @@ If the host requires `type`, set `"type": "stdio"`.
 
 ```bash
 cam --help          # must list `mcp`
-cam mcp             # stderr: `cam mcp 0.1.0 ready (stdio)`
+cam mcp             # stderr: `cam mcp 0.1.1 ready (stdio)`
 ```
 
 Then open the host's MCP panel and confirm tools `cam_recall`, `cam_ls`, `cam_read`, `cam_ref`, `cam_add` are listed.

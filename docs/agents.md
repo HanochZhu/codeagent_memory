@@ -15,10 +15,10 @@ Wire MCP first: [docs/mcp.md](mcp.md) (中文: [docs/mcp.zh.md](mcp.zh.md)).
 
 Same order for both entry points:
 
-1. **Recall first.** Hits are ranked by score, so read the flags rather than taking the first one: reuse a hit that is `latest` and not `needs_update`. A hit without `latest` has been superseded by a newer revision, which recall returns alongside it.
+1. **Recall first.** By default recall expands a matched revision to its latest replacement and hides the superseded revision. Reuse a hit that is `latest` and not `needs_update`; set `include_superseded` / `--include-superseded` only for history or comparison.
 2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` / `cam index` once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
 3. **On miss / stale / needs_update**, walk the code graph: `ls` → `read` (symbol path) → `ref`.
-4. **After you solve it**, `add` a node (optionally hang it under `--parent`).
+4. **After you solve it**, `add` a node. Use `parent` only for structural hierarchy; use `supersedes` when the new complete memory replaces an older revision.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol.
 
@@ -36,7 +36,7 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_ls` | List a directory, file, or the symbols in a file. |
 | `cam_read` | File outline, or a symbol body. Prefer `src/foo.rs/bar` over `full=true`. |
 | `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). On `status: ambiguous`, re-call with a candidate `id` or add `file` / `kind` / `scope`. |
-| `cam_add` | Persist the write-up in English. `summary` + full `body`. Set `parent` to update an older node. |
+| `cam_add` | Persist the write-up in English. `summary` + full `body`. Set `parent` for hierarchy or `supersedes` for a replacement revision. |
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
 
@@ -49,7 +49,7 @@ This repo uses cam (code graph + solution memory).
 
 Main agent: call MCP tools cam_recall / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show. Do not run the cam CLI unless MCP is unavailable.
 
-Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, walk the graph with cam_ls → cam_read (symbol paths) → cam_ref. After solving, cam_add in English (summary + full body; parent to extend an older node).
+Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, walk the graph with cam_ls → cam_read (symbol paths) → cam_ref. After solving, cam_add in English (summary + full body; parent for hierarchy, supersedes to replace an older revision).
 
 Subagents have no MCP. When you delegate, tell them to run `cam --json` in the project directory (see docs/agents.md).
 ```
@@ -68,6 +68,7 @@ cam --json --project <project> ls src/
 cam --json --project <project> read src/memory/recall.rs/fuse_scores
 cam --json --project <project> ref fuse_scores --dir in
 cam --json --project <project> add --summary "..." --file notes.md
+cam --json --project <project> add --summary "..." --supersedes <old-id> --file notes.md
 # or:  printf '%s' "$BODY" | cam --json --project <project> add --summary "..."
 cam --json --project <project> mem tree
 cam --json --project <project> mem show <id>
@@ -99,8 +100,8 @@ Translate the question to English and recall first. Before reading code, run `ca
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT \| --file PATH]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand] [--include-superseded]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 

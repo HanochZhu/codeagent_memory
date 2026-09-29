@@ -177,14 +177,14 @@ RRF matches the published hybrid ceiling and beats grep on `temporal` (q-015). M
 
 #### Revision chains
 
-The corpus above is flat: one memory per session, no `--parent`. `--lineage` re-ingests every conversation turn as a revision of the previous one — the update model cam documents — and adds two metrics. **newest R@k** asks whether the top-k carried the newest node of each gold chain; **stale `latest`** counts returned hits that claimed `latest` while a newer revision existed.
+The corpus above is flat: one memory per session, no `--supersedes`. `--lineage` re-ingests every conversation turn as a revision that supersedes the previous one and adds two metrics. **newest R@k** asks whether the top-k carried the newest node of each gold chain; **stale `latest`** counts returned hits that claimed `latest` while a newer revision existed.
 
 | k | R@k | P@k | newest R@k | stale `latest` |
 |---:|---:|---:|---:|---:|
-| 5 | 0.967 | 0.227 | 0.567 | **0** |
-| 10 | 1.000 | 0.120 | 0.800 | **0** |
+| 5 | 1.000 | 0.240 | 1.000 | **0** |
+| 10 | 1.000 | 0.120 | 1.000 | **0** |
 
-`latest` is resolved from the database with a recursive CTE that walks `parent_id` up to the chain root and back down, so chain depth does not affect it. An earlier version grouped hits by their breadcrumb instead and flagged 8–15 stale hits on these same runs. `--no-expand` reproduces every number above: chain-tail expansion changes the ranking only when a revision shares no wording with the query, which this corpus does not produce. Hash embedder, 2026-09-23.
+Hash embedder, 2026-09-29. Separating structural hierarchy from revision replacement and collapsing older revisions before top-k raised newest R@5 from 0.567 to 1.000 and newest R@10 from 0.800 to 1.000, while stale `latest` stayed at zero.
 
 ### Long-term memory — LongMemEval-S
 
@@ -269,9 +269,9 @@ python3 eval/charts/generate.py
 | **Live sync** | `cam watch` incrementally updates the graph when source files change |
 | **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
 | **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) by default; `--fusion sum` keeps min-max + sum |
-| **Chain-tail expansion** | Recall also pulls in the newest revision of whatever matched, so `latest` is the current answer even when that revision matches neither path; `--no-expand` turns it off |
+| **Revision expansion** | Recall pulls in the newest replacement of whatever matched and hides older revisions by default; `--no-expand` disables expansion and `--include-superseded` keeps history |
 | **Ebbinghaus retention** | `R = exp(-t / S)` moves the recall score by at most 10%; stale and forgotten entries are flagged, never deleted |
-| **Memory tree** | `add` appends a node (optionally `--parent`); the old entry stays on the tree |
+| **Memory tree** | `--parent` creates branching structural hierarchy; `--supersedes` creates a linear replacement revision |
 | **MCP + CLI** | Main agent: `cam_*` tools. Subagent: `cam --json …`. Same binary |
 | **100% local** | No API keys. SQLite + an optional on-disk embedding model under `~/.cam/models/` |
 | **5 languages** | Rust, Python, TypeScript, JavaScript, Go |
@@ -284,8 +284,8 @@ python3 eval/charts/generate.py
 
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
-3. **Recall** — `recall` requires an English query, embeds it, runs English-normalized BM25, drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. The result is scaled by `0.9 + 0.1 × R`. The newest revision of each top match is pulled in alongside it, so a superseded node cannot be the only thing returned.
-4. **Write-back** — after the agent learns something worth keeping, `add` stores an English summary + body. Same chain, newest node wins as `latest`.
+3. **Recall** — `recall` requires an English query, embeds it, runs English-normalized BM25, drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. The result is scaled by `0.9 + 0.1 × R`. The newest replacement of each top match is pulled in and older revisions are folded before top-k.
+4. **Write-back** — after the agent learns something worth keeping, `add` stores an English summary + body. `--parent` adds hierarchy; `--supersedes` replaces an older revision while preserving it for history.
 
 Design notes (Chinese): [DESIGN.md](DESIGN.md).
 
@@ -327,8 +327,8 @@ cam watch [--debounce-ms N]              # Watch source files; --json streams on
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
 cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # One-hop callers (in) or callees (out); --callers / --callees aliases
-cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand]  # Hybrid recall: vector + BM25, RRF by default
-cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]  # Store a memory (body: --body, --file, or stdin)
+cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]  # Hybrid recall: vector + BM25, RRF by default
+cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # Store a memory (body: --body, --file, or stdin)
 cam mem tree                             # Print the memory tree
 cam mem show <id>                        # Show one memory
 cam status                               # Resolved project, database counts, and config
@@ -344,8 +344,8 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees. A name shared by several definitions returns `status: ambiguous` with ranked `candidates`; re-run with a candidate `id`, or narrow with `--file` / `--kind` / `--scope` |
-| `cam recall "<one English sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum; `--no-expand` skips chain-tail expansion |
-| `cam add --summary "..." [--parent ID]` | Store an English memory (body from `--body`, `--file`, or stdin) |
+| `cam recall "<one English sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum; `--no-expand` skips revision expansion; `--include-superseded` keeps history |
+| `cam add --summary "..." [--parent ID] [--supersedes ID]` | Store an English memory; `parent` is structural and `supersedes` replaces an older revision |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
 | `cam status` | Resolved project root, db path, node/edge/memory counts, config |
 | `cam config get` / `cam config set stale_days N` | Read or update `~/.cam/config.toml` |
@@ -361,9 +361,9 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 
 - Entries older than `stale_days` in `~/.cam/config.toml` (default 30) are marked `stale`
 - Ebbinghaus retention `R = exp(-t / S)`: the sort score is `relevance × (0.9 + 0.1 × R)`; `R < 0.3` is marked `needs_update`
-- A successful recall (`needs_update = false`) refreshes C0 and multiplies `S` by 1.7. A node pulled in by chain-tail expansion alone is not a recall and is not refreshed
-- Memories are never deleted. Hits are ranked by score, and the newest node of each revision chain is flagged `latest` — the top hit is not always the current answer
-- To update, `add` a new node (optionally `--parent`); the old node stays on the tree
+- A successful returned match (`needs_update = false`) refreshes C0 and multiplies `S` by 1.7. Expanded revisions and filtered older revisions are not refreshed
+- Memories are never deleted. The newest node of each linear `supersedes` chain is `latest`; older revisions are hidden by default and available with `--include-superseded`
+- Use `--parent` for branching hierarchy and `--supersedes` for a complete replacement revision
 - Recall queries and stored memory summaries/bodies must be in English. Inputs containing non-Latin scripts are rejected
 - BM25 splits snake_case, kebab-case, and camelCase identifiers and indexes both surface and English-stemmed terms
 

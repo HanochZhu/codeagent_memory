@@ -23,8 +23,8 @@ cam --project /path/to/project mcp
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--body TEXT | --file PATH]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand] [--include-superseded]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
@@ -32,6 +32,8 @@ cam --project /path/to/project mcp
 
 `cam_recall.query` 必须使用英语，`cam_add.summary` 和 `cam_add.body`
 也必须使用英语。含非拉丁文字的输入会被拒绝，使 BM25 和向量两路始终在同一语言中检索。
+`cam_add.parent` 表示允许分叉的结构层级，`cam_add.supersedes` 表示线性的版本替代。
+召回默认隐藏被替代的旧修订；查询历史时传 `include_superseded`。
 
 裸名匹配到多个定义时，`cam_ref` / `cam_read` 返回 `{"status":"ambiguous", "candidates":[…]}`（不是 `isError`）。每个候选带 `id`，可直接回传为 `symbol` / `virt_path`；也可给 `cam_ref` 传 `file`（路径子串）、`kind`、`scope`（子目录，例如 `cam_ls` 里类型为 `project` 的嵌套仓库）收窄。解析成功的响应带 `status: "ok"` 和 `resolved` 块，说明实际使用的节点。
 
@@ -301,7 +303,7 @@ Settings → Tools → AI Assistant → Model Context Protocol（不同版本名
 
 ```bash
 cam --help          # 应列出 mcp
-cam mcp             # stderr：`cam mcp 0.1.0 ready (stdio)`
+cam mcp             # stderr：`cam mcp 0.1.1 ready (stdio)`
 ```
 
 再打开宿主的 MCP 面板，确认能看到 `cam_recall`、`cam_ls`、`cam_read`、`cam_ref`、`cam_add`。

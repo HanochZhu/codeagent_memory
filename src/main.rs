@@ -90,6 +90,9 @@ enum Command {
         /// Rank the raw fused list only; skip pulling in the newest revision of each match
         #[arg(long)]
         no_expand: bool,
+        /// Include older revisions that have been superseded
+        #[arg(long)]
+        include_superseded: bool,
         /// Skip model2vec and use the test hash embedder
         #[arg(long, hide = true)]
         hash_embed: bool,
@@ -98,8 +101,12 @@ enum Command {
     Add {
         #[arg(long)]
         summary: String,
+        /// Structural parent in the memory tree
         #[arg(long)]
         parent: Option<String>,
+        /// Older revision replaced by this complete current memory
+        #[arg(long)]
+        supersedes: Option<String>,
         /// Read the body from a file
         #[arg(long, conflicts_with = "body")]
         file: Option<PathBuf>,
@@ -342,6 +349,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             limit,
             fusion,
             no_expand,
+            include_superseded,
             hash_embed,
         } => {
             let project = resolve_project(project_arg)?;
@@ -350,6 +358,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                 limit,
                 fusion,
                 expand: !no_expand,
+                include_superseded,
             };
             let hits = cam::memory::recall(&project, embedder.as_ref(), &query, opts)?;
             if json {
@@ -390,6 +399,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         Command::Add {
             summary,
             parent,
+            supersedes,
             file,
             body,
             hash_embed,
@@ -403,6 +413,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                 &summary,
                 &body,
                 parent.as_deref(),
+                supersedes.as_deref(),
             )?;
             if json {
                 emit_json(&added, pretty)?;
@@ -431,11 +442,13 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                     if json {
                         emit_json(&view, pretty)?;
                     } else {
+                        let revision = if view.latest { "latest" } else { "older" };
                         println!(
-                            "{}  R={:.2}  {}d  {}{}",
+                            "{}  R={:.2}  {}d  {}  {}{}",
                             view.id,
                             view.retention,
                             view.age_days,
+                            revision,
                             if view.stale { "stale " } else { "" },
                             if view.needs_update {
                                 "needs_update"
@@ -443,6 +456,12 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                                 "ok"
                             }
                         );
+                        if let Some(parent) = &view.parent_id {
+                            println!("parent       {parent}");
+                        }
+                        if let Some(supersedes) = &view.supersedes_id {
+                            println!("supersedes   {supersedes}");
+                        }
                         println!("{}", view.summary);
                         println!("{}", view.body);
                     }

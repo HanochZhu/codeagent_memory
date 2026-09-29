@@ -16,6 +16,7 @@ pub struct TreeNode {
 pub struct SolutionView {
     pub id: String,
     pub parent_id: Option<String>,
+    pub supersedes_id: Option<String>,
     pub summary: String,
     pub body: String,
     pub created_at: i64,
@@ -23,6 +24,7 @@ pub struct SolutionView {
     pub stale: bool,
     pub needs_update: bool,
     pub retention: f64,
+    pub latest: bool,
     pub age_days: i64,
 }
 
@@ -57,33 +59,49 @@ pub fn show_solution(project: &Project, id: &str) -> Result<SolutionView> {
     let conn = project.connect()?;
     let cfg = Config::load()?;
     let found = conn.query_row(
-        "SELECT id, parent_id, summary, body, created_at, updated_at, recalled_at, stability
+        "SELECT id, parent_id, supersedes_id, summary, body, created_at, updated_at, recalled_at, stability
          FROM solutions WHERE id = ?1",
         [id],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
-                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
-                row.get::<_, Option<i64>>(6)?,
-                row.get::<_, f64>(7)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, f64>(8)?,
             ))
         },
     );
-    let (id, parent_id, summary, body, created_at, updated_at, recalled_at, stability) = match found
-    {
+    let (
+        id,
+        parent_id,
+        supersedes_id,
+        summary,
+        body,
+        created_at,
+        updated_at,
+        recalled_at,
+        stability,
+    ) = match found {
         Ok(v) => v,
         Err(rusqlite::Error::QueryReturnedNoRows) => bail!("memory not found: {id}"),
         Err(e) => return Err(e.into()),
     };
     let now = chrono::Utc::now().timestamp();
     let r = retention(now, c0(recalled_at, created_at), stability);
+    let successor_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM solutions WHERE supersedes_id = ?1",
+        [&id],
+        |row| row.get(0),
+    )?;
     Ok(SolutionView {
         id,
         parent_id,
+        supersedes_id,
         summary,
         body,
         created_at,
@@ -91,6 +109,7 @@ pub fn show_solution(project: &Project, id: &str) -> Result<SolutionView> {
         stale: cfg.is_stale(updated_at),
         needs_update: needs_update(r),
         retention: r,
+        latest: successor_count == 0,
         age_days: Config::age_days(updated_at),
     })
 }

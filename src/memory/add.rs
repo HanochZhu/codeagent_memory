@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use anyhow::{bail, Result};
+use rusqlite::OptionalExtension;
 use rust_stemmers::{Algorithm, Stemmer};
 use serde::Serialize;
 use unicode_script::{Script, UnicodeScript};
@@ -16,6 +17,7 @@ use crate::project::Project;
 pub struct AddResult {
     pub id: String,
     pub parent_id: Option<String>,
+    pub supersedes_id: Option<String>,
     pub summary: String,
 }
 
@@ -25,6 +27,7 @@ pub fn add_solution(
     summary: &str,
     body: &str,
     parent_id: Option<&str>,
+    supersedes_id: Option<&str>,
 ) -> Result<AddResult> {
     if summary.trim().is_empty() {
         bail!("summary is required");
@@ -36,14 +39,27 @@ pub fn add_solution(
     require_english("body", body)?;
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
-    if let Some(parent) = parent_id {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM solutions WHERE id = ?1",
-            [parent],
-            |row| row.get(0),
-        )?;
-        if exists == 0 {
-            bail!("parent memory not found: {parent}");
+    let mut structural_parent = match parent_id {
+        Some(parent) => {
+            require_memory(&conn, "parent", parent)?;
+            Some(parent.to_string())
+        }
+        None => None,
+    };
+    if let Some(superseded) = supersedes_id {
+        let inherited_parent = require_memory(&conn, "superseded", superseded)?;
+        let successor: Option<String> = conn
+            .query_row(
+                "SELECT id FROM solutions WHERE supersedes_id = ?1",
+                [superseded],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(successor) = successor {
+            bail!("memory {superseded} is already superseded by {successor}");
+        }
+        if structural_parent.is_none() {
+            structural_parent = inherited_parent;
         }
     }
 
@@ -53,11 +69,12 @@ pub fn add_solution(
     let embedding = encode_f32(&embedder.embed(&format!("{summary}\n{body}"))?);
 
     conn.execute(
-        "INSERT INTO solutions(id, parent_id, summary, body, created_at, updated_at, recalled_at, stability, embedding, fts_text)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO solutions(id, parent_id, supersedes_id, summary, body, created_at, updated_at, recalled_at, stability, embedding, fts_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             id,
-            parent_id,
+            structural_parent,
+            supersedes_id,
             summary.trim(),
             body,
             now,
@@ -71,9 +88,24 @@ pub fn add_solution(
 
     Ok(AddResult {
         id,
-        parent_id: parent_id.map(str::to_string),
+        parent_id: structural_parent,
+        supersedes_id: supersedes_id.map(str::to_string),
         summary: summary.trim().to_string(),
     })
+}
+
+fn require_memory(conn: &rusqlite::Connection, relation: &str, id: &str) -> Result<Option<String>> {
+    match conn.query_row(
+        "SELECT parent_id FROM solutions WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    ) {
+        Ok(parent) => Ok(parent),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            bail!("{relation} memory not found: {id}")
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub fn require_english(field: &str, text: &str) -> Result<()> {
@@ -210,6 +242,8 @@ pub fn escape_fts_query(tokens: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::HashEmbedder;
+    use tempfile::tempdir;
 
     #[test]
     fn rejects_non_latin_memory_text() {
@@ -254,5 +288,55 @@ mod tests {
     fn quotes_hyphen_and_or_tokens() {
         let q = escape_fts_query("multi-arch Docker OR");
         assert_eq!(q, "\"multi-arch\" OR \"Docker\" OR \"OR\"");
+    }
+
+    #[test]
+    fn revision_inherits_structural_parent_and_stays_linear() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let topic = add_solution(
+            &project,
+            &embedder,
+            "Retry policy topic",
+            "Retry policy topic body",
+            None,
+            None,
+        )
+        .unwrap();
+        let old = add_solution(
+            &project,
+            &embedder,
+            "Fixed retry policy",
+            "Use fixed retry delays.",
+            Some(&topic.id),
+            None,
+        )
+        .unwrap();
+        let revision = add_solution(
+            &project,
+            &embedder,
+            "Jittered retry policy",
+            "Use jittered retry delays.",
+            None,
+            Some(&old.id),
+        )
+        .unwrap();
+
+        assert_eq!(revision.parent_id.as_deref(), Some(topic.id.as_str()));
+        assert_eq!(revision.supersedes_id.as_deref(), Some(old.id.as_str()));
+
+        let err = add_solution(
+            &project,
+            &embedder,
+            "Alternative retry policy",
+            "Use an alternative retry delay.",
+            None,
+            Some(&old.id),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already superseded"), "{err:#}");
     }
 }

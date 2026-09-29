@@ -175,11 +175,25 @@ fn mcp_stdio_init_add_recall() {
             "hash_embed": true
         }),
     );
-    let id = added_payload["id"].as_str().unwrap();
+    let id = added_payload["id"].as_str().unwrap().to_string();
+
+    let revision = call_ok(
+        &mut mcp,
+        6,
+        "cam_add",
+        json!({
+            "path": root,
+            "summary": "English normalized hybrid recall",
+            "body": "Use normalized English terms before fusing lexical and vector recall.",
+            "supersedes": id,
+            "hash_embed": true
+        }),
+    );
+    let revision_id = revision["id"].as_str().unwrap().to_string();
 
     let hits = call_ok(
         &mut mcp,
-        6,
+        7,
         "cam_recall",
         json!({
             "path": root,
@@ -187,10 +201,33 @@ fn mcp_stdio_init_add_recall() {
             "hash_embed": true
         }),
     );
-    assert!(hits.as_array().unwrap().iter().any(|h| h["id"] == id));
+    assert!(hits
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hit| hit["id"] == revision_id));
+    assert!(!hits.as_array().unwrap().iter().any(|hit| hit["id"] == id));
 
-    let nodes = call_ok(&mut mcp, 7, "cam_mem_tree", json!({ "path": root }));
-    assert_eq!(nodes.as_array().unwrap().len(), 1);
+    let history = call_ok(
+        &mut mcp,
+        8,
+        "cam_recall",
+        json!({
+            "path": root,
+            "query": "How does BM25 and vector hybrid recall work?",
+            "include_superseded": true,
+            "limit": 5,
+            "hash_embed": true
+        }),
+    );
+    assert!(history
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hit| hit["id"] == id && hit["latest"] == false));
+
+    let nodes = call_ok(&mut mcp, 9, "cam_mem_tree", json!({ "path": root }));
+    assert_eq!(nodes.as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -234,6 +271,7 @@ fn mcp_ignores_legacy_current_project() {
         &embedder,
         "legacy memory that must not surface",
         "old body",
+        None,
         None,
     )
     .unwrap();
