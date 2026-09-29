@@ -1,0 +1,25 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      workspace:
+        type: string
+        description: Absolute path of the project directory to mount at /work.
+  commandFunction: |
+    (config) => ({
+      command: "docker",
+      args: [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        `${config.workspace || process.cwd()}:/work`,
+        "-w",
+        "/work",
+        "ghcr.io/hanochzhu/codeagent-memory:0.1.2"
+      ]
+    })
+build:
+  dockerfile: Dockerfile
+  dockerBuildPath: .
