@@ -1,0 +1,335 @@
+{
+  "author": "HanochZhu",
+  "authorUrl": "https://github.com/HanochZhu",
+  "category": "developer",
+  "description": "Local code graph and solution memory for coding agents. Surgical reads and recall over a project, via CLI and MCP.",
+  "homepage": "https://github.com/HanochZhu/codeagent_memory",
+  "icon": "🧠",
+  "identifier": "hanochzhu-codeagent-memory",
+  "localizations": [
+    {
+      "description": "面向编程 Agent 的本地代码图与方案记忆。通过 CLI 和 MCP 对项目做精确读取与召回。",
+      "locale": "zh-CN",
+      "name": "codeagent-memory",
+      "tags": ["代码图", "记忆", "编程助手", "rust", "mcp"]
+    }
+  ],
+  "name": "codeagent-memory",
+  "prompts": [
+    {
+      "name": "explore_code",
+      "description": "Look up a project question in memory, then read the code graph.",
+      "arguments": [
+        {
+          "name": "question",
+          "description": "One-sentence question written in English.",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "remember_solution",
+      "description": "Store what was just learned as an English memory.",
+      "arguments": [
+        {
+          "name": "summary",
+          "description": "One-line English title.",
+          "required": true
+        },
+        {
+          "name": "body",
+          "description": "Full English write-up.",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "uri": "cam://status",
+      "name": "status",
+      "description": "Whether the code graph database exists, with file, symbol, and memory counts.",
+      "mimeType": "application/json"
+    },
+    {
+      "uri": "cam://memory/tree",
+      "name": "memory-tree",
+      "description": "Solution memory tree for the resolved project.",
+      "mimeType": "application/json"
+    }
+  ],
+  "tags": ["code-graph", "memory", "coding-agent", "rust", "mcp"],
+  "tools": [
+    {
+      "name": "cam_index",
+      "description": "Parse the project with tree-sitter into .cam/cam.db. Equivalent CLI: cam index",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_ls",
+      "description": "List indexed directories, files, or symbols as a virtual filesystem. Directories that are git checkouts of their own are listed with kind `project`; pass such a path as `scope` to cam_ref in multi-repo workspaces. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ls [virt_path]",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          },
+          "virt_path": {
+            "description": "Virtual path such as src/ or src/main.rs. Omit for repo root.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_read",
+      "description": "Read a file outline or a symbol body. Prefer symbol paths (src/main.rs/main) over --full. If the name occurs more than once in the file the result has status `ambiguous` with `candidates`; re-call with a candidate `id` as virt_path. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam read <virt_path> [--full]",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "full": {
+            "default": false,
+            "description": "Read the whole file instead of the outline.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          },
+          "virt_path": {
+            "description": "File (src/main.rs), symbol (src/main.rs/main), or a node id from an ambiguous answer.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "virt_path"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_ref",
+      "description": "One-hop callers (in) or callees (out). A bare name that matches several definitions returns status `ambiguous` with ranked `candidates` instead of refs; re-call with a candidate `id` as symbol, or narrow with `file` / `kind` / `scope`. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "description": "in = callers, out = callees.",
+            "enum": [
+              "in",
+              "out"
+            ],
+            "type": "string"
+          },
+          "file": {
+            "description": "Disambiguate: case-insensitive substring of the defining file path, e.g. core/src/config.ts.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Disambiguate: node kind (function, method, struct, class, trait, enum, enum_variant, type_alias).",
+            "type": "string"
+          },
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          },
+          "scope": {
+            "description": "Restrict resolution and refs to this sub-directory, typically a `project` entry from cam_ls (e.g. codely-cli).",
+            "type": "string"
+          },
+          "symbol": {
+            "description": "Symbol name, node id, or virtual path like src/lib.rs/add.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "dir"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_recall",
+      "description": "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expand": {
+            "default": true,
+            "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list.",
+            "type": "boolean"
+          },
+          "fusion": {
+            "default": "rrf",
+            "description": "Score fusion: rrf (default) or min-max sum.",
+            "enum": [
+              "rrf",
+              "sum"
+            ],
+            "type": "string"
+          },
+          "hash_embed": {
+            "description": "Use the test hash embedder instead of model2vec.",
+            "type": "boolean"
+          },
+          "include_superseded": {
+            "default": false,
+            "description": "Return older revisions as well as the latest one for history or comparison queries.",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          },
+          "query": {
+            "description": "One-sentence question written in English. Non-Latin scripts are rejected.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_add",
+      "description": "Store a memory with its summary and full body written in English. Non-Latin scripts are rejected. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] --body \"...\" (or --file / stdin)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "description": "Full write-up in English. Required.",
+            "type": "string"
+          },
+          "hash_embed": {
+            "description": "Use the test hash embedder instead of model2vec.",
+            "type": "boolean"
+          },
+          "parent": {
+            "description": "Structural parent memory id. This relation may branch and does not affect latest.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "One-line English title stored on the solution tree.",
+            "type": "string"
+          },
+          "supersedes": {
+            "description": "Older revision replaced by this complete current memory. Omit for a structural child or independent memory.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_mem_tree",
+      "description": "Print the solution tree. Equivalent CLI: cam mem tree",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "cam_mem_show",
+      "description": "Show one memory by id. Equivalent CLI: cam mem show <id>",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "Solution id from recall or cam_mem_tree.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Project root. Defaults to CAM_PROJECT, then the server --project, then .cam / .git walk-up from the server cwd, else the server cwd.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ],
+  "version": "0.1.2"
+}

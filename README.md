@@ -103,6 +103,18 @@ cargo install --path . --locked
 
 </details>
 
+<details>
+<summary><b>Docker</b></summary>
+
+No Rust toolchain required. This builds the image from the git repository and runs the stdio server with the current directory mounted at `/work`:
+
+```bash
+docker build -t cam https://github.com/HanochZhu/codeagent_memory.git
+docker run -i --rm -v "$PWD:/work" -w /work cam mcp
+```
+
+</details>
+
 ### 2. Index the project
 
 ```bash

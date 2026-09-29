@@ -156,6 +156,40 @@ fn mcp_stdio_init_add_recall() {
     assert!(names.contains(&"cam_recall"));
     assert!(names.contains(&"cam_add"));
 
+    let prompts = mcp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 20,
+        "method": "prompts/list"
+    }));
+    assert_eq!(prompts["result"]["prompts"].as_array().unwrap().len(), 2);
+    let prompt = mcp.send(&rpc(
+        21,
+        "prompts/get",
+        json!({
+            "name": "remember_solution",
+            "arguments": { "summary": "recall order", "body": "Call cam_recall before reading code." }
+        }),
+    ));
+    assert!(prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("cam_add"));
+
+    let resources = mcp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 22,
+        "method": "resources/list"
+    }));
+    assert_eq!(
+        resources["result"]["resources"].as_array().unwrap().len(),
+        2
+    );
+    let status = mcp.send(&rpc(23, "resources/read", json!({ "uri": "cam://status" })));
+    let status_text = status["result"]["contents"][0]["text"].as_str().unwrap();
+    let status_json: Value = serde_json::from_str(status_text).unwrap();
+    assert_eq!(status_json["indexed"], false);
+    assert_eq!(status["result"]["contents"][0]["uri"], "cam://status");
+
     let ping = mcp.send(&json!({
         "jsonrpc": "2.0",
         "id": 3,

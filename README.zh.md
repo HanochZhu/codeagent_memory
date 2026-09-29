@@ -103,6 +103,18 @@ cargo install --path . --locked
 
 </details>
 
+<details>
+<summary><b>Docker</b></summary>
+
+不需要本机安装 Rust。下面从 Git 仓库构建镜像，并把当前目录挂到容器里的 `/work`，以 stdio 启动 MCP：
+
+```bash
+docker build -t cam https://github.com/HanochZhu/codeagent_memory.git
+docker run -i --rm -v "$PWD:/work" -w /work cam mcp
+```
+
+</details>
+
 ### 2. 建图
 
 ```bash

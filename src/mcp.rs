@@ -139,6 +139,10 @@ fn dispatch(
         "notifications/initialized" | "notifications/cancelled" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_defs() })),
         "tools/call" => call_tool(params.unwrap_or(&Value::Null), ctx),
+        "prompts/list" => Ok(json!({ "prompts": prompt_defs() })),
+        "prompts/get" => get_prompt(params.unwrap_or(&Value::Null)),
+        "resources/list" => Ok(json!({ "resources": resource_defs() })),
+        "resources/read" => read_resource(params.unwrap_or(&Value::Null), ctx),
         other => Err(DispatchError::MethodNotFound(format!(
             "Method not found: {other}"
         ))),
@@ -155,7 +159,9 @@ fn initialize_result(params: Option<&Value>) -> Value {
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
-            "tools": { "listChanged": false }
+            "tools": { "listChanged": false },
+            "prompts": { "listChanged": false },
+            "resources": { "subscribe": false, "listChanged": false }
         },
         "serverInfo": {
             "name": SERVER_NAME,
@@ -503,6 +509,170 @@ fn invalid_request(id: Value) -> JsonRpcResponse {
     error_response(id, -32600, "Invalid Request")
 }
 
+fn prompt_defs() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "explore_code",
+            "description": "Look up a project question in memory, then read the code graph.",
+            "arguments": [{
+                "name": "question",
+                "description": "One-sentence question written in English.",
+                "required": true
+            }]
+        }),
+        json!({
+            "name": "remember_solution",
+            "description": "Store what was just learned as an English memory.",
+            "arguments": [
+                {
+                    "name": "summary",
+                    "description": "One-line English title.",
+                    "required": true
+                },
+                {
+                    "name": "body",
+                    "description": "Full English write-up.",
+                    "required": true
+                }
+            ]
+        }),
+    ]
+}
+
+fn get_prompt(params: &Value) -> Result<Value, DispatchError> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DispatchError::InvalidParams("prompts/get requires params.name".into()))?;
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let text = match name {
+        "explore_code" => {
+            let question = required_str(&args, "question").map_err(DispatchError::InvalidParams)?;
+            format!(
+                "Question: {question}\n\n\
+                 Use the cam MCP tools in this order:\n\
+                 1. Call cam_recall with this question in English. Reuse a hit when it is latest and not needs_update.\n\
+                 2. If cam_ls, cam_read, or cam_ref says the graph is not indexed, call cam_index once, then retry.\n\
+                 3. On a miss, walk cam_ls, then cam_read (prefer a symbol path), then cam_ref."
+            )
+        }
+        "remember_solution" => {
+            let summary = required_str(&args, "summary").map_err(DispatchError::InvalidParams)?;
+            let body = required_str(&args, "body").map_err(DispatchError::InvalidParams)?;
+            format!(
+                "Store this as a cam memory. Call cam_add with both fields in English.\n\n\
+                 summary: {summary}\n\n\
+                 body:\n{body}"
+            )
+        }
+        other => {
+            return Err(DispatchError::InvalidParams(format!(
+                "Unknown prompt: {other}"
+            )))
+        }
+    };
+    Ok(json!({
+        "description": name,
+        "messages": [{
+            "role": "user",
+            "content": { "type": "text", "text": text }
+        }]
+    }))
+}
+
+fn resource_defs() -> Vec<Value> {
+    vec![
+        json!({
+            "uri": "cam://status",
+            "name": "status",
+            "description": "Whether the code graph database exists, with file, symbol, and memory counts.",
+            "mimeType": "application/json"
+        }),
+        json!({
+            "uri": "cam://memory/tree",
+            "name": "memory-tree",
+            "description": "Solution memory tree for the resolved project.",
+            "mimeType": "application/json"
+        }),
+    ]
+}
+
+fn read_resource(params: &Value, ctx: &McpContext) -> Result<Value, DispatchError> {
+    let uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DispatchError::InvalidParams("resources/read requires params.uri".into()))?;
+    let project = project_for_resource(ctx).map_err(DispatchError::InvalidParams)?;
+    let payload = match uri {
+        "cam://status" => project_status(&project).map_err(DispatchError::InvalidParams)?,
+        "cam://memory/tree" => {
+            memory_tree_resource(&project).map_err(DispatchError::InvalidParams)?
+        }
+        other => {
+            return Err(DispatchError::InvalidParams(format!(
+                "Unknown resource: {other}"
+            )))
+        }
+    };
+    let text = serde_json::to_string_pretty(&payload)
+        .map_err(|err| DispatchError::InvalidParams(err.to_string()))?;
+    Ok(json!({
+        "contents": [{
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": text
+        }]
+    }))
+}
+
+fn project_for_resource(ctx: &McpContext) -> Result<Project, String> {
+    if let Ok(value) = std::env::var("CAM_PROJECT") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Project::resolve(Some(Path::new(trimmed))).map_err(err_str);
+        }
+    }
+    Project::resolve(ctx.default_path.as_deref()).map_err(err_str)
+}
+
+fn project_status(project: &Project) -> Result<Value, String> {
+    let db = project.db_path();
+    if !db.is_file() {
+        return Ok(json!({
+            "indexed": false,
+            "db": db.display().to_string(),
+            "files": 0,
+            "symbols": 0,
+            "memories": 0
+        }));
+    }
+    let conn =
+        rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(err_str)?;
+    Ok(json!({
+        "indexed": true,
+        "db": db.display().to_string(),
+        "files": sql_count(&conn, "SELECT COUNT(*) FROM files")?,
+        "symbols": sql_count(&conn, "SELECT COUNT(*) FROM nodes")?,
+        "memories": sql_count(&conn, "SELECT COUNT(*) FROM solutions")?
+    }))
+}
+
+fn memory_tree_resource(project: &Project) -> Result<Value, String> {
+    if !project.db_path().is_file() {
+        return Ok(json!({ "nodes": [] }));
+    }
+    let nodes = solution_tree(project).map_err(err_str)?;
+    to_json(json!({ "nodes": nodes }))
+}
+
+fn sql_count(conn: &rusqlite::Connection, sql: &str) -> Result<i64, String> {
+    conn.query_row(sql, [], |row| row.get(0)).map_err(err_str)
+}
+
 fn error_response(id: Value, code: i32, message: impl Into<String>) -> JsonRpcResponse {
     JsonRpcResponse {
         jsonrpc: "2.0",
@@ -599,6 +769,60 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn prompts_and_resources_are_listed() {
+        let prompts = handle_message(
+            r#"{"jsonrpc":"2.0","id":4,"method":"prompts/list"}"#,
+            &McpContext::default(),
+        )
+        .unwrap();
+        let prompts = serde_json::to_value(prompts).unwrap();
+        let names: Vec<_> = prompts["result"]["prompts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["name"].as_str())
+            .collect();
+        assert_eq!(names, ["explore_code", "remember_solution"]);
+
+        let resources = handle_message(
+            r#"{"jsonrpc":"2.0","id":5,"method":"resources/list"}"#,
+            &McpContext::default(),
+        )
+        .unwrap();
+        let resources = serde_json::to_value(resources).unwrap();
+        let uris: Vec<_> = resources["result"]["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["uri"].as_str())
+            .collect();
+        assert_eq!(uris, ["cam://status", "cam://memory/tree"]);
+    }
+
+    #[test]
+    fn prompt_get_requires_arguments() {
+        let missing = handle_message(
+            r#"{"jsonrpc":"2.0","id":6,"method":"prompts/get","params":{"name":"explore_code"}}"#,
+            &McpContext::default(),
+        )
+        .unwrap();
+        let missing = serde_json::to_value(missing).unwrap();
+        assert_eq!(missing["error"]["code"], -32602);
+
+        let ok = handle_message(
+            r#"{"jsonrpc":"2.0","id":7,"method":"prompts/get","params":{"name":"explore_code","arguments":{"question":"where is recall fused"}}}"#,
+            &McpContext::default(),
+        )
+        .unwrap();
+        let ok = serde_json::to_value(ok).unwrap();
+        let text = ok["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap();
+        assert!(text.contains("where is recall fused"));
+        assert!(text.contains("cam_recall"));
     }
 
     #[test]
