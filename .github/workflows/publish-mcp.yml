@@ -62,22 +62,32 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
+          IMAGE: ${{ steps.ver.outputs.image }}
         run: |
           set -eu
-          for attempt in 1 2 3 4 5 6; do
-            code=$(curl -sS -o /tmp/pkg.json -w "%{http_code}" -X PATCH \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/users/${OWNER}/packages/container/codeagent-memory" \
-              -d '{"visibility":"public"}')
-            echo "attempt ${attempt} status ${code}"
-            cat /tmp/pkg.json
-            echo
-            if [ "$code" = "200" ] || [ "$code" = "204" ]; then
-              exit 0
-            fi
-            sleep 10
-          done
+          public() {
+            token=$(curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:${OWNER}/codeagent-memory:pull" | jq -r .token)
+            code=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer ${token}" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json" \
+              "https://ghcr.io/v2/${OWNER}/codeagent-memory/manifests/${IMAGE##*:}")
+            [ "$code" = "200" ]
+          }
+          if public; then
+            echo "${IMAGE} is already anonymously pullable."
+            exit 0
+          fi
+          code=$(curl -sS -o /tmp/pkg.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/users/${OWNER}/packages/container/codeagent-memory" \
+            -d '{"visibility":"public"}')
+          echo "visibility status ${code}"
+          cat /tmp/pkg.json
+          echo
+          if public; then
+            exit 0
+          fi
           echo "Could not make ghcr.io/${OWNER}/codeagent-memory public."
           exit 1
 
