@@ -61,11 +61,25 @@ jobs:
       - name: Make the GHCR package public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
         run: |
-          gh api --method PATCH \
-            -H "Accept: application/vnd.github+json" \
-            "/users/${{ github.repository_owner }}/packages/container/codeagent-memory" \
-            -f visibility=public
+          set -eu
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /tmp/pkg.json -w "%{http_code}" -X PATCH \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/users/${OWNER}/packages/container/codeagent-memory" \
+              -d '{"visibility":"public"}')
+            echo "attempt ${attempt} status ${code}"
+            cat /tmp/pkg.json
+            echo
+            if [ "$code" = "200" ] || [ "$code" = "204" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Could not make ghcr.io/${OWNER}/codeagent-memory public."
+          exit 1
 
       - name: Install mcp-publisher
         run: |
