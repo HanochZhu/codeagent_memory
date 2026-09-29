@@ -4,7 +4,7 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-### Fewer tokens, fewer tool round-trips — one local memory is all it takes
+### A local multi-turn conversational memory system purpose-built for coding agents
 
 **Code graph + memory · surgical reads · 100% local · MCP + CLI**
 
