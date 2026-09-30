@@ -49,6 +49,18 @@ fn usage_error_is_json_on_stdout() {
 }
 
 #[test]
+fn recall_rejects_removed_fusion_option() {
+    let home = tempdir().unwrap();
+    let out = output(
+        home.path(),
+        &["--json", "recall", "hybrid recall", "--fusion", "sum"],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let value = json(&out);
+    assert_eq!(value["error"]["code"], "usage", "{value}");
+}
+
+#[test]
 fn runtime_error_is_json_on_stdout() {
     let home = tempdir().unwrap();
     let root = tempdir().unwrap();

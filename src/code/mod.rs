@@ -1,4 +1,5 @@
 pub mod index;
+pub mod lang;
 pub mod query;
 pub mod watch;
 

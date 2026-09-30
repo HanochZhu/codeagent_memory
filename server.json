@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.hanochzhu/codeagent-memory",
+  "name": "io.github.HanochZhu/codeagent-memory",
   "title": "codeagent-memory",
   "description": "Local code graph and solution memory for coding agents via CLI and MCP.",
   "version": "0.1.2",

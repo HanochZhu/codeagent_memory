@@ -29,7 +29,7 @@ fn add_and_recall_tree() {
     add.stdin
         .as_mut()
         .unwrap()
-        .write_all(b"Use FTS5 BM25 plus cosine vectors, min-max each path, then sum scores.")
+        .write_all(b"Use FTS5 BM25 plus cosine vectors, then apply reciprocal rank fusion.")
         .unwrap();
     let out = add.wait_with_output().unwrap();
     assert!(

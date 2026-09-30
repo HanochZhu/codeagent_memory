@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 
 use anyhow::Result;
-use clap::ValueEnum;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 
@@ -14,8 +12,8 @@ use crate::project::Project;
 
 const POOL: usize = 20;
 /// Cormack et al. RRF constant. Raw RRF is scaled by `(k + 1)` so a rank-1
-/// hit on one list scores 1.0 and a rank-1 hit on both lists scores 2.0 —
-/// the same range as min-max sum fusion — before Ebbinghaus retention scales it.
+/// hit on one list scores 1.0 and a rank-1 hit on both lists scores 2.0
+/// before Ebbinghaus retention scales it.
 const RRF_K: f32 = 60.0;
 /// Fraction of the fused score a revision tail inherits from the seed that pulled
 /// it in, so revision expansion alone does not look like a strong topical match.
@@ -30,25 +28,6 @@ const BM25_KEEP: f32 = 0.3;
 /// says how fresh a memory is, not whether it answers the query, so it must
 /// not outweigh a difference in relevance.
 const RETENTION_WEIGHT: f32 = 0.1;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Fusion {
-    /// Reciprocal Rank Fusion over the vector and BM25 ranked lists.
-    #[default]
-    Rrf,
-    /// Min-max each path to [0, 1] then sum.
-    Sum,
-}
-
-impl fmt::Display for Fusion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Fusion::Sum => write!(f, "sum"),
-            Fusion::Rrf => write!(f, "rrf"),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct RawHit {
@@ -90,32 +69,6 @@ fn merge_hits(hits: &[RawHit]) -> HashMap<String, (Option<f32>, Option<f32>)> {
         }
     }
     by_id
-}
-
-pub fn fuse(hits: &[RawHit], fusion: Fusion) -> Vec<(String, f32)> {
-    match fusion {
-        Fusion::Sum => fuse_scores(hits),
-        Fusion::Rrf => fuse_rrf(hits, RRF_K),
-    }
-}
-
-/// Min-max each ranked list to `[0, 1]` and sum. A document missing from a list
-/// contributes 0 for that list.
-pub fn fuse_scores(hits: &[RawHit]) -> Vec<(String, f32)> {
-    let by_id = merge_hits(hits);
-    let vec_vals: Vec<f32> = by_id.values().filter_map(|v| v.0).collect();
-    let bm25_vals: Vec<f32> = by_id.values().filter_map(|v| v.1).collect();
-
-    let mut fused: Vec<(String, f32)> = by_id
-        .into_iter()
-        .map(|(id, (v, b))| {
-            let p_vec = min_max(v, &vec_vals);
-            let p_bm25 = min_max(b, &bm25_vals);
-            (id, p_vec + p_bm25)
-        })
-        .collect();
-    sort_desc(&mut fused);
-    fused
 }
 
 /// Reciprocal Rank Fusion: `score(d) = (k + 1) * Σ 1/(k + rank_i(d))`.
@@ -168,26 +121,10 @@ fn keep_near_top(items: &mut Vec<(String, f32)>, ratio: f32) {
     items.retain(|(_, s)| *s >= top * ratio);
 }
 
-fn min_max(value: Option<f32>, all: &[f32]) -> f32 {
-    let Some(value) = value else {
-        return 0.0;
-    };
-    if all.is_empty() {
-        return 0.0;
-    }
-    let min = all.iter().copied().fold(f32::INFINITY, f32::min);
-    let max = all.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    if (max - min).abs() < f32::EPSILON {
-        return 1.0;
-    }
-    (value - min) / (max - min)
-}
-
 /// Knobs for one `recall` call.
 #[derive(Debug, Clone, Copy)]
 pub struct RecallOptions {
     pub limit: usize,
-    pub fusion: Fusion,
     /// Also pull in the newest revision of whatever the query matched, even
     /// when that revision matches neither the vector nor the BM25 path.
     pub expand: bool,
@@ -199,7 +136,6 @@ impl Default for RecallOptions {
     fn default() -> Self {
         Self {
             limit: 3,
-            fusion: Fusion::Rrf,
             expand: true,
             include_superseded: false,
         }
@@ -279,7 +215,7 @@ pub fn recall(
         }))
         .collect();
 
-    let fused = fuse(&raw, opts.fusion);
+    let fused = fuse_rrf(&raw, RRF_K);
     let direct_matches: HashSet<String> = fused.iter().map(|(id, _)| id.clone()).collect();
     let seeds = if opts.expand { opts.limit.max(1) } else { 0 };
     let mut revisions = RevisionIndex::default();
@@ -689,7 +625,7 @@ mod tests {
         let old = add(
             &project,
             "multi path recall fuses bm25 and vectors",
-            "min-max each path then sum",
+            "rank each path then apply reciprocal rank fusion",
             None,
         );
         let revision = revise(&project, "zzz", "zzz", &old);
@@ -735,7 +671,7 @@ mod tests {
         let matched = add(
             &project,
             "multi path recall fuses bm25 and vectors",
-            "min-max each path then sum",
+            "rank each path then apply reciprocal rank fusion",
             None,
         );
         let revision = revise(&project, "zzz", "zzz", &matched);
@@ -857,65 +793,6 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn fuse_sums_normalized_scores() {
-        let hits = vec![
-            RawHit {
-                id: "a".into(),
-                vec_score: Some(1.0),
-                bm25_score: Some(10.0),
-            },
-            RawHit {
-                id: "b".into(),
-                vec_score: Some(0.0),
-                bm25_score: Some(0.0),
-            },
-        ];
-        let fused = fuse_scores(&hits);
-        assert_eq!(fused[0].0, "a");
-        assert!((fused[0].1 - 2.0).abs() < 1e-5);
-        assert!((fused[1].1 - 0.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn missing_path_is_zero() {
-        let hits = vec![
-            RawHit {
-                id: "a".into(),
-                vec_score: Some(1.0),
-                bm25_score: None,
-            },
-            RawHit {
-                id: "b".into(),
-                vec_score: Some(0.0),
-                bm25_score: Some(5.0),
-            },
-        ];
-        let fused = fuse_scores(&hits);
-        let map: HashMap<_, _> = fused.into_iter().collect();
-        assert!((map["a"] - 1.0).abs() < 1e-5);
-        assert!((map["b"] - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn equal_scores_normalize_to_one() {
-        let hits = vec![
-            RawHit {
-                id: "a".into(),
-                vec_score: Some(0.4),
-                bm25_score: None,
-            },
-            RawHit {
-                id: "b".into(),
-                vec_score: Some(0.4),
-                bm25_score: None,
-            },
-        ];
-        let fused = fuse_scores(&hits);
-        assert!((fused[0].1 - 1.0).abs() < 1e-5);
-        assert!((fused[1].1 - 1.0).abs() < 1e-5);
-    }
-
     fn hit(id: &str, vec: Option<f32>, bm25: Option<f32>) -> RawHit {
         RawHit {
             id: id.into(),
@@ -962,19 +839,5 @@ mod tests {
         let map: HashMap<_, _> = fused.into_iter().collect();
         assert!((map["a"] - 1.0).abs() < 1e-5);
         assert!((map["b"] - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn fuse_dispatches_rrf() {
-        let hits = [
-            hit("a", Some(1.0), Some(10.0)),
-            hit("b", Some(0.0), Some(0.0)),
-        ];
-        let summed = fuse(&hits, Fusion::Sum);
-        let rrfd = fuse(&hits, Fusion::Rrf);
-        assert_eq!(summed[0].0, "a");
-        assert_eq!(rrfd[0].0, "a");
-        assert!((summed[0].1 - 2.0).abs() < 1e-5);
-        assert!((rrfd[0].1 - 2.0).abs() < 1e-5);
     }
 }

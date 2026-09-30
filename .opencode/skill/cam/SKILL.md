@@ -42,7 +42,7 @@ cam watch [--debounce-ms N]                      # auto-sync on file changes
 cam ls [virt_path]                               # dirs / files / symbols
 cam read <virt_path> [--full]                    # outline, or a symbol body
 cam ref <symbol> --dir in|out                    # one-hop callers / callees
-cam recall "<query>" [--limit N] [--fusion rrf|sum] [--include-superseded]
+cam recall "<query>" [--limit N] [--include-superseded]
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]
 cam mem tree | cam mem show <id>
 cam status                                       # resolved project, db counts, config
@@ -54,7 +54,7 @@ Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compa
 
 ## Memory rules
 
-- Recall score is vector + BM25 fused with **RRF by default** (`--fusion sum` for min-max sum), scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `relevance` is the fused score before retention: about 2 means both paths matched, about 1 means only one did.
+- Recall score is vector + BM25 fused with **RRF**, scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `relevance` is the fused score before retention: about 2 means both paths matched, about 1 means only one did.
 - `R < 0.3` → `needs_update`; older than `stale_days` (default 30) → `stale`.
 - A successful returned match refreshes retention (`S *= 1.7`); expanded or filtered revisions do not.
 - Memories are never deleted. `parent` may branch; `supersedes` is a linear revision chain whose tail is `latest`.

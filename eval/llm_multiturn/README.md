@@ -22,4 +22,4 @@ deepseek-flash, hash embedder, 2026-09-15:
 
 Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004.
 
-Code misses (cam): callers of `fuse_scores` not in the snippet; `retention` body without `INITIAL_STABILITY_DAYS = 7`; DESIGN.md recall missed the memory update command.
+Code misses (cam): callers of the fusion helper not in the snippet; `retention` body without `INITIAL_STABILITY_DAYS = 7`; DESIGN.md recall missed the memory update command.

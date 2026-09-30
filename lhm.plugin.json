@@ -186,7 +186,7 @@
     },
     {
       "name": "cam_recall",
-      "description": "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]",
+      "description": "Hybrid recall (vector + BM25 fused with RRF), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--no-expand] [--include-superseded]",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -194,15 +194,6 @@
             "default": true,
             "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list.",
             "type": "boolean"
-          },
-          "fusion": {
-            "default": "rrf",
-            "description": "Score fusion: rrf (default) or min-max sum.",
-            "enum": [
-              "rrf",
-              "sum"
-            ],
-            "type": "string"
           },
           "hash_embed": {
             "description": "Use the test hash embedder instead of model2vec.",

@@ -167,7 +167,6 @@ def evaluate_instance(
     index: int,
     total: int,
     k: int,
-    fusion: str,
 ) -> dict:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="cam-longmemeval-") as tmp:
@@ -193,7 +192,6 @@ def evaluate_instance(
                 {
                     "query": instance["question"],
                     "limit": k,
-                    "fusion": fusion,
                     "hash_embed": True,
                 },
             )
@@ -240,7 +238,6 @@ def aggregate(rows: list[dict], args: argparse.Namespace, data_sha256: str) -> d
         "k": args.k,
         "adapter": "cam",
         "embedder": "hash",
-        "fusion": args.fusion,
         "ingestion": "one raw session per memory",
         "MRR": statistics.mean(
             1 / row["gold_rank"] if row["gold_rank"] else 0 for row in rows
@@ -278,7 +275,6 @@ def main() -> int:
     parser.add_argument("--sample", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--k", type=int, default=10)
-    parser.add_argument("--fusion", choices=("rrf", "sum"), default="rrf")
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
 
@@ -306,7 +302,6 @@ def main() -> int:
                 index,
                 len(selected),
                 args.k,
-                args.fusion,
             ): index
             for index, instance in enumerate(selected, 1)
         }

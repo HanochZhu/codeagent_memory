@@ -7,7 +7,7 @@ use cam::code::{
     clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, Ambiguous,
     ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
 };
-use cam::memory::{add_solution, format_tree, show_solution, solution_tree, Fusion, RecallOptions};
+use cam::memory::{add_solution, format_tree, show_solution, solution_tree, RecallOptions};
 use cam::ops::{load_embedder, resolve_project};
 use cam::output::{emit_error_json, emit_json, emit_text};
 use cam::project::Project;
@@ -79,14 +79,11 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         scope: Option<String>,
     },
-    /// Hybrid recall: vector + BM25, fused with min-max sum or RRF
+    /// Hybrid recall: vector + BM25 fused with RRF
     Recall {
         query: String,
         #[arg(long, default_value_t = 3)]
         limit: usize,
-        /// Score fusion: RRF (default) or min-max sum
-        #[arg(long, value_enum, default_value_t = Fusion::Rrf)]
-        fusion: Fusion,
         /// Rank the raw fused list only; skip pulling in the newest revision of each match
         #[arg(long)]
         no_expand: bool,
@@ -347,7 +344,6 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         Command::Recall {
             query,
             limit,
-            fusion,
             no_expand,
             include_superseded,
             hash_embed,
@@ -356,7 +352,6 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             let embedder = load_embedder(hash_embed)?;
             let opts = RecallOptions {
                 limit,
-                fusion,
                 expand: !no_expand,
                 include_superseded,
             };

@@ -175,12 +175,6 @@ def main() -> int:
         help="use the test hash embedder (no model2vec download)",
     )
     p.add_argument(
-        "--fusion",
-        choices=("sum", "rrf"),
-        default="rrf",
-        help="solution score fusion: RRF k=60 (default) or min-max sum",
-    )
-    p.add_argument(
         "--adapter",
         choices=("cam", "grep"),
         default="cam",
@@ -233,8 +227,6 @@ def main() -> int:
                         q["question"],
                         "--limit",
                         str(args.k),
-                        "--fusion",
-                        args.fusion,
                         *expand_flag,
                         *embed_flag,
                     ],
@@ -267,7 +259,7 @@ def main() -> int:
             if args.adapter == "grep"
             else ("hash" if args.hash_embed else "potion-multilingual-128M")
         ),
-        "fusion": None if args.adapter == "grep" else args.fusion,
+        "fusion": None if args.adapter == "grep" else "rrf",
         "corpus": "lineage" if args.lineage else "flat",
         "expand": args.adapter == "cam" and not args.no_expand,
         "P@k": sum(r["precisionAtK"] for r in rows) / n,
@@ -301,7 +293,7 @@ def main() -> int:
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    tag = "grep" if args.adapter == "grep" else f"cam-{args.fusion}"
+    tag = "grep" if args.adapter == "grep" else "cam-rrf"
     if args.lineage:
         tag += "-lineage" if summary["expand"] else "-lineage-noexpand"
     (out_dir / f"cam-life-{tag}-{stamp}.json").write_text(

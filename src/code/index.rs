@@ -9,186 +9,10 @@ use ignore::WalkBuilder;
 use rusqlite::Connection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use streaming_iterator::StreamingIterator;
-use tree_sitter::{Language, Parser, Query, QueryCursor};
 
+use super::lang::{parse_source, Def, ImplBlock, Lang, Parsed, Rel, RelKind};
 use crate::db;
 use crate::project::Project;
-
-const RUST_DEFS: &str = r#"
-(function_item name: (identifier) @name) @def
-(struct_item name: (type_identifier) @name) @def
-(enum_item name: (type_identifier) @name) @def
-(enum_variant name: (identifier) @name) @def
-(trait_item name: (type_identifier) @name) @def
-(type_item name: (type_identifier) @name) @def
-"#;
-
-const RUST_CALLS: &str = r#"
-(call_expression function: (identifier) @call)
-(call_expression function: (field_expression field: (field_identifier) @call))
-(call_expression function: (scoped_identifier name: (identifier) @call))
-(call_expression function: (generic_function function: (identifier) @call))
-(call_expression function: (generic_function function: (field_expression field: (field_identifier) @call)))
-(call_expression function: (generic_function function: (scoped_identifier name: (identifier) @call)))
-"#;
-
-const RUST_REFS: &str = r#"
-(type_identifier) @ref
-(scoped_type_identifier name: (type_identifier) @ref)
-(scoped_identifier path: (identifier) @ref)
-(scoped_identifier path: (scoped_identifier name: (identifier) @ref))
-"#;
-
-const TS_REFS: &str = r#"
-(type_identifier) @ref
-"#;
-
-const PYTHON_DEFS: &str = r#"
-(function_definition name: (identifier) @name) @def
-(class_definition name: (identifier) @name) @def
-"#;
-
-const PYTHON_CALLS: &str = r#"
-(call function: (identifier) @call)
-(call function: (attribute attribute: (identifier) @call))
-"#;
-
-const JS_DEFS: &str = r#"
-(function_declaration name: (identifier) @name) @def
-(generator_function_declaration name: (identifier) @name) @def
-(method_definition name: (property_identifier) @name) @def
-(class_declaration name: (identifier) @name) @def
-"#;
-
-const TS_DEFS: &str = r#"
-(function_declaration name: (identifier) @name) @def
-(method_definition name: (property_identifier) @name) @def
-(class_declaration name: (type_identifier) @name) @def
-"#;
-
-const JS_CALLS: &str = r#"
-(call_expression function: (identifier) @call)
-(call_expression function: (member_expression property: (property_identifier) @call))
-"#;
-
-const GO_DEFS: &str = r#"
-(function_declaration name: (identifier) @name) @def
-(method_declaration name: (field_identifier) @name) @def
-(type_declaration (type_spec name: (type_identifier) @name type: (struct_type))) @def
-"#;
-
-const GO_CALLS: &str = r#"
-(call_expression function: (identifier) @call)
-(call_expression function: (selector_expression field: (field_identifier) @call))
-"#;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Lang {
-    Rust,
-    Python,
-    JavaScript,
-    TypeScript,
-    Tsx,
-    Go,
-}
-
-impl Lang {
-    fn from_path(path: &Path) -> Option<Self> {
-        match path.extension()?.to_str()? {
-            "rs" => Some(Self::Rust),
-            "py" => Some(Self::Python),
-            "js" | "mjs" | "cjs" | "jsx" => Some(Self::JavaScript),
-            "ts" => Some(Self::TypeScript),
-            "tsx" => Some(Self::Tsx),
-            "go" => Some(Self::Go),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Rust => "rust",
-            Self::Python => "python",
-            Self::JavaScript => "javascript",
-            Self::TypeScript | Self::Tsx => "typescript",
-            Self::Go => "go",
-        }
-    }
-
-    fn language(self) -> Language {
-        match self {
-            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
-            Self::Python => tree_sitter_python::LANGUAGE.into(),
-            Self::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
-            Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
-            Self::Go => tree_sitter_go::LANGUAGE.into(),
-        }
-    }
-
-    fn def_query(self) -> &'static str {
-        match self {
-            Self::Rust => RUST_DEFS,
-            Self::Python => PYTHON_DEFS,
-            Self::JavaScript => JS_DEFS,
-            Self::TypeScript | Self::Tsx => TS_DEFS,
-            Self::Go => GO_DEFS,
-        }
-    }
-
-    fn call_query(self) -> &'static str {
-        match self {
-            Self::Rust => RUST_CALLS,
-            Self::Python => PYTHON_CALLS,
-            Self::JavaScript | Self::TypeScript | Self::Tsx => JS_CALLS,
-            Self::Go => GO_CALLS,
-        }
-    }
-
-    fn ref_query(self) -> Option<&'static str> {
-        match self {
-            Self::Rust => Some(RUST_REFS),
-            Self::TypeScript | Self::Tsx => Some(TS_REFS),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Def {
-    kind: String,
-    name: String,
-    start_line: i64,
-    end_line: i64,
-    start_byte: usize,
-    end_byte: usize,
-    signature: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelKind {
-    Calls,
-    References,
-}
-
-#[derive(Debug, Clone)]
-struct Rel {
-    kind: RelKind,
-    name: String,
-    qualifier: Option<String>,
-    line: i64,
-    byte: usize,
-}
-
-#[derive(Debug, Clone)]
-struct ImplBlock {
-    type_name: String,
-    trait_name: Option<String>,
-    start_byte: usize,
-    end_byte: usize,
-    line: i64,
-}
 
 #[derive(Debug, Clone)]
 struct Candidate {
@@ -196,11 +20,6 @@ struct Candidate {
     file_path: String,
     kind: String,
 }
-
-const SKIP_REF_NAMES: &[&str] = &[
-    "Self", "self", "super", "crate", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16",
-    "u32", "u64", "u128", "usize", "f32", "f64", "bool", "str", "char", "never",
-];
 
 const CALL_KINDS: &[&str] = &["function", "method"];
 const TYPE_KINDS: &[&str] = &["struct", "class", "trait", "enum", "type_alias"];
@@ -287,53 +106,31 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
 
     let files_checked = added.len() + modified.len() + unchanged.len();
     if added.is_empty() && modified.is_empty() && removed.is_empty() {
-        return Ok(SyncReport {
-            files_checked,
-            files_added: 0,
-            files_modified: 0,
-            files_removed: 0,
-            nodes: db::table_count(&conn, "nodes")? as usize,
-            edges: db::table_count(&conn, "edges")? as usize,
-            skipped,
-            duration_ms: started.elapsed().as_millis() as u64,
-        });
+        return unchanged_sync_report(&conn, files_checked, skipped, started);
     }
 
-    let added_paths: HashSet<String> = added.iter().map(|s| s.rel.clone()).collect();
+    let mut extracted = Vec::new();
     let mut added_ok = 0usize;
     let mut modified_ok = 0usize;
-    let mut changed_extracted = Vec::new();
-    let mut all_extracted = Vec::new();
-    for src in added.iter().chain(modified.iter()) {
-        match extract_file(project, &src.abs, src.lang) {
-            Ok(extracted) => {
-                if added_paths.contains(&extracted.rel) {
-                    added_ok += 1;
-                } else {
-                    modified_ok += 1;
-                }
-                changed_extracted.push(extracted.clone());
-                all_extracted.push(extracted);
-            }
-            Err(_) => skipped += 1,
+    for src in &added {
+        if let Some(file) = extract_or_skip(project, src, &mut skipped) {
+            added_ok += 1;
+            extracted.push(file);
         }
     }
-    if changed_extracted.is_empty() && removed.is_empty() {
-        return Ok(SyncReport {
-            files_checked,
-            files_added: 0,
-            files_modified: 0,
-            files_removed: 0,
-            nodes: db::table_count(&conn, "nodes")? as usize,
-            edges: db::table_count(&conn, "edges")? as usize,
-            skipped,
-            duration_ms: started.elapsed().as_millis() as u64,
-        });
+    for src in &modified {
+        if let Some(file) = extract_or_skip(project, src, &mut skipped) {
+            modified_ok += 1;
+            extracted.push(file);
+        }
+    }
+    let changed_len = extracted.len();
+    if changed_len == 0 && removed.is_empty() {
+        return unchanged_sync_report(&conn, files_checked, skipped, started);
     }
     for src in &unchanged {
-        match extract_file(project, &src.abs, src.lang) {
-            Ok(extracted) => all_extracted.push(extracted),
-            Err(_) => skipped += 1,
+        if let Some(file) = extract_or_skip(project, src, &mut skipped) {
+            extracted.push(file);
         }
     }
 
@@ -343,9 +140,9 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [path])?;
             tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
         }
-        for file in &changed_extracted {
+        for file in &extracted[..changed_len] {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [&file.rel])?;
-            insert_file_and_defs(&tx, &project.root, &file.rel, file.lang, &file.parsed.defs)?;
+            insert_file_and_defs(&tx, &project.root, file)?;
         }
         tx.execute("DELETE FROM edges", [])?;
         tx.commit()?;
@@ -354,7 +151,7 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
     let name_index = load_name_index(&conn)?;
     {
         let tx = conn.unchecked_transaction()?;
-        for file in &all_extracted {
+        for file in &extracted {
             let Parsed { defs, rels, impls } = &file.parsed;
             insert_rels(&tx, &file.rel, defs, rels, &name_index)?;
             insert_impls(&tx, &file.rel, defs, impls, &name_index)?;
@@ -501,7 +298,6 @@ pub(crate) fn is_source_path(path: &Path) -> bool {
 }
 
 /// One source file after tree-sitter extraction, keyed by its project-relative path.
-#[derive(Clone)]
 struct ExtractedFile {
     rel: String,
     lang: Lang,
@@ -515,354 +311,42 @@ fn extract_file(project: &Project, path: &Path, lang: Lang) -> Result<ExtractedF
     Ok(ExtractedFile { rel, lang, parsed })
 }
 
-#[derive(Clone)]
-struct Parsed {
-    defs: Vec<Def>,
-    rels: Vec<Rel>,
-    impls: Vec<ImplBlock>,
-}
-
-fn parse_source(lang: Lang, source: &str) -> Result<Parsed> {
-    let language = lang.language();
-    let mut parser = Parser::new();
-    parser.set_language(&language)?;
-    let tree = parser
-        .parse(source, None)
-        .context("tree-sitter parse returned none")?;
-    let root = tree.root_node();
-
-    let def_query = Query::new(&language, lang.def_query())?;
-    let mut cursor = QueryCursor::new();
-    let mut defs = Vec::new();
-    let mut matches = cursor.matches(&def_query, root, source.as_bytes());
-    while let Some(m) = matches.next() {
-        let mut def_node = None;
-        let mut name = None;
-        for cap in m.captures {
-            let cap_name = def_query.capture_names()[cap.index as usize];
-            match cap_name {
-                "def" => def_node = Some(cap.node),
-                "name" => name = Some(cap.node.utf8_text(source.as_bytes())?.to_string()),
-                _ => {}
-            }
-        }
-        let (Some(node), Some(name)) = (def_node, name) else {
-            continue;
-        };
-        let kind = classify_kind(lang, node, &name, source);
-        let first_line = source
-            .get(node.start_byte()..node.end_byte())
-            .and_then(|s| s.lines().next())
-            .map(|s| s.trim().to_string());
-        defs.push(Def {
-            kind,
-            name,
-            start_line: (node.start_position().row + 1) as i64,
-            end_line: (node.end_position().row + 1) as i64,
-            start_byte: node.start_byte(),
-            end_byte: node.end_byte(),
-            signature: first_line,
-        });
-    }
-
-    let mut rels = collect_named(
-        &language,
-        root,
-        source,
-        lang.call_query(),
-        "call",
-        RelKind::Calls,
-    )?;
-    if let Some(q) = lang.ref_query() {
-        rels.extend(collect_named(
-            &language,
-            root,
-            source,
-            q,
-            "ref",
-            RelKind::References,
-        )?);
-        rels.retain(|r| r.kind != RelKind::References || keep_ref_name(&r.name));
-    }
-
-    let mut impls = Vec::new();
-    walk_impls(lang, root, source, &mut impls);
-
-    Ok(Parsed { defs, rels, impls })
-}
-
-fn collect_named(
-    language: &Language,
-    root: tree_sitter::Node,
-    source: &str,
-    query: &str,
-    capture: &str,
-    kind: RelKind,
-) -> Result<Vec<Rel>> {
-    let q = Query::new(language, query)?;
-    let mut cursor = QueryCursor::new();
-    let mut out = Vec::new();
-    let mut matches = cursor.matches(&q, root, source.as_bytes());
-    while let Some(m) = matches.next() {
-        for cap in m.captures {
-            if q.capture_names()[cap.index as usize] != capture {
-                continue;
-            }
-            if kind == RelKind::References && is_type_def_name(cap.node) {
-                continue;
-            }
-            let name = cap.node.utf8_text(source.as_bytes())?.to_string();
-            if name.is_empty() {
-                continue;
-            }
-            if kind == RelKind::References
-                && cap.node.kind() == "identifier"
-                && !looks_like_type_name(&name)
-            {
-                continue;
-            }
-            out.push(Rel {
-                kind,
-                name,
-                qualifier: (kind == RelKind::Calls)
-                    .then(|| call_qualifier(cap.node, source))
-                    .flatten(),
-                line: (cap.node.start_position().row + 1) as i64,
-                byte: cap.node.start_byte(),
-            });
-        }
-    }
-    Ok(out)
-}
-
-fn is_type_def_name(node: tree_sitter::Node) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    let def_item = matches!(
-        parent.kind(),
-        "struct_item"
-            | "enum_item"
-            | "trait_item"
-            | "type_item"
-            | "enum_variant"
-            | "class_declaration"
-            | "class_definition"
-            | "type_spec"
-    );
-    if !def_item {
-        return false;
-    }
-    parent
-        .child_by_field_name("name")
-        .map(|n| n.id() == node.id())
-        .unwrap_or(false)
-}
-
-fn keep_ref_name(name: &str) -> bool {
-    if name.len() <= 1 {
-        return false;
-    }
-    !SKIP_REF_NAMES.contains(&name)
-}
-
-fn looks_like_type_name(name: &str) -> bool {
-    keep_ref_name(name) && name.chars().next().is_some_and(|c| c.is_uppercase())
-}
-
-fn call_qualifier(node: tree_sitter::Node, source: &str) -> Option<String> {
-    let mut cur = node;
-    if let Some(parent) = node.parent() {
-        if parent.kind() == "generic_function" {
-            cur = parent;
-        }
-    }
-    let scoped = match cur.parent() {
-        Some(p) if matches!(p.kind(), "scoped_identifier" | "scoped_type_identifier") => p,
-        Some(p) if p.kind() == "generic_function" => p
-            .child_by_field_name("function")
-            .filter(|f| matches!(f.kind(), "scoped_identifier" | "scoped_type_identifier"))?,
-        _ => return None,
-    };
-    let path = scoped.child_by_field_name("path")?;
-    trailing_type_name(path, source).filter(|s| looks_like_type_name(s))
-}
-
-fn walk_impls(lang: Lang, node: tree_sitter::Node, source: &str, out: &mut Vec<ImplBlock>) {
-    match lang {
-        Lang::Rust if node.kind() == "impl_item" => {
-            let trait_name = node
-                .child_by_field_name("trait")
-                .and_then(|n| trailing_type_name(n, source));
-            if let Some(type_name) = node
-                .child_by_field_name("type")
-                .and_then(|n| trailing_type_name(n, source))
-            {
-                if keep_ref_name(&type_name) {
-                    out.push(ImplBlock {
-                        type_name,
-                        trait_name: trait_name.filter(|t| keep_ref_name(t)),
-                        start_byte: node.start_byte(),
-                        end_byte: node.end_byte(),
-                        line: (node.start_position().row + 1) as i64,
-                    });
-                }
-            }
-        }
-        Lang::Python if node.kind() == "class_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(type_name) = name_node.utf8_text(source.as_bytes()) {
-                    let type_name = type_name.to_string();
-                    if let Some(supers) = node.child_by_field_name("superclasses") {
-                        collect_ident_leaves(supers, source, &mut |base| {
-                            if keep_ref_name(base) && base != type_name {
-                                out.push(ImplBlock {
-                                    type_name: type_name.clone(),
-                                    trait_name: Some(base.to_string()),
-                                    start_byte: node.start_byte(),
-                                    end_byte: node.end_byte(),
-                                    line: (node.start_position().row + 1) as i64,
-                                });
-                            }
-                        });
-                    }
-                }
-            }
-        }
-        Lang::JavaScript | Lang::TypeScript | Lang::Tsx if node.kind() == "class_declaration" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(type_name) = name_node.utf8_text(source.as_bytes()) {
-                    let type_name = type_name.to_string();
-                    if let Some(base) = js_superclass(node, source) {
-                        if keep_ref_name(&base) {
-                            out.push(ImplBlock {
-                                type_name,
-                                trait_name: Some(base),
-                                start_byte: node.start_byte(),
-                                end_byte: node.end_byte(),
-                                line: (node.start_position().row + 1) as i64,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_impls(lang, child, source, out);
-    }
-}
-
-fn js_superclass(node: tree_sitter::Node, source: &str) -> Option<String> {
-    if let Some(heritage) = node.child_by_field_name("superclass") {
-        return trailing_type_name(heritage, source);
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "class_heritage" {
-            return trailing_type_name(child, source);
-        }
-    }
-    None
-}
-
-fn trailing_type_name(node: tree_sitter::Node, source: &str) -> Option<String> {
-    match node.kind() {
-        "type_identifier" | "identifier" | "property_identifier" | "field_identifier" => node
-            .utf8_text(source.as_bytes())
-            .ok()
-            .map(|s| s.to_string()),
-        "generic_type" => node
-            .child_by_field_name("type")
-            .and_then(|n| trailing_type_name(n, source)),
-        "scoped_type_identifier" | "scoped_identifier" | "member_expression" => node
-            .child_by_field_name("name")
-            .or_else(|| node.child_by_field_name("property"))
-            .and_then(|n| trailing_type_name(n, source))
-            .or_else(|| {
-                node.child(node.child_count().saturating_sub(1))
-                    .and_then(|n| trailing_type_name(n, source))
-            }),
-        "reference_type" | "pointer_type" => node
-            .child_by_field_name("type")
-            .and_then(|n| trailing_type_name(n, source)),
-        _ => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if let Some(name) = trailing_type_name(child, source) {
-                    return Some(name);
-                }
-            }
+fn extract_or_skip(
+    project: &Project,
+    src: &SourceFile,
+    skipped: &mut usize,
+) -> Option<ExtractedFile> {
+    match extract_file(project, &src.abs, src.lang) {
+        Ok(extracted) => Some(extracted),
+        Err(_) => {
+            *skipped += 1;
             None
         }
     }
 }
 
-fn collect_ident_leaves(node: tree_sitter::Node, source: &str, visit: &mut impl FnMut(&str)) {
-    if matches!(node.kind(), "identifier" | "type_identifier") {
-        if let Ok(text) = node.utf8_text(source.as_bytes()) {
-            visit(text);
-            return;
-        }
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_ident_leaves(child, source, visit);
-    }
-}
-
-fn classify_kind(lang: Lang, node: tree_sitter::Node, _name: &str, _source: &str) -> String {
-    let kind = node.kind();
-    match lang {
-        Lang::Rust => match kind {
-            "function_item" if has_ancestor(node, "impl_item") => "method",
-            "function_item" => "function",
-            "trait_item" => "trait",
-            "enum_item" => "enum",
-            "type_item" => "type_alias",
-            _ => "struct",
-        }
-        .into(),
-        Lang::Python => match kind {
-            "function_definition" if has_ancestor(node, "class_definition") => "method",
-            "function_definition" => "function",
-            _ => "class",
-        }
-        .into(),
-        Lang::JavaScript | Lang::TypeScript | Lang::Tsx => match kind {
-            "method_definition" => "method",
-            "function_declaration" | "generator_function_declaration" => "function",
-            _ => "class",
-        }
-        .into(),
-        Lang::Go => match kind {
-            "method_declaration" => "method",
-            "function_declaration" => "function",
-            _ => "struct",
-        }
-        .into(),
-    }
-}
-
-fn has_ancestor(mut node: tree_sitter::Node, kind: &str) -> bool {
-    while let Some(parent) = node.parent() {
-        if parent.kind() == kind {
-            return true;
-        }
-        node = parent;
-    }
-    false
-}
-
-fn insert_file_and_defs(
+fn unchanged_sync_report(
     conn: &Connection,
-    root: &Path,
-    rel: &str,
-    lang: Lang,
-    defs: &[Def],
-) -> Result<()> {
+    files_checked: usize,
+    skipped: usize,
+    started: Instant,
+) -> Result<SyncReport> {
+    Ok(SyncReport {
+        files_checked,
+        files_added: 0,
+        files_modified: 0,
+        files_removed: 0,
+        nodes: db::table_count(conn, "nodes")? as usize,
+        edges: db::table_count(conn, "edges")? as usize,
+        skipped,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+fn insert_file_and_defs(conn: &Connection, root: &Path, file: &ExtractedFile) -> Result<()> {
+    let rel = file.rel.as_str();
+    let lang = file.lang;
+    let defs = &file.parsed.defs;
     let abs = root.join(rel);
     let meta = fs::metadata(&abs).ok();
     let bytes = fs::read(&abs).unwrap_or_default();
@@ -926,13 +410,9 @@ fn insert_rels(
             continue;
         };
         let source_id = symbol_id(rel, source_def);
-        let prefer = match site.kind {
-            RelKind::Calls => CALL_KINDS,
-            RelKind::References => TYPE_KINDS,
-        };
-        let edge_kind = match site.kind {
-            RelKind::Calls => "calls",
-            RelKind::References => "references",
+        let (prefer, edge_kind) = match site.kind {
+            RelKind::Calls => (CALL_KINDS, "calls"),
+            RelKind::References => (TYPE_KINDS, "references"),
         };
         for target_id in resolve_targets(index, rel, &site.name, prefer, site.qualifier.as_deref())
         {
@@ -1234,74 +714,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_rust_functions_and_calls() {
-        let src = r#"
-pub fn add(a: i32, b: i32) -> i32 { a + b }
-pub fn run() { let _ = add(1, 2); helper(); }
-fn helper() {}
-"#;
-        let parsed = parse_source(Lang::Rust, src).unwrap();
-        let names: Vec<_> = parsed.defs.iter().map(|d| d.name.as_str()).collect();
-        assert!(names.contains(&"add"));
-        assert!(names.contains(&"run"));
-        assert!(names.contains(&"helper"));
-        let call_names: Vec<_> = parsed
-            .rels
-            .iter()
-            .filter(|r| r.kind == RelKind::Calls)
-            .map(|c| c.name.as_str())
-            .collect();
-        assert!(call_names.contains(&"add"));
-        assert!(call_names.contains(&"helper"));
-    }
-
-    #[test]
-    fn parse_rust_enum_variants_and_aliases() {
-        let src = r#"
-type Result<T> = std::result::Result<T, ()>;
-enum Command { DoSomething { arg: String } }
-"#;
-        let parsed = parse_source(Lang::Rust, src).unwrap();
-        let names: Vec<_> = parsed.defs.iter().map(|d| d.name.as_str()).collect();
-        assert!(names.contains(&"Result"));
-        assert!(names.contains(&"Command"));
-        assert!(names.contains(&"DoSomething"));
-        assert!(parsed
-            .defs
-            .iter()
-            .any(|d| d.name == "Command" && d.kind == "enum"));
-        assert!(parsed
-            .defs
-            .iter()
-            .any(|d| d.name == "Result" && d.kind == "type_alias"));
-    }
-
-    #[test]
-    fn parse_rust_impl_trait_and_type_refs() {
-        let src = r#"
-pub struct Foo;
-pub trait Clone { fn clone(&self); }
-impl Clone for Foo {
-    fn clone(&self) {}
-}
-pub fn use_foo(x: Foo) { let _ = x.clone(); }
-"#;
-        let parsed = parse_source(Lang::Rust, src).unwrap();
-        assert!(parsed
-            .impls
-            .iter()
-            .any(|i| i.type_name == "Foo" && i.trait_name.as_deref() == Some("Clone")));
-        assert!(parsed
-            .rels
-            .iter()
-            .any(|r| r.kind == RelKind::References && r.name == "Foo"));
-        assert!(parsed
-            .rels
-            .iter()
-            .any(|r| r.kind == RelKind::Calls && r.name == "clone"));
-    }
-
-    #[test]
     fn resolve_prefers_same_file_then_crate() {
         let mut idx = HashMap::new();
         idx.insert(
@@ -1395,50 +807,5 @@ pub fn use_foo(x: Foo) { let _ = x.clone(); }
         );
         let hits = resolve_targets(&idx, "tests/builder/help.rs", "new", CALL_KINDS, None);
         assert!(hits.is_empty(), "{hits:?}");
-    }
-
-    #[test]
-    fn parse_rust_generic_and_qualified_calls() {
-        let src = r#"
-pub struct Foo;
-impl Foo {
-    fn new() -> Self { Foo }
-    fn get_one<T>(&self) {}
-}
-pub fn run(x: Foo) {
-    let _ = Foo::new();
-    x.get_one::<u8>();
-}
-"#;
-        let parsed = parse_source(Lang::Rust, src).unwrap();
-        assert!(parsed.rels.iter().any(|r| r.kind == RelKind::Calls
-            && r.name == "new"
-            && r.qualifier.as_deref() == Some("Foo")));
-        assert!(parsed
-            .rels
-            .iter()
-            .any(|r| r.kind == RelKind::Calls && r.name == "get_one"));
-        assert!(parsed
-            .rels
-            .iter()
-            .any(|r| r.kind == RelKind::References && r.name == "Foo"));
-    }
-
-    #[test]
-    fn parse_js_class_heritage() {
-        let src = "class Foo extends Bar { method() { this.x(); } }\nclass Bar {}\n";
-        let parsed = parse_source(Lang::JavaScript, src).unwrap();
-        assert!(parsed
-            .impls
-            .iter()
-            .any(|i| i.type_name == "Foo" && i.trait_name.as_deref() == Some("Bar")));
-    }
-
-    #[test]
-    fn parse_python_functions_and_calls() {
-        let src = "def helper():\n    return 1\ndef run():\n    return helper()\n";
-        let parsed = parse_source(Lang::Python, src).unwrap();
-        assert_eq!(parsed.defs.len(), 2);
-        assert!(parsed.rels.iter().any(|c| c.name == "helper"));
     }
 }

@@ -22,7 +22,7 @@
 - **代码图检索**：LongMemCode clap/fastapi，确定性 scorer，无 LLM。本树 README 已有 clap weighted 0.704、`$ / 1k = 0`
 - **多轮 + token**：没有现成「cam × DeepSeek」harness。新建的 runner 把会话当一轮轮追问，每轮只把当前检索注入，历史只留问答
 - **解法 × LLM**：15 轮，full / cam 都 1.00 正确；token 23673 → 13255（省 44%）
-- **代码 × LLM**：6 轮，full 1.00 / cam 0.50；token 169838 → 6432（省 96%）。miss：`fuse_scores` callers 未进上下文、retention 常量不在函数体、DESIGN 召回没命中「不删除 + cam add」
+- **代码 × LLM**：6 轮，full 1.00 / cam 0.50；token 169838 → 6432（省 96%）。miss：融合函数 callers 未进上下文、retention 常量不在函数体、DESIGN 召回没命中「不删除 + cam add」
 
 ## 结论
 
