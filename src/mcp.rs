@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::code::{index_project, ls, read, refs, RefDir, SymbolHints};
-use crate::memory::{add_solution, show_solution, solution_tree, Embedder, Fusion, RecallOptions};
+use crate::memory::{add_solution, show_solution, solution_tree, Embedder, RecallOptions};
 use crate::ops::{load_embedder, resolve_project_from_strings};
 use crate::project::Project;
 
@@ -231,7 +231,6 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
             let query = required_str(args, "query")?;
             let opts = RecallOptions {
                 limit: arg_usize(args, "limit").unwrap_or(3),
-                fusion: parse_fusion(arg_str(args, "fusion"))?,
                 expand: arg_bool(args, "expand").unwrap_or(true),
                 include_superseded: arg_bool(args, "include_superseded").unwrap_or(false),
             };
@@ -361,13 +360,12 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_recall",
-            "Hybrid recall (vector + BM25 fused with RRF by default), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]",
+            "Hybrid recall (vector + BM25 fused with RRF), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--no-expand] [--include-superseded]",
             json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "One-sentence question written in English. Non-Latin scripts are rejected." },
                     "limit": { "type": "integer", "minimum": 1, "default": 3 },
-                    "fusion": { "type": "string", "enum": ["rrf", "sum"], "default": "rrf", "description": "Score fusion: rrf (default) or min-max sum." },
                     "expand": { "type": "boolean", "default": true, "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list." },
                     "include_superseded": { "type": "boolean", "default": false, "description": "Return older revisions as well as the latest one for history or comparison queries." },
                     "path": path_prop(),
@@ -452,14 +450,6 @@ fn parse_ref_dir(value: Option<&str>) -> Result<RefDir, String> {
         "in" => Ok(RefDir::In),
         "out" => Ok(RefDir::Out),
         other => Err(format!("dir must be in or out, got {other:?}")),
-    }
-}
-
-fn parse_fusion(value: Option<&str>) -> Result<Fusion, String> {
-    match value.unwrap_or("").trim().to_ascii_lowercase().as_str() {
-        "" | "rrf" => Ok(Fusion::Rrf),
-        "sum" => Ok(Fusion::Sum),
-        other => Err(format!("fusion must be rrf or sum, got {other:?}")),
     }
 }
 

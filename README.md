@@ -179,8 +179,8 @@ Mem0, Zep, and Letta are general chat memories. They are not on these two corpor
 | system | Hit rate | R@5 | P@5 | source |
 |---|---|---:|---:|---|
 | grep (tokenized substring) | 15 / 15 | 0.967 | 0.227 | this tree, 2026-09-23 |
-| cam `--fusion sum` | 15 / 15 | 0.933 | 0.213 | this tree, hash embed |
-| **cam RRF** (default) | **15 / 15** | **1.000** | **0.240** | this tree, hash embed |
+| cam min-max sum (legacy) | 15 / 15 | 0.933 | 0.213 | historical result, hash embed |
+| **cam RRF** | **15 / 15** | **1.000** | **0.240** | this tree, hash embed |
 | agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | published v0.9.26 |
 
 ![coding-agent-life headline R@5 and P@5 / ceiling](eval/charts/solution-headline.svg)
@@ -253,14 +253,13 @@ Same conversation twice: dump every session / every `src/*.rs` file, or inject `
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
-Mean prompt tokens / turn: memory 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of `fuse_scores`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
+Mean prompt tokens / turn: memory 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of the fusion helper, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
 
 Corpus locations for every script below live in one file, [eval/datasets.toml](eval/datasets.toml). `coding-agent-life-v1` is not redistributed here and defaults to an `agentmemory` checkout next to this repository; point the entry elsewhere, or override a single run with `CAM_EVAL_CODING_LIFE`.
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
-python3 eval/coding_life/run.py --hash-embed              # default RRF
-python3 eval/coding_life/run.py --hash-embed --fusion sum
+python3 eval/coding_life/run.py --hash-embed              # RRF
 python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench
@@ -282,13 +281,13 @@ python3 eval/charts/generate.py
 | **Code graph in SQLite** | tree-sitter parse into `.cam/cam.db` — list, read, and hop callers/callees without opening whole files |
 | **Live sync** | `cam watch` incrementally updates the graph when source files change |
 | **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
-| **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) by default; `--fusion sum` keeps min-max + sum |
+| **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) |
 | **Revision expansion** | Recall pulls in the newest replacement of whatever matched and hides older revisions by default; `--no-expand` disables expansion and `--include-superseded` keeps history |
 | **Ebbinghaus retention** | `R = exp(-t / S)` moves the recall score by at most 10%; stale and forgotten entries are flagged, never deleted |
 | **Memory tree** | `--parent` creates branching structural hierarchy; `--supersedes` creates a linear replacement revision |
 | **MCP + CLI** | Main agent: `cam_*` tools. Subagent: `cam --json …`. Same binary |
 | **100% local** | No API keys. SQLite + an optional on-disk embedding model under `~/.cam/models/` |
-| **5 languages** | Rust, Python, TypeScript, JavaScript, Go |
+| **9 languages** | Rust, Python, TypeScript, JavaScript, Go, Java, C, C++, C# |
 
 ---
 
@@ -298,7 +297,7 @@ python3 eval/charts/generate.py
 
 1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
 2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
-3. **Recall** — `recall` requires an English query, embeds it, runs English-normalized BM25, drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). `--fusion sum` min-max normalizes each path to `[0,1]` then sums. The result is scaled by `0.9 + 0.1 × R`. The newest replacement of each top match is pulled in and older revisions are folded before top-k.
+3. **Recall** — `recall` requires an English query, embeds it, runs English-normalized BM25, drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). The result is scaled by `0.9 + 0.1 × R`. The newest replacement of each top match is pulled in and older revisions are folded before top-k.
 4. **Write-back** — after the agent learns something worth keeping, `add` stores an English summary + body. `--parent` adds hierarchy; `--supersedes` replaces an older revision while preserving it for history.
 
 Design notes (Chinese): [DESIGN.md](DESIGN.md).
@@ -318,8 +317,8 @@ cam --json index
 cam --json sync
 cam --json watch
 cam --json ls src/
-cam --json read src/memory/recall.rs/fuse_scores
-cam --json ref fuse_scores --dir in
+cam --json read src/memory/recall.rs/fuse_rrf
+cam --json ref fuse_rrf --dir in
 cam --json recall "how to fuse BM25 and vector recall"
 cam --json add --summary "..." --body "..."
 cam --json mem tree
@@ -341,7 +340,7 @@ cam watch [--debounce-ms N]              # Watch source files; --json streams on
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
 cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # One-hop callers (in) or callees (out); --callers / --callees aliases
-cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]  # Hybrid recall: vector + BM25, RRF by default
+cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]  # Hybrid recall: vector + BM25 fused with RRF
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # Store a memory (body: --body, --file, or stdin)
 cam mem tree                             # Print the memory tree
 cam mem show <id>                        # Show one memory
@@ -358,7 +357,7 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees. A name shared by several definitions returns `status: ambiguous` with ranked `candidates`; re-run with a candidate `id`, or narrow with `--file` / `--kind` / `--scope` |
-| `cam recall "<one English sentence>"` | Vector + BM25; default **RRF** (k=60); `--fusion sum` for min-max + sum; `--no-expand` skips revision expansion; `--include-superseded` keeps history |
+| `cam recall "<one English sentence>"` | Vector + BM25 fused with **RRF** (k=60); `--no-expand` skips revision expansion; `--include-superseded` keeps history |
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | Store an English memory; `parent` is structural and `supersedes` replaces an older revision |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
 | `cam status` | Resolved project root, db path, node/edge/memory counts, config |
@@ -438,6 +437,10 @@ Paste the [one-sentence install](#get-started) into the agent, then add the MCP 
 | TypeScript | `.ts`, `.tsx` | functions, methods, classes, calls |
 | JavaScript | `.js`, `.jsx` | functions, methods, classes, calls |
 | Go | `.go` | functions, methods, structs, calls |
+| Java | `.java` | functions, methods, classes, interfaces, calls |
+| C | `.c` | functions, structs, calls |
+| C++ | `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp` | functions, methods, classes, structs, calls |
+| C# | `.cs` | functions, methods, classes, interfaces, calls |
 
 ---
 

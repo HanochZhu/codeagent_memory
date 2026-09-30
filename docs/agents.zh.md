@@ -65,8 +65,8 @@ Task / explore / `claude -p` / Codex exec / Copilot CLI 脚本里的 subagent **
 ```bash
 cam --json --project <project> recall "how does hybrid recall fuse BM25 and vectors"
 cam --json --project <project> ls src/
-cam --json --project <project> read src/memory/recall.rs/fuse_scores
-cam --json --project <project> ref fuse_scores --dir in
+cam --json --project <project> read src/memory/recall.rs/fuse_rrf
+cam --json --project <project> ref fuse_rrf --dir in
 cam --json --project <project> add --summary "..." --file notes.md
 cam --json --project <project> add --summary "..." --supersedes <old-id> --file notes.md
 # 或：printf '%s' "$BODY" | cam --json --project <project> add --summary "..."
@@ -100,7 +100,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--fusion rrf\|sum] [--no-expand] [--include-superseded]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |

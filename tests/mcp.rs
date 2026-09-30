@@ -155,6 +155,15 @@ fn mcp_stdio_init_add_recall() {
         .collect();
     assert!(names.contains(&"cam_recall"));
     assert!(names.contains(&"cam_add"));
+    let recall_tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "cam_recall")
+        .unwrap();
+    assert!(recall_tool["inputSchema"]["properties"]
+        .get("fusion")
+        .is_none());
 
     let prompts = mcp.send(&json!({
         "jsonrpc": "2.0",
@@ -205,7 +214,7 @@ fn mcp_stdio_init_add_recall() {
         json!({
             "path": root,
             "summary": "BM25 and vector hybrid recall",
-            "body": "Use FTS5 BM25 plus cosine vectors, min-max each path, then sum scores.",
+            "body": "Use FTS5 BM25 plus cosine vectors, then apply reciprocal rank fusion.",
             "hash_embed": true
         }),
     );

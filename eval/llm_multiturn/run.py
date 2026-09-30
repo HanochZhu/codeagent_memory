@@ -71,13 +71,13 @@ CODE_QUESTIONS = [
     {
         "id": "c-001",
         "type": "symbol-read",
-        "question": "How does fuse_scores combine BM25 and vector scores, and what does it return?",
-        "answer": "Min-max normalize each path to [0,1] then sum; returns Vec<(id, fused score)> sorted descending.",
+        "question": "How does fuse_rrf combine BM25 and vector scores, and what does it return?",
+        "answer": "Rank each path descending, sum reciprocal ranks with k=60, scale by k+1, and return Vec<(id, fused score)> sorted descending.",
     },
     {
         "id": "c-002",
         "type": "callers",
-        "question": "Which production function calls fuse_scores?",
+        "question": "Which production function calls fuse_rrf?",
         "answer": "recall() in src/memory/recall.rs (tests in the same file also call it).",
     },
     {
@@ -101,8 +101,8 @@ CODE_QUESTIONS = [
     {
         "id": "c-006",
         "type": "followup",
-        "question": "What is the virtual path src/memory/recall.rs/fuse_scores compared to src/memory/recall.rs?",
-        "answer": "src/memory/recall.rs is the file; src/memory/recall.rs/fuse_scores is the symbol inside that file.",
+        "question": "What is the virtual path src/memory/recall.rs/fuse_rrf compared to src/memory/recall.rs?",
+        "answer": "src/memory/recall.rs is the file; src/memory/recall.rs/fuse_rrf is the symbol inside that file.",
     },
 ]
 

@@ -179,8 +179,8 @@ Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进�
 | 系统 | Hit rate | R@5 | P@5 | 来源 |
 |---|---|---:|---:|---|
 | grep（分词子串） | 15 / 15 | 0.967 | 0.227 | 本树，2026-09-23 |
-| cam `--fusion sum` | 15 / 15 | 0.933 | 0.213 | 本树，hash embed |
-| **cam RRF**（默认） | **15 / 15** | **1.000** | **0.240** | 本树，hash embed |
+| cam min-max 求和（旧实现） | 15 / 15 | 0.933 | 0.213 | 历史结果，hash embed |
+| **cam RRF** | **15 / 15** | **1.000** | **0.240** | 本树，hash embed |
 | agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | 已发表 v0.9.26 |
 
 ![coding-agent-life 总览 R@5 与 P@5 / 天花板](eval/charts/solution-headline.svg)
@@ -253,14 +253,13 @@ P95 ≈ 6.5 ms，`$/1k` = 0。
 
 ![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
 
-平均每轮 prompt：记忆 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（`fuse_scores` 的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
+平均每轮 prompt：记忆 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（融合函数的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
 
 下面所有脚本的语料位置都集中在一个文件 [eval/datasets.toml](eval/datasets.toml)。`coding-agent-life-v1` 不随仓库分发，默认指向与本仓库同级的 `agentmemory` 检出；改这个条目即可换位置，临时换一次用 `CAM_EVAL_CODING_LIFE` 覆盖。
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
-python3 eval/coding_life/run.py --hash-embed              # 默认 RRF
-python3 eval/coding_life/run.py --hash-embed --fusion sum
+python3 eval/coding_life/run.py --hash-embed              # RRF
 python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench
@@ -281,13 +280,13 @@ python3 eval/charts/generate.py
 |---|---|
 | **SQLite 代码图** | tree-sitter 解析进 `.cam/cam.db` — 列目录、读符号、跳 callers/callees，不必打开整文件 |
 | **虚拟路径** | `src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号 |
-| **多路召回** | 向量 + BM25，默认 **RRF**（k=60）；`--fusion sum` 仍是 min-max 后求和 |
+| **多路召回** | 向量 + BM25，以 **RRF**（k=60）融合 |
 | **版本扩展** | 召回会拉入命中记忆的最新替代版本并默认隐藏旧修订；`--no-expand` 关闭扩展，`--include-superseded` 保留历史 |
 | **艾宾浩斯保留** | `R = exp(-t / S)` 最多调整召回分 10%；过期和遗忘只打标，不删除 |
 | **记忆树** | `--parent` 建立允许分叉的结构层级；`--supersedes` 建立线性替代版本 |
 | **MCP + CLI** | 主 Agent：`cam_*` 工具。Subagent：`cam --json …`。同一个二进制 |
 | **100% 本地** | 无 API key。SQLite + 可选的本地向量模型（`~/.cam/models/`） |
-| **5 种语言** | Rust、Python、TypeScript、JavaScript、Go |
+| **9 种语言** | Rust、Python、TypeScript、JavaScript、Go、Java、C、C++、C# |
 
 ---
 
@@ -297,7 +296,7 @@ python3 eval/charts/generate.py
 
 1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
 2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
-3. **召回** — `recall` 只接受英文查询；查询经过向量化和英文归一化 BM25 后，每路先去掉远低于本路第一名的结果，再用 **RRF**（k=60）融合。`--fusion sum` 则各自归一后求和。最后乘以 `0.9 + 0.1 × R`。命中记忆的最新替代版本会被拉入，旧修订在 top-k 前折叠。
+3. **召回** — `recall` 只接受英文查询；查询经过向量化和英文归一化 BM25 后，每路先去掉远低于本路第一名的结果，再用 **RRF**（k=60）融合。最后乘以 `0.9 + 0.1 × R`。命中记忆的最新替代版本会被拉入，旧修订在 top-k 前折叠。
 4. **写回** — Agent 有需要长期留下的结论时，`add` 存英文摘要和英文正文。`--parent` 增加结构层级，`--supersedes` 替代旧修订但保留历史。
 
 设计细节见 [DESIGN.md](DESIGN.md)。
@@ -315,8 +314,8 @@ python3 eval/charts/generate.py
 ```text
 cam --json index
 cam --json ls src/
-cam --json read src/memory/recall.rs/fuse_scores
-cam --json ref fuse_scores --dir in
+cam --json read src/memory/recall.rs/fuse_rrf
+cam --json ref fuse_rrf --dir in
 cam --json recall "how to fuse BM25 and vector recall"
 cam --json add --summary "..." --body "..."
 cam --json mem tree
@@ -337,7 +336,7 @@ cam sync                                 # 按内容哈希增量更新图
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
 cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
-cam recall "<query>" [--limit N] [--fusion rrf|sum] [--no-expand] [--include-superseded]  # 多路召回：向量 + BM25，默认 RRF
+cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]  # 多路召回：向量 + BM25，以 RRF 融合
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
 cam mem tree                             # 打印记忆树
 cam mem show <id>                        # 查看一条记忆
@@ -354,7 +353,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees。多个定义同名时返回 `status: ambiguous` 和按分排序的 `candidates`；用候选 `id` 重查，或用 `--file` / `--kind` / `--scope` 收窄 |
-| `cam recall "<一句英文问题>"` | 向量 + BM25；默认 **RRF**（k=60）；`--fusion sum` 为 min-max 后求和；`--no-expand` 关闭版本扩展；`--include-superseded` 保留历史 |
+| `cam recall "<一句英文问题>"` | 向量 + BM25，以 **RRF**（k=60）融合；`--no-expand` 关闭版本扩展；`--include-superseded` 保留历史 |
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | 写入英文记忆；`parent` 表示结构层级，`supersedes` 表示替代旧修订 |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
 | `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |
@@ -434,6 +433,10 @@ stale_days = 30
 | TypeScript | `.ts`, `.tsx` | 函数、方法、类、调用 |
 | JavaScript | `.js`, `.jsx` | 函数、方法、类、调用 |
 | Go | `.go` | 函数、方法、struct、调用 |
+| Java | `.java` | 函数、方法、类、接口、调用 |
+| C | `.c` | 函数、struct、调用 |
+| C++ | `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp` | 函数、方法、类、struct、调用 |
+| C# | `.cs` | 函数、方法、类、接口、调用 |
 
 ---
 

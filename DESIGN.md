@@ -13,7 +13,7 @@ cam 有两面：
 
 用 tree-sitter 把项目解析成图，存在项目内 SQLite（`.cam/cam.db`）。读代码走虚拟文件系统，而不是整文件乱扫。
 
-- `cam index`：解析 Rust / Python / TypeScript / JavaScript / Go（全量重建）
+- `cam index`：解析 Rust / Python / TypeScript / JavaScript / Go / Java / C / C++ / C#（全量重建）
 - `cam sync`：按内容哈希增量更新图
 - `cam watch`：监听源文件变化，debounce 后自动 `sync`
 - `cam ls [path]`：目录 / 文件 / 符号
@@ -26,7 +26,7 @@ cam 有两面：
 
 树状存储，多路召回。一条记忆可以是习惯、事实、设计或解法，schema 相同；类型写在摘要和正文里。探索项目前先 `recall`；没有命中再搜代码；需要长期留下的结论再 `add`。
 
-- `cam recall "<一句话>" [--no-expand]`：向量 + BM25，默认 **RRF**（k=60；分数乘以 k+1，使单路第一名=1、双路第一名=2）。`--fusion sum` 则两路 min-max 到 `[0,1]` 后求和
+- `cam recall "<一句话>" [--no-expand]`：向量 + BM25，以 **RRF**（k=60；分数乘以 k+1，使单路第一名=1、双路第一名=2）融合
 - 融合前每路先过门槛：向量分不到本路第一名的 80%、BM25 分不到本路第一名的 30% 的，不算在该路命中。RRF 只看名次，不设门槛时库里每条记忆都会进向量名单，只共享一个 `ts` 这类近零 IDF 词的文档也会进 BM25 名单
 - 输出带 `relevance`（融合分）、`vec_score`、`bm25_score`；双路命中约为 2，单路约为 1
 - BM25 查询去掉中英文虚词（是否、由、或、the、how…）；驼峰标识符入库时整词和拆开的词都存，`bundledToolSchemas` 也能被 `bundled tool schemas` 命中。分词规则变了会用 `PRAGMA user_version` 触发一次 `fts_text` 重建
@@ -62,8 +62,8 @@ cam --json index
 cam --json sync
 cam --json watch
 cam --json ls src/
-cam --json read src/memory/recall.rs/fuse_scores
-cam --json ref fuse_scores --dir in
+cam --json read src/memory/recall.rs/fuse_rrf
+cam --json ref fuse_rrf --dir in
 cam --json recall "how does hybrid recall fuse BM25 and vectors"
 cam --json add --summary "..." --parent <structural-id>
 cam --json add --summary "..." --supersedes <old-revision-id>

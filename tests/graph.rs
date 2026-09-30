@@ -8,6 +8,30 @@ fn cam_bin() -> PathBuf {
     env!("CARGO_BIN_EXE_cam").into()
 }
 
+fn cam_json(project: &std::path::Path, args: &[&str]) -> serde_json::Value {
+    let out = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(project)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+fn entry_names(value: &serde_json::Value) -> Vec<&str> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect()
+}
+
 fn write_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
@@ -32,6 +56,60 @@ fn helper() {}
         "def helper():\n    return 1\n\ndef run():\n    return helper()\n",
     )
     .unwrap();
+}
+
+fn write_polyglot_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    let files = [
+        (
+            "src/Foo.java",
+            r#"
+class Bar {}
+class Foo extends Bar {
+  void helper() {}
+  void run() { helper(); }
+}
+"#,
+        ),
+        (
+            "src/util.c",
+            r#"
+int add(int a, int b) { return a + b; }
+int run(void) { return add(1, 2); }
+"#,
+        ),
+        (
+            "src/util.h",
+            r#"
+class Bar {};
+class Foo : public Bar {
+public:
+  void helper();
+};
+"#,
+        ),
+        (
+            "src/foo.cpp",
+            r#"
+#include "util.h"
+void Foo::helper() {}
+void run(Foo* f) { f->helper(); }
+"#,
+        ),
+        (
+            "src/Foo.cs",
+            r#"
+class Bar {}
+class Foo : Bar {
+  void Helper() {}
+  void Run() { Helper(); }
+}
+"#,
+        ),
+    ];
+    for (name, body) in files {
+        fs::write(root.join(name), body).unwrap();
+    }
 }
 
 #[test]
@@ -112,6 +190,32 @@ fn index_ls_read_ref() {
         .collect();
     assert!(names.contains(&"add"));
     assert!(names.contains(&"helper"));
+}
+
+#[test]
+fn index_java_c_cpp_csharp() {
+    let dir = tempdir().unwrap();
+    write_polyglot_fixture(dir.path());
+
+    let report = cam_json(dir.path(), &["index"]);
+    assert!(report["files"].as_u64().unwrap() >= 5, "{report}");
+
+    let java = cam_json(dir.path(), &["ls", "src/Foo.java"]);
+    let names = entry_names(&java);
+    assert!(names.contains(&"Foo"), "{java}");
+    assert!(names.contains(&"run"), "{java}");
+
+    let callers = cam_json(dir.path(), &["ref", "src/Foo.java/helper", "--dir", "in"]);
+    let names = entry_names(&callers["refs"]);
+    assert!(names.contains(&"run"), "{callers}");
+
+    let header = cam_json(dir.path(), &["ls", "src/util.h"]);
+    let names = entry_names(&header);
+    assert!(names.contains(&"Foo"), "{header}");
+
+    let csharp = cam_json(dir.path(), &["ref", "src/Foo.cs/Helper", "--dir", "in"]);
+    let names = entry_names(&csharp["refs"]);
+    assert!(names.contains(&"Run"), "{csharp}");
 }
 
 #[test]
