@@ -1,0 +1,13 @@
+{
+  "name": "codeagent-memory",
+  "version": "0.1.2",
+  "description": "Local code graph and solution memory for coding agents. Surgical reads and recall over a project through the cam CLI and MCP server.",
+  "author": {
+    "name": "HanochZhu"
+  },
+  "homepage": "https://github.com/HanochZhu/codeagent_memory",
+  "repository": "https://github.com/HanochZhu/codeagent_memory",
+  "license": "MIT",
+  "keywords": ["code-graph", "memory", "coding-agent", "rust", "mcp"],
+  "logo": "assets/logo.svg"
+}

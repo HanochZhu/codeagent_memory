@@ -414,7 +414,7 @@ See [Get Started](#get-started) for the full command.
 
 | Host | MCP config | Notes |
 | --- | --- | --- |
-| Cursor | `.cursor/mcp.json` or `~/.cursor/mcp.json` | Task / explore subagents use CLI |
+| Cursor | `.cursor/mcp.json` or `~/.cursor/mcp.json`, or the `codeagent-memory` plugin | Task / explore subagents use CLI |
 | Claude Code | `.mcp.json` / `~/.claude.json` / `claude mcp add` | Limited-tool subagents use CLI |
 | Codex | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` uses CLI |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | Cascade = MCP |
@@ -425,6 +425,8 @@ See [Get Started](#get-started) for the full command.
 | Gemini CLI / Antigravity / OpenCode / Zed / Droid | see [docs/mcp.md](docs/mcp.md) | |
 
 Paste the [one-sentence install](#get-started) into the agent, then add the MCP block. Copy-paste files: [docs/mcp.md](docs/mcp.md). Agent prompts: [docs/agents.md](docs/agents.md).
+
+The Cursor plugin (`.cursor-plugin/plugin.json`) registers the same `cam mcp` server and a skill. Install the `cam` binary first and keep it on `PATH`; the plugin does not ship the binary.
 
 ---
 

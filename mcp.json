@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cam": {
+      "command": "cam",
+      "args": ["mcp"]
+    }
+  }
+}
