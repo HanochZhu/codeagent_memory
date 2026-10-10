@@ -1,8 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <rect width="128" height="128" rx="28" fill="#1C1917"/>
-  <circle cx="40" cy="42" r="7" fill="#F5F0E8"/>
-  <circle cx="90" cy="34" r="7" fill="#F5F0E8"/>
-  <circle cx="74" cy="90" r="8" fill="#E8A87C"/>
-  <circle cx="34" cy="94" r="5" fill="#F5F0E8"/>
-  <path d="M46 46L84 38M45 48L68 84M84 40L78 84M39 92L66 92" stroke="#F5F0E8" stroke-width="3" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="memory" x1="28" y1="27" x2="94" y2="101" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60E6FF"/>
+      <stop offset="1" stop-color="#6C7CFF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="128" height="128" rx="28" fill="#08111F"/>
+  <rect x=".75" y=".75" width="126.5" height="126.5" rx="27.25" stroke="#FFFFFF" stroke-opacity=".09" stroke-width="1.5"/>
+
+  <!-- A continuous recall loop shaped like the letter C. -->
+  <path d="M89 35C75 23 52 24 37 39C23 53 23 76 37 90C51 104 74 105 89 93"
+        stroke="url(#memory)" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Retrieval points on the memory graph. -->
+  <circle cx="89" cy="35" r="5.5" fill="#08111F" stroke="#8DEEFF" stroke-width="3"/>
+  <circle cx="31" cy="64" r="4" fill="#08111F" stroke="#78CAFF" stroke-width="3"/>
+  <circle cx="89" cy="93" r="5.5" fill="#08111F" stroke="#8795FF" stroke-width="3"/>
+
+  <!-- Code held inside the memory loop. -->
+  <path d="M57 49L45 64L57 79M71 49L83 64L71 79"
+        stroke="#F4F8FF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

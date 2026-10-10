@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="cam logo" width="128" height="128">
+
 # cam
 
 [English](README.md) · [中文](README.zh.md)
