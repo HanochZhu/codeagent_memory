@@ -480,6 +480,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                 println!("edges        {}", out.edges);
                 println!("solutions    {}", out.solutions);
                 println!("stale_days   {}", out.stale_days);
+                println!("embedding_model {}", out.embedding_model);
                 println!("hash_embed   {}", out.hash_embed);
                 println!("require_model2vec {}", out.require_model2vec);
             }
@@ -490,24 +491,38 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                 if json {
                     emit_json(&cfg, pretty)?;
                 } else {
-                    emit_text(format!("stale_days = {}", cfg.stale_days));
+                    emit_text(format_config(&cfg));
                 }
             }
             ConfigCmd::Set { key, value } => {
-                if key != "stale_days" {
-                    bail!("unsupported config key `{key}`; only `stale_days` is supported");
-                }
-                let stale_days: u32 = value
-                    .trim()
-                    .parse()
-                    .map_err(|_| anyhow::anyhow!("stale_days must be a positive integer"))?;
                 let mut cfg = Config::load()?;
-                cfg.stale_days = stale_days;
+                match key.as_str() {
+                    "stale_days" => {
+                        let stale_days: u32 = value.trim().parse().map_err(|_| {
+                            anyhow::anyhow!("stale_days must be a positive integer")
+                        })?;
+                        cfg.stale_days = stale_days;
+                    }
+                    "embedding_model" => {
+                        cfg.embedding_model = match cam::ops::parse_embed_model(&value)? {
+                            cam::ops::EmbedChoice::Hash => Some("hash".to_string()),
+                            cam::ops::EmbedChoice::Model(spec)
+                                if spec == cam::memory::embed::DEFAULT_EMBED_MODEL =>
+                            {
+                                None
+                            }
+                            cam::ops::EmbedChoice::Model(spec) => Some(spec),
+                        };
+                    }
+                    _ => bail!(
+                        "unsupported config key `{key}`; supported keys: stale_days, embedding_model"
+                    ),
+                }
                 cfg.save()?;
                 if json {
                     emit_json(&cfg, pretty)?;
                 } else {
-                    emit_text(format!("stale_days = {}", cfg.stale_days));
+                    emit_text(format_config(&cfg));
                 }
             }
         },
@@ -579,6 +594,14 @@ fn format_sync(report: &cam::code::SyncReport) -> String {
     )
 }
 
+fn format_config(cfg: &Config) -> String {
+    format!(
+        "stale_days = {}\nembedding_model = {}",
+        cfg.stale_days,
+        cfg.embedding_model.as_deref().unwrap_or("default")
+    )
+}
+
 fn collect_status(project: &Project) -> Result<StatusOut> {
     let db = project.db_path();
     let db_exists = db.is_file();
@@ -603,6 +626,7 @@ fn collect_status(project: &Project) -> Result<StatusOut> {
         edges,
         solutions,
         stale_days: cfg.stale_days,
+        embedding_model: cam::ops::active_embed_label(false)?,
         hash_embed: cam::ops::env_flag("CAM_HASH_EMBED"),
         require_model2vec: std::env::var_os("CAM_REQUIRE_MODEL2VEC").is_some(),
     })
@@ -618,6 +642,7 @@ struct StatusOut {
     edges: i64,
     solutions: i64,
     stale_days: u32,
+    embedding_model: String,
     hash_embed: bool,
     require_model2vec: bool,
 }

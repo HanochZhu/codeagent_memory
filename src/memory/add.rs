@@ -69,8 +69,8 @@ pub fn add_solution(
     let embedding = encode_f32(&embedder.embed(&format!("{summary}\n{body}"))?);
 
     conn.execute(
-        "INSERT INTO solutions(id, parent_id, supersedes_id, summary, body, created_at, updated_at, recalled_at, stability, embedding, fts_text)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO solutions(id, parent_id, supersedes_id, summary, body, created_at, updated_at, recalled_at, stability, embedding, embedding_model, fts_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         rusqlite::params![
             id,
             structural_parent,
@@ -82,6 +82,7 @@ pub fn add_solution(
             now,
             INITIAL_STABILITY_DAYS,
             embedding,
+            embedder.model_id(),
             fts_text
         ],
     )?;

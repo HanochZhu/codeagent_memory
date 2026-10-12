@@ -197,6 +197,48 @@ fn config_set_and_get_roundtrip() {
 }
 
 #[test]
+fn config_set_embedding_model() {
+    let home = tempdir().unwrap();
+
+    let set = output(
+        home.path(),
+        &[
+            "--json",
+            "config",
+            "set",
+            "embedding_model",
+            "minishlab/potion-base-8M",
+        ],
+    );
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    assert_eq!(json(&set)["embedding_model"], "minishlab/potion-base-8M");
+
+    let cleared = output(
+        home.path(),
+        &["--json", "config", "set", "embedding_model", "default"],
+    );
+    assert!(cleared.status.success());
+    assert!(json(&cleared).get("embedding_model").is_none());
+
+    let missing = output(
+        home.path(),
+        &[
+            "--json",
+            "config",
+            "set",
+            "embedding_model",
+            "/no/such/embedding-model",
+        ],
+    );
+    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(json(&missing)["error"]["code"], "usage");
+}
+
+#[test]
 fn first_command_auto_inits() {
     let home = tempdir().unwrap();
     let root = tempdir().unwrap();

@@ -33,7 +33,7 @@ cam 有两面：
 - `cam add --summary "..." [--parent ID] [--supersedes ID]`：必须提供全文（stdin / `--file`）和摘要；`parent` 是可分叉的结构层级，`supersedes` 是线性版本替代
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新
 
-向量默认 `model2vec` + `potion-multilingual-128M`（首次需下载）。模型不可用时回退到 hash embedder。查询、记忆摘要和正文要求使用英语；BM25 拆分英语标识符，并同时索引原词和英语词干。
+向量默认 `model2vec` + `potion-multilingual-128M`（首次需下载）。`~/.cam/config.toml` 的 `embedding_model`（或环境变量 `CAM_EMBED_MODEL`）可换成 `hash`、另一个 Hugging Face 上的 model2vec 仓库，或本地 model2vec 目录。未显式指定时，默认模型不可用会回退到 hash embedder；显式指定的模型加载失败则直接报错。每条记忆记下产生向量的模型名。换模型后的第一次 `recall` 会用当前模型重算对不上的向量，再参加当次打分，且不改 `updated_at`。查询、记忆摘要和正文要求使用英语；BM25 拆分英语标识符，并同时索引原词和英语词干。
 
 ## 遗忘
 

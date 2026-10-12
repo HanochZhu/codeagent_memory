@@ -10,6 +10,10 @@ const DEFAULT_STALE_DAYS: u32 = 30;
 pub struct Config {
     #[serde(default = "default_stale_days")]
     pub stale_days: u32,
+    /// `hash`, a model2vec directory, or a Hugging Face repo id.
+    /// Absent means the built-in `minishlab/potion-multilingual-128M`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_model: Option<String>,
     #[serde(default, skip_serializing)]
     pub current_project: Option<String>,
 }
@@ -22,6 +26,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             stale_days: DEFAULT_STALE_DAYS,
+            embedding_model: None,
             current_project: None,
         }
     }
@@ -95,5 +100,20 @@ mod tests {
         let serialized = toml::to_string(&cfg).unwrap();
         assert!(!serialized.contains("current_project"));
         assert_eq!(toml::from_str::<Config>(&serialized).unwrap().stale_days, 7);
+    }
+
+    #[test]
+    fn embedding_model_roundtrips_and_defaults_to_absent() {
+        let cfg: Config = toml::from_str("stale_days = 30\n").unwrap();
+        assert!(cfg.embedding_model.is_none());
+        let mut cfg = cfg;
+        cfg.embedding_model = Some("minishlab/potion-base-8M".into());
+        let serialized = toml::to_string(&cfg).unwrap();
+        assert!(serialized.contains("minishlab/potion-base-8M"));
+        let loaded: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            loaded.embedding_model.as_deref(),
+            Some("minishlab/potion-base-8M")
+        );
     }
 }

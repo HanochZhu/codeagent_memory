@@ -1,8 +1,18 @@
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
+/// Built-in model2vec model. Cache stays at `~/.cam/models/potion-multilingual-128M`.
+pub const DEFAULT_EMBED_MODEL: &str = "minishlab/potion-multilingual-128M";
+pub const HASH_EMBED_MODEL: &str = "hash";
+
+const MODEL_FILES: &[&str] = &["tokenizer.json", "config.json", "model.safetensors"];
+
 pub trait Embedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    /// Identity stored with each embedding so a later model is not compared against it.
+    fn model_id(&self) -> &str;
 }
 
 pub struct HashEmbedder {
@@ -25,51 +35,106 @@ impl Embedder for HashEmbedder {
         }
         Ok(l2_normalize(vec))
     }
+
+    fn model_id(&self) -> &str {
+        HASH_EMBED_MODEL
+    }
 }
 
 pub struct Model2VecEmbedder {
     model: model2vec_rs::model::StaticModel,
+    id: String,
 }
 
 impl Model2VecEmbedder {
     pub fn load() -> Result<Self> {
-        let cache = crate::config::Config::models_dir()?.join("potion-multilingual-128M");
+        Self::load_spec(DEFAULT_EMBED_MODEL)
+    }
+
+    /// Load a model2vec model. `spec` is a local directory or a Hugging Face repo id.
+    pub fn load_spec(spec: &str) -> Result<Self> {
+        let path = Path::new(spec);
+        if path.is_dir() {
+            return Self::load_dir(path);
+        }
+        Self::load_repo(spec)
+    }
+
+    fn load_dir(dir: &Path) -> Result<Self> {
+        let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        require_model_files(&dir)?;
+        let model = model2vec_rs::model::StaticModel::from_pretrained(&dir, None, Some(true), None)
+            .with_context(|| format!("load model2vec model from {}", dir.display()))?;
+        Ok(Self {
+            model,
+            id: dir.to_string_lossy().into_owned(),
+        })
+    }
+
+    fn load_repo(repo: &str) -> Result<Self> {
+        let cache = cache_dir(repo)?;
         std::fs::create_dir_all(&cache)?;
         std::env::set_var("HF_HOME", crate::config::Config::models_dir()?);
-        let tokenizer = cache.join("tokenizer.json");
-        let weights = cache.join("model.safetensors");
-        let config = cache.join("config.json");
-        if !(tokenizer.exists() && weights.exists() && config.exists()) {
-            fetch_potion_files(&cache)?;
+        if !model_files_present(&cache) {
+            fetch_model_files(&cache, repo)?;
         }
-        let model = if tokenizer.exists() && weights.exists() && config.exists() {
+        let model = if model_files_present(&cache) {
             model2vec_rs::model::StaticModel::from_pretrained(&cache, None, Some(true), None)
-                .context("load local potion-multilingual-128M")?
+                .with_context(|| format!("load cached model2vec model {repo}"))?
         } else {
-            model2vec_rs::model::StaticModel::from_pretrained(
-                "minishlab/potion-multilingual-128M",
-                None,
-                Some(true),
-                None,
-            )
-            .context("load model2vec potion-multilingual-128M (needs network on first run)")?
+            model2vec_rs::model::StaticModel::from_pretrained(repo, None, Some(true), None)
+                .with_context(|| {
+                    format!("load model2vec model {repo} (needs network on first run)")
+                })?
         };
-        Ok(Self { model })
+        Ok(Self {
+            model,
+            id: repo.to_string(),
+        })
     }
 }
 
-fn fetch_potion_files(dir: &std::path::Path) -> Result<()> {
+fn cache_dir(repo: &str) -> Result<PathBuf> {
+    let base = crate::config::Config::models_dir()?;
+    if repo == DEFAULT_EMBED_MODEL {
+        Ok(base.join("potion-multilingual-128M"))
+    } else {
+        Ok(base.join(repo))
+    }
+}
+
+fn model_files_present(dir: &Path) -> bool {
+    MODEL_FILES.iter().all(|name| dir.join(name).is_file())
+}
+
+fn require_model_files(dir: &Path) -> Result<()> {
+    for name in MODEL_FILES {
+        if !dir.join(name).is_file() {
+            anyhow::bail!(
+                "embedding model directory {} is missing {name}",
+                dir.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn fetch_model_files(dir: &Path, repo: &str) -> Result<()> {
     let base = std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://hf-mirror.com".into());
-    let repo = format!(
-        "{}/minishlab/potion-multilingual-128M/resolve/main",
-        base.trim_end_matches('/')
+    let root = format!(
+        "{}/{}/resolve/main",
+        base.trim_end_matches('/'),
+        repo.trim_matches('/')
     );
-    for name in ["tokenizer.json", "config.json", "model.safetensors"] {
+    for name in MODEL_FILES {
         let dest = dir.join(name);
         if dest.exists() {
             continue;
         }
-        let url = format!("{repo}/{name}");
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let url = format!("{root}/{name}");
         let status = std::process::Command::new("curl")
             .args(["-4", "-fsSL", "--retry", "3", "--max-time", "180", "-o"])
             .arg(&dest)
@@ -90,6 +155,28 @@ impl Embedder for Model2VecEmbedder {
         out.into_iter()
             .next()
             .context("model2vec returned no embedding")
+    }
+
+    fn model_id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// A stored vector is usable only when its dimension matches and it was produced
+/// by the same model. Rows written before model ids existed stay usable for the
+/// built-in potion model and the hash embedder; a custom model ignores them.
+pub(crate) fn embedding_usable(
+    stored_model: Option<&str>,
+    stored: &[f32],
+    current_id: &str,
+    query: &[f32],
+) -> bool {
+    if stored.is_empty() || stored.len() != query.len() {
+        return false;
+    }
+    match stored_model.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => id == current_id,
+        None => current_id == DEFAULT_EMBED_MODEL || current_id == HASH_EMBED_MODEL,
     }
 }
 
@@ -154,5 +241,33 @@ mod tests {
         let b = e.embed("hybrid bm25 and vector recall").unwrap();
         let c = e.embed("unrelated cooking recipe").unwrap();
         assert!(cosine(&a, &b) > cosine(&a, &c));
+    }
+
+    #[test]
+    fn custom_model_does_not_reuse_legacy_or_other_vectors() {
+        let query = vec![1.0, 0.0];
+        let same = vec![1.0, 0.0];
+        let other_dim = vec![1.0, 0.0, 0.0];
+        assert!(embedding_usable(None, &same, DEFAULT_EMBED_MODEL, &query));
+        assert!(embedding_usable(None, &same, HASH_EMBED_MODEL, &query));
+        assert!(!embedding_usable(None, &same, "/models/custom", &query));
+        assert!(!embedding_usable(
+            Some("minishlab/potion-base-8M"),
+            &same,
+            DEFAULT_EMBED_MODEL,
+            &query
+        ));
+        assert!(embedding_usable(
+            Some(DEFAULT_EMBED_MODEL),
+            &same,
+            DEFAULT_EMBED_MODEL,
+            &query
+        ));
+        assert!(!embedding_usable(
+            Some(DEFAULT_EMBED_MODEL),
+            &other_dim,
+            DEFAULT_EMBED_MODEL,
+            &query
+        ));
     }
 }

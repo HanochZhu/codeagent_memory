@@ -146,7 +146,7 @@ cam add --summary "..." < notes.md
 
 Paste that into Cursor `.cursor/mcp.json`, Claude Code `.mcp.json`, or the host's MCP settings. Per-tool files: [docs/mcp.md](docs/mcp.md). Who should call MCP vs CLI: [docs/agents.md](docs/agents.md).
 
-The first `recall` / `add` downloads `potion-multilingual-128M`. If the model is unavailable, `cam` falls back to a hash embedder.
+The first `recall` / `add` downloads `potion-multilingual-128M`. If that default model is unavailable, `cam` falls back to a hash embedder. Set another model2vec model with `cam config set embedding_model <repo-or-path>` (see [Configuration](#configuration)).
 
 ---
 
@@ -347,7 +347,7 @@ cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PA
 cam mem tree                             # Print the memory tree
 cam mem show <id>                        # Show one memory
 cam status                               # Resolved project, database counts, and config
-cam config get | config set stale_days N # Read or update ~/.cam/config.toml
+cam config get | config set stale_days N | config set embedding_model <model> # Read or update ~/.cam/config.toml
 cam mcp                                  # MCP stdio server for the main agent
 ```
 
@@ -363,7 +363,7 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | Store an English memory; `parent` is structural and `supersedes` replaces an older revision |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
 | `cam status` | Resolved project root, db path, node/edge/memory counts, config |
-| `cam config get` / `cam config set stale_days N` | Read or update `~/.cam/config.toml` |
+| `cam config get` / `cam config set stale_days N` / `cam config set embedding_model <model>` | Read or update `~/.cam/config.toml` |
 | `cam mcp` | Stdio MCP server (main agent). See [docs/mcp.md](docs/mcp.md) |
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Node ids (`src/main.rs:function:main:12`) from an ambiguous answer are accepted wherever a symbol is.
@@ -390,9 +390,12 @@ Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that f
 
 ```toml
 stale_days = 30
+# embedding_model = "minishlab/potion-base-8M"  # Hugging Face model2vec repo
+# embedding_model = "/path/to/model2vec"         # local tokenizer.json + config.json + model.safetensors
+# embedding_model = "hash"                       # no download; lexical hash only
 ```
 
-Vector models are cached under `~/.cam/models/`.
+`embedding_model` defaults to `minishlab/potion-multilingual-128M`. `default` clears a custom value. `CAM_EMBED_MODEL` overrides the file for one process. The first `recall` after a model change re-embeds stored memories with the new model before scoring, so vector recall keeps working. Downloaded models are cached under `~/.cam/models/`.
 
 ---
 

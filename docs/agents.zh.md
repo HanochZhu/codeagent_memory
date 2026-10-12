@@ -105,7 +105,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
-仅 CLI（无 MCP 工具）：`cam sync`、`cam watch`、`cam status`、`cam config get|set stale_days N`。
+仅 CLI（无 MCP 工具）：`cam sync`、`cam watch`、`cam status`、`cam config get|set stale_days N|set embedding_model <model>`。
 
 `--json` 下失败会在 stdout 输出 `{"error":{"code":…,"message":…}}` 并返回非零退出码；`--pretty` 输出缩进 JSON。
 

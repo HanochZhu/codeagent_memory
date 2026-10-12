@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::add::{escape_fts_query, require_english, tokenize_query};
 use super::ebbinghaus::{c0, needs_update, retention, strengthen};
-use super::embed::{cosine, decode_f32, Embedder};
+use super::embed::{cosine, decode_f32, embedding_usable, encode_f32, Embedder};
 use crate::config::Config;
 use crate::project::Project;
 
@@ -155,17 +155,27 @@ pub fn recall(
     let conn = project.connect()?;
     let cfg = Config::load()?;
     let q_vec = embedder.embed(query)?;
+    reembed_mismatched(&conn, embedder, &q_vec)?;
+    let current_model = embedder.model_id();
 
     let mut vec_hits = Vec::new();
     {
-        let mut stmt =
-            conn.prepare("SELECT id, embedding FROM solutions WHERE embedding IS NOT NULL")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, embedding, embedding_model FROM solutions WHERE embedding IS NOT NULL",
+        )?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
         for row in rows {
-            let (id, blob) = row?;
+            let (id, blob, stored_model) = row?;
             let emb = decode_f32(&blob);
+            if !embedding_usable(stored_model.as_deref(), &emb, current_model, &q_vec) {
+                continue;
+            }
             vec_hits.push((id, cosine(&q_vec, &emb)));
         }
     }
@@ -380,6 +390,59 @@ fn refresh_c0(conn: &rusqlite::Connection, id: &str, now: i64) -> Result<()> {
         rusqlite::params![now, strengthen(stability), id],
     )?;
     Ok(())
+}
+
+/// Rewrite stored vectors that were produced by another model before this recall scores them.
+/// Runs once per model change: later recalls see matching ids and leave the rows alone.
+/// `updated_at` stays put so a vector refresh is not treated as an edit.
+fn reembed_mismatched(
+    conn: &rusqlite::Connection,
+    embedder: &dyn Embedder,
+    query_vec: &[f32],
+) -> Result<usize> {
+    let current = embedder.model_id();
+    let stale: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, summary, body, embedding, embedding_model FROM solutions WHERE embedding IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        let mut stale = Vec::new();
+        for row in rows {
+            let (id, summary, body, blob, stored_model) = row?;
+            let emb = decode_f32(&blob);
+            if !embedding_usable(stored_model.as_deref(), &emb, current, query_vec) {
+                stale.push((id, summary, body));
+            }
+        }
+        stale
+    };
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    for (id, summary, body) in &stale {
+        let embedding = encode_f32(&embedder.embed(&format!("{summary}\n{body}"))?);
+        tx.execute(
+            "UPDATE solutions SET embedding = ?1, embedding_model = ?2 WHERE id = ?3",
+            rusqlite::params![embedding, current, id],
+        )?;
+    }
+    tx.commit()?;
+    let noun = if stale.len() == 1 {
+        "memory"
+    } else {
+        "memories"
+    };
+    eprintln!("re-embedded {} {noun} with {current}", stale.len());
+    Ok(stale.len())
 }
 
 fn breadcrumb(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
@@ -839,5 +902,58 @@ mod tests {
         let map: HashMap<_, _> = fused.into_iter().collect();
         assert!((map["a"] - 1.0).abs() < 1e-5);
         assert!((map["b"] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn recall_reembeds_memories_from_another_model() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let id = add(
+            &project,
+            "vector model identity",
+            "stored embeddings must match the active embedding model",
+            None,
+        );
+        let conn = project.connect().unwrap();
+        let updated_at: i64 = conn
+            .query_row(
+                "SELECT updated_at FROM solutions WHERE id = ?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "UPDATE solutions SET embedding_model = 'other-model' WHERE id = ?1",
+            [&id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "vector model identity",
+            RecallOptions {
+                limit: 3,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let hit = hits.iter().find(|h| h.id == id).expect("memory still hits");
+        assert!(hit.vec_score.is_some(), "{hit:?}");
+
+        let conn = project.connect().unwrap();
+        let (model, kept_updated_at): (String, i64) = conn
+            .query_row(
+                "SELECT embedding_model, updated_at FROM solutions WHERE id = ?1",
+                [&id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(model, "hash");
+        assert_eq!(kept_updated_at, updated_at);
     }
 }

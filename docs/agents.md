@@ -105,7 +105,7 @@ Translate the question to English and recall first. Before reading code, run `ca
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
-CLI-only (no MCP tool): `cam sync`, `cam watch`, `cam status`, `cam config get|set stale_days N`.
+CLI-only (no MCP tool): `cam sync`, `cam watch`, `cam status`, `cam config get|set stale_days N|set embedding_model <model>`.
 
 With `--json`, failures print `{"error":{"code":…,"message":…}}` to stdout and exit non-zero. `--pretty` adds indentation.
 

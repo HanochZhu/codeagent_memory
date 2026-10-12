@@ -144,7 +144,7 @@ cam add --summary "..." < notes.md
 
 贴到 Cursor 的 `.cursor/mcp.json`、Claude Code 的 `.mcp.json`，或宿主自己的 MCP 设置。分工具配置：[docs/mcp.zh.md](docs/mcp.zh.md)。谁走 MCP、谁走 CLI：[docs/agents.zh.md](docs/agents.zh.md)。
 
-首次 `recall` / `add` 会下载 `potion-multilingual-128M`。模型不可用时回退 hash embedder。
+首次 `recall` / `add` 会下载 `potion-multilingual-128M`。这个默认模型不可用时回退 hash embedder。换成其它 model2vec 模型：`cam config set embedding_model <仓库或本地目录>`（见 [配置](#配置)）。
 
 ---
 
@@ -341,7 +341,7 @@ cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PA
 cam mem tree                             # 打印记忆树
 cam mem show <id>                        # 查看一条记忆
 cam status                               # 当前项目、数据库统计与配置
-cam config get | config set stale_days N # 读取或更新 ~/.cam/config.toml
+cam config get | config set stale_days N | config set embedding_model <model> # 读取或更新 ~/.cam/config.toml
 cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 ```
 
@@ -357,7 +357,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | 写入英文记忆；`parent` 表示结构层级，`supersedes` 表示替代旧修订 |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
 | `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |
-| `cam config get` / `cam config set stale_days N` | 读取或更新 `~/.cam/config.toml` |
+| `cam config get` / `cam config set stale_days N` / `cam config set embedding_model <model>` | 读取或更新 `~/.cam/config.toml` |
 | `cam mcp` | stdio MCP 服务（主 Agent）。见 [docs/mcp.zh.md](docs/mcp.zh.md) |
 
 虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。歧义响应里的节点 id（`src/main.rs:function:main:12`）可以在任何接受符号的地方直接使用。
@@ -384,9 +384,12 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 
 ```toml
 stale_days = 30
+# embedding_model = "minishlab/potion-base-8M"  # Hugging Face 上的 model2vec 仓库
+# embedding_model = "/path/to/model2vec"         # 本地目录，需含 tokenizer.json、config.json、model.safetensors
+# embedding_model = "hash"                       # 不下载模型，只用词面 hash
 ```
 
-向量模型缓存在 `~/.cam/models/`。
+`embedding_model` 默认是 `minishlab/potion-multilingual-128M`。设成 `default` 会清掉自定义值。`CAM_EMBED_MODEL` 只覆盖当前进程。换模型后的第一次 `recall` 会先用新模型重算已有向量，再参加当次打分。下载的模型缓存在 `~/.cam/models/`。
 
 ---
 

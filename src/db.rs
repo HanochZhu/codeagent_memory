@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS solutions (
     recalled_at INTEGER,
     stability REAL NOT NULL DEFAULT 7.0,
     embedding BLOB,
+    embedding_model TEXT,
     fts_text TEXT NOT NULL,
     FOREIGN KEY (parent_id) REFERENCES solutions(id) ON DELETE SET NULL
 );
@@ -107,6 +108,9 @@ fn migrate(conn: &Connection) -> Result<()> {
             "ALTER TABLE solutions ADD COLUMN stability REAL NOT NULL DEFAULT 7.0",
             [],
         )?;
+    }
+    if !column_exists(conn, "solutions", "embedding_model")? {
+        conn.execute("ALTER TABLE solutions ADD COLUMN embedding_model TEXT", [])?;
     }
     if !column_exists(conn, "solutions", "supersedes_id")? {
         conn.execute(

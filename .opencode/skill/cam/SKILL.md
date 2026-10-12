@@ -46,7 +46,7 @@ cam recall "<query>" [--limit N] [--include-superseded]
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]
 cam mem tree | cam mem show <id>
 cam status                                       # resolved project, db counts, config
-cam config get | config set stale_days N         # read/update ~/.cam/config.toml
+cam config get | config set stale_days N | config set embedding_model <model>  # read/update ~/.cam/config.toml
 cam mcp                                          # stdio MCP server (main agent)
 ```
 
