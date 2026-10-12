@@ -40,7 +40,7 @@
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
 | `cam_index` | 每个仓库做一次（或代码大挪移之后）。`.cam/` 会在首次调用时自动创建。 |
 
-工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。图为空时 `cam_ls` / `cam_read` / `cam_ref` 会以 `not_indexed` 失败；先 `cam_index` 一次再重试。
+工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。默认每条都带完整正文。设 `snippets` / `--snippets` 后，第一条以外的长正文只带片段并标 `body_truncated: true`；要依赖细节前先 `cam_mem_show`。图为空时 `cam_ls` / `cam_read` / `cam_ref` 会以 `not_indexed` 失败；先 `cam_index` 一次再重试。
 
 ### 贴进主 Agent 的规则 / AGENTS.md
 
@@ -100,7 +100,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |

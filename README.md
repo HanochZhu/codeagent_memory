@@ -342,7 +342,7 @@ cam watch [--debounce-ms N]              # Watch source files; --json streams on
 cam ls [virt_path]                       # List directories / files / symbols
 cam read <virt_path> [--full]            # File outline or symbol body
 cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # One-hop callers (in) or callees (out); --callers / --callees aliases
-cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]  # Hybrid recall: vector + BM25 fused with RRF
+cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]  # Hybrid recall: vector + BM25 fused with RRF
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # Store a memory (body: --body, --file, or stdin)
 cam mem tree                             # Print the memory tree
 cam mem show <id>                        # Show one memory
@@ -359,7 +359,7 @@ cam mcp                                  # MCP stdio server for the main agent
 | `cam ls [path]` | List directories / files / symbols |
 | `cam read <path>` | File outline or symbol body; `--full` for the whole file |
 | `cam ref <symbol> --dir in\|out` | One-hop callers / callees. A name shared by several definitions returns `status: ambiguous` with ranked `candidates`; re-run with a candidate `id`, or narrow with `--file` / `--kind` / `--scope` |
-| `cam recall "<one English sentence>"` | Vector + BM25 fused with **RRF** (k=60); `--no-expand` skips revision expansion; `--include-superseded` keeps history |
+| `cam recall "<one English sentence>"` | Vector + BM25 fused with **RRF** (k=60); `--no-expand` skips revision expansion; `--include-superseded` keeps history; `--snippets` clips long bodies below the top hit (`body_truncated`) |
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | Store an English memory; `parent` is structural and `supersedes` replaces an older revision |
 | `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
 | `cam status` | Resolved project root, db path, node/edge/memory counts, config |

@@ -336,7 +336,7 @@ cam sync                                 # 按内容哈希增量更新图
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
 cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
-cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]  # 多路召回：向量 + BM25，以 RRF 融合
+cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]  # 多路召回：向量 + BM25，以 RRF 融合
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
 cam mem tree                             # 打印记忆树
 cam mem show <id>                        # 查看一条记忆
@@ -353,7 +353,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees。多个定义同名时返回 `status: ambiguous` 和按分排序的 `candidates`；用候选 `id` 重查，或用 `--file` / `--kind` / `--scope` 收窄 |
-| `cam recall "<一句英文问题>"` | 向量 + BM25，以 **RRF**（k=60）融合；`--no-expand` 关闭版本扩展；`--include-superseded` 保留历史 |
+| `cam recall "<一句英文问题>"` | 向量 + BM25，以 **RRF**（k=60）融合；`--no-expand` 关闭版本扩展；`--include-superseded` 保留历史；`--snippets` 把第一条以外的长正文截成片段（`body_truncated`） |
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | 写入英文记忆；`parent` 表示结构层级，`supersedes` 表示替代旧修订 |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
 | `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |

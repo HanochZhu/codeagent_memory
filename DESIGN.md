@@ -28,7 +28,10 @@ cam 有两面：
 
 - `cam recall "<一句话>" [--no-expand]`：向量 + BM25，以 **RRF**（k=60；分数乘以 k+1，使单路第一名=1、双路第一名=2）融合
 - 融合前每路先过门槛：向量分不到本路第一名的 80%、BM25 分不到本路第一名的 30% 的，不算在该路命中。RRF 只看名次，不设门槛时库里每条记忆都会进向量名单，只共享一个 `ts` 这类近零 IDF 词的文档也会进 BM25 名单
-- 输出带 `relevance`（融合分）、`vec_score`、`bm25_score`；双路命中约为 2，单路约为 1
+- 输出带 `score`（两位小数）；双路命中约为 2，单路约为 1。`relevance`、`vec_score`、`bm25_score` 只在内部排序用，不输出
+- 默认每条都给完整正文。`--snippets` 时，第一条及与它并列（融合分 ≥ 第一条的 0.99）的结果给完整正文，其余正文超过 960 字符的只给 240 字符片段并标 `body_truncated`，需要时用 `mem show <id>` 读全文。RRF 分很平（单路第二名是第一名的 0.98），所以只认近乎并列；短正文截断省下的少于一次 `mem show` 的开销，所以保留原文
+- 截断默认关闭，因为 LongMemEval 上的 DeepSeek 问答（`eval/recall_payload/llm_qa.py`，86 题）里：截断省 47% token，但准确率从 57% 掉到 45%，丢分的题大多是金标会话被截成片段、Agent 没打开；提示 Agent 必须打开片段后准确率追平，节省只剩 3.7%（每轮工具调用都要重发整个上下文）
+- MCP 工具结果是紧凑 JSON（不缩进）。`eval/recall_payload` 量 recall 结果的 token：短正文语料（coding-agent-life）−37%，LongMemEval 长会话 −3.4%；开 `--snippets` 时 k=3 −57%（算上为截断的金标会话补一次 `mem show` 仍 −35%）。排序不变
 - BM25 查询去掉中英文虚词（是否、由、或、the、how…）；驼峰标识符入库时整词和拆开的词都存，`bundledToolSchemas` 也能被 `bundled tool schemas` 命中。分词规则变了会用 `PRAGMA user_version` 触发一次 `fts_text` 重建
 - `cam add --summary "..." [--parent ID] [--supersedes ID]`：必须提供全文（stdin / `--file`）和摘要；`parent` 是可分叉的结构层级，`supersedes` 是线性版本替代
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新

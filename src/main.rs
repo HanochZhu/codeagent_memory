@@ -90,6 +90,9 @@ enum Command {
         /// Include older revisions that have been superseded
         #[arg(long)]
         include_superseded: bool,
+        /// Clip long bodies below the top hit to snippets (read the rest with `mem show`)
+        #[arg(long)]
+        snippets: bool,
         /// Skip model2vec and use the test hash embedder
         #[arg(long, hide = true)]
         hash_embed: bool,
@@ -346,6 +349,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             limit,
             no_expand,
             include_superseded,
+            snippets,
             hash_embed,
         } => {
             let project = resolve_project(project_arg)?;
@@ -354,6 +358,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                 limit,
                 expand: !no_expand,
                 include_superseded,
+                snippets,
             };
             let hits = cam::memory::recall(&project, embedder.as_ref(), &query, opts)?;
             if json {
@@ -371,6 +376,9 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                     }
                     if !h.latest {
                         flags.push("older");
+                    }
+                    if h.body_truncated {
+                        flags.push("snippet");
                     }
                     let flags = if flags.is_empty() {
                         String::new()
@@ -574,11 +582,7 @@ fn read_body(file: Option<&PathBuf>, body: Option<String>) -> Result<String> {
 }
 
 fn trim_body(body: &str, max: usize) -> String {
-    if body.chars().count() <= max {
-        return body.to_string();
-    }
-    let clipped: String = body.chars().take(max).collect();
-    format!("{clipped}…")
+    cam::memory::clip_body(body, max).unwrap_or_else(|| body.to_string())
 }
 
 fn format_sync(report: &cam::code::SyncReport) -> String {

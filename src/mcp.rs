@@ -20,7 +20,7 @@ const INSTRUCTIONS: &str = r#"cam is local code-graph + solution memory for this
 Main agent: call these MCP tools. Do not shell out to `cam` unless a tool is missing or fails.
 
 Workflow:
-1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update.
+1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update. A hit with body_truncated (only with snippets) carries a snippet: cam_mem_show it before relying on details.
 2. Before reading code, make sure the graph is indexed: if cam_ls / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
 3. On miss / stale / needs_update: cam_ls → cam_read (prefer symbol paths) → cam_ref.
 4. After you solve it, cam_add with both summary and body written in English. Use supersedes to replace an older revision; parent only sets the structural tree parent.
@@ -233,6 +233,7 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
                 limit: arg_usize(args, "limit").unwrap_or(3),
                 expand: arg_bool(args, "expand").unwrap_or(true),
                 include_superseded: arg_bool(args, "include_superseded").unwrap_or(false),
+                snippets: arg_bool(args, "snippets").unwrap_or(false),
             };
             let embedder = embedder_from(args)?;
             to_json(
@@ -284,8 +285,10 @@ fn to_json(value: impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(err_str)
 }
 
+/// Compact JSON: tool text goes straight into the agent's context, where
+/// pretty-print indentation is pure token cost.
 fn tool_text(payload: Value, is_error: bool) -> Value {
-    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+    let text = payload.to_string();
     json!({
         "content": [{ "type": "text", "text": text }],
         "isError": is_error
@@ -360,7 +363,7 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_recall",
-            "Hybrid recall (vector + BM25 fused with RRF), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--no-expand] [--include-superseded]",
+            "Hybrid recall (vector + BM25 fused with RRF), scaled slightly by Ebbinghaus retention. The query must be written in English. `score` near 2 means both paths matched, near 1 only one. Every hit carries its full body unless `snippets` is set; then long bodies below the top hit come back clipped with `body_truncated: true`, and cam_mem_show returns the full text. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--no-expand] [--include-superseded] [--snippets]",
             json!({
                 "type": "object",
                 "properties": {
@@ -368,6 +371,7 @@ fn tool_defs() -> Vec<Value> {
                     "limit": { "type": "integer", "minimum": 1, "default": 3 },
                     "expand": { "type": "boolean", "default": true, "description": "Pull in the newest revision of each match, even when it matches neither path. Set false to score the raw fused list." },
                     "include_superseded": { "type": "boolean", "default": false, "description": "Return older revisions as well as the latest one for history or comparison queries." },
+                    "snippets": { "type": "boolean", "default": false, "description": "Clip long bodies below the top hit to snippets marked body_truncated; read one in full with cam_mem_show." },
                     "path": path_prop(),
                     "hash_embed": { "type": "boolean", "description": "Use the test hash embedder instead of model2vec." }
                 },

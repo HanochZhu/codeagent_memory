@@ -186,7 +186,7 @@
     },
     {
       "name": "cam_recall",
-      "description": "Hybrid recall (vector + BM25 fused with RRF), scaled slightly by Ebbinghaus retention. The query must be written in English. `relevance` near 2 means both paths matched, near 1 only one. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--no-expand] [--include-superseded]",
+      "description": "Hybrid recall (vector + BM25 fused with RRF), scaled slightly by Ebbinghaus retention. The query must be written in English. `score` near 2 means both paths matched, near 1 only one. Every hit carries its full body unless `snippets` is set; then long bodies below the top hit come back clipped with `body_truncated: true`, and cam_mem_show returns the full text. By default it pulls in the newest revision and hides superseded revisions. A successful returned match refreshes retention. Equivalent CLI: cam recall \"<query>\" [--limit N] [--no-expand] [--include-superseded] [--snippets]",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -216,6 +216,11 @@
           "query": {
             "description": "One-sentence question written in English. Non-Latin scripts are rejected.",
             "type": "string"
+          },
+          "snippets": {
+            "default": false,
+            "description": "Clip long bodies below the top hit to snippets marked body_truncated; read one in full with cam_mem_show.",
+            "type": "boolean"
           }
         },
         "required": [

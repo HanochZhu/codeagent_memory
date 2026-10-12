@@ -40,7 +40,7 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
 
-Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`). `cam_ls` / `cam_read` / `cam_ref` fail with `not_indexed` when the graph is empty; call `cam_index` once, then retry.
+Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`). Hits carry full bodies by default. With `snippets` / `--snippets`, long bodies below the top hit come back clipped with `body_truncated: true`; `cam_mem_show` one before relying on its details. `cam_ls` / `cam_read` / `cam_ref` fail with `not_indexed` when the graph is empty; call `cam_index` once, then retry.
 
 ### Paste this into the main agent's rules / AGENTS.md
 
@@ -100,7 +100,7 @@ Translate the question to English and recall first. Before reading code, run `ca
 | `cam_ls` | `cam ls [virt_path]` |
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
-| `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]` |
+| `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |

@@ -28,6 +28,7 @@ Prefer the MCP tool when it is available. Do not shell out to `cam` if `cam_*` t
 
 1. **Recall first.** Translate the question to English, then use `cam_recall` (MCP) / `cam recall "<one sentence>"` (CLI).
    - Reuse a hit only when it is `latest` and not `needs_update`.
+   - Hits carry full bodies. Only with `snippets` / `--snippets` do long lower-ranked bodies come back clipped with `body_truncated`; read one with `cam_mem_show` / `cam mem show <id>` before relying on details.
    - `stale` / `needs_update` / no hit → continue.
 2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` (MCP) / `cam index` (CLI) once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
 3. **Walk the graph** on a miss: `ls` → `read` (symbol path) → `ref`.
@@ -56,7 +57,7 @@ Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compa
 
 ## Memory rules
 
-- Recall score is vector + BM25 fused with **RRF**, scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `relevance` is the fused score before retention: about 2 means both paths matched, about 1 means only one did.
+- Recall score is vector + BM25 fused with **RRF**, scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `score` about 2 means both paths matched, about 1 means only one did.
 - `R < 0.3` → `needs_update`; older than `stale_days` (default 30) → `stale`.
 - A successful returned match refreshes retention (`S *= 1.7`); expanded or filtered revisions do not.
 - Memories are never deleted. `parent` may branch; `supersedes` is a linear revision chain whose tail is `latest`.

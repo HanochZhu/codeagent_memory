@@ -28,6 +28,14 @@ const BM25_KEEP: f32 = 0.3;
 /// says how fresh a memory is, not whether it answers the query, so it must
 /// not outweigh a difference in relevance.
 const RETENTION_WEIGHT: f32 = 0.1;
+/// Share of the top hit's relevance a hit needs to keep its full body. RRF is
+/// flat (rank 2 on one list is 0.98 of rank 1), so only near-ties with the top
+/// qualify; the rest return a snippet and are read in full with `mem show`.
+const FULL_BODY_RATIO: f32 = 0.99;
+const SNIPPET_CHARS: usize = 240;
+/// Bodies up to this size stay whole: clipping them saves less than the
+/// `mem show` round trip an agent pays when it needs the rest.
+const CLIP_MIN_CHARS: usize = 4 * SNIPPET_CHARS;
 
 #[derive(Debug, Clone)]
 pub struct RawHit {
@@ -39,22 +47,64 @@ pub struct RawHit {
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallHit {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub supersedes_id: Option<String>,
     pub summary: String,
     pub body: String,
+    /// `body` is a snippet; `mem show <id>` returns the full text.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub body_truncated: bool,
     /// `relevance` scaled by retention; what results are sorted by.
+    #[serde(serialize_with = "round2")]
     pub score: f32,
     /// Fused vector + BM25 score before retention.
+    #[serde(skip)]
     pub relevance: f32,
+    #[serde(skip)]
     pub vec_score: Option<f32>,
+    #[serde(skip)]
     pub bm25_score: Option<f32>,
     pub path: Vec<String>,
     pub stale: bool,
     pub needs_update: bool,
+    #[serde(serialize_with = "round2")]
     pub retention: f64,
     pub latest: bool,
     pub age_days: i64,
+    #[serde(skip)]
     pub updated_at: i64,
+}
+
+fn round2<S: serde::Serializer, T: Copy + Into<f64>>(value: &T, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64(((*value).into() * 100.0).round() / 100.0)
+}
+
+/// `body` clipped to `max` chars with a trailing ellipsis, or `None` when it fits.
+pub fn clip_body(body: &str, max: usize) -> Option<String> {
+    if body.chars().count() <= max {
+        return None;
+    }
+    let clipped: String = body.chars().take(max).collect();
+    Some(format!("{}…", clipped.trim_end()))
+}
+
+/// Keep full bodies only for hits tied with the top one; clip the rest.
+fn clip_lower_bodies(hits: &mut [RecallHit]) {
+    let Some(top) = hits.first().map(|h| h.relevance) else {
+        return;
+    };
+    for hit in hits.iter_mut().skip(1) {
+        if top > 0.0 && hit.relevance >= top * FULL_BODY_RATIO {
+            continue;
+        }
+        if hit.body.chars().count() <= CLIP_MIN_CHARS {
+            continue;
+        }
+        if let Some(snippet) = clip_body(&hit.body, SNIPPET_CHARS) {
+            hit.body = snippet;
+            hit.body_truncated = true;
+        }
+    }
 }
 
 fn merge_hits(hits: &[RawHit]) -> HashMap<String, (Option<f32>, Option<f32>)> {
@@ -130,6 +180,9 @@ pub struct RecallOptions {
     pub expand: bool,
     /// Keep older revisions for history and comparison queries.
     pub include_superseded: bool,
+    /// Clip long bodies below the top hit to snippets. Off by default: agents
+    /// rarely open a snippet, so clipping trades accuracy for tokens.
+    pub snippets: bool,
 }
 
 impl Default for RecallOptions {
@@ -138,6 +191,7 @@ impl Default for RecallOptions {
             limit: 3,
             expand: true,
             include_superseded: false,
+            snippets: false,
         }
     }
 }
@@ -274,6 +328,7 @@ pub fn recall(
             supersedes_id,
             summary,
             body,
+            body_truncated: false,
             path: Vec::new(),
             stale: cfg.is_stale(updated_at),
             needs_update: needs_update(r),
@@ -291,6 +346,9 @@ pub fn recall(
             .then_with(|| a.id.cmp(&b.id))
     });
     hits.truncate(opts.limit.max(1));
+    if opts.snippets {
+        clip_lower_bodies(&mut hits);
+    }
 
     for hit in &mut hits {
         hit.path = breadcrumb(&conn, &hit.id)?;
@@ -845,6 +903,112 @@ mod tests {
         let mut flat = vec![("a".to_string(), 0.0), ("b".into(), 0.0)];
         keep_near_top(&mut flat, 0.3);
         assert_eq!(flat, vec![("a".to_string(), 0.0)]);
+    }
+
+    fn recall_hit(id: &str, relevance: f32, body: &str) -> RecallHit {
+        RecallHit {
+            id: id.into(),
+            supersedes_id: None,
+            summary: format!("{id} summary"),
+            body: body.into(),
+            body_truncated: false,
+            score: relevance,
+            relevance,
+            vec_score: Some(0.5),
+            bm25_score: None,
+            path: Vec::new(),
+            stale: false,
+            needs_update: false,
+            retention: 0.987654,
+            latest: true,
+            age_days: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn only_hits_tied_with_the_top_keep_full_bodies() {
+        let long = "word ".repeat(400);
+        let medium = "word ".repeat(150);
+        let mut hits = vec![
+            recall_hit("top", 2.0, &long),
+            recall_hit("tie", 1.984, &long),
+            recall_hit("lower", 1.968, &long),
+            recall_hit("medium", 1.0, &medium),
+        ];
+        clip_lower_bodies(&mut hits);
+
+        assert!(!hits[0].body_truncated);
+        assert_eq!(hits[0].body, long);
+        assert!(!hits[1].body_truncated, "rank 1 + rank 2 is a near-tie");
+        assert!(hits[2].body_truncated);
+        assert!(hits[2].body.chars().count() <= SNIPPET_CHARS + 1);
+        assert!(hits[2].body.ends_with('…'));
+        assert!(
+            !hits[3].body_truncated,
+            "a body a mem show would cost more than it saves stays whole"
+        );
+    }
+
+    #[test]
+    fn recall_json_drops_debug_scores_and_rounds() {
+        let value = serde_json::to_value(recall_hit("a", 1.9672131, "body")).unwrap();
+        let obj = value.as_object().unwrap();
+        for gone in [
+            "relevance",
+            "vec_score",
+            "bm25_score",
+            "updated_at",
+            "supersedes_id",
+            "body_truncated",
+        ] {
+            assert!(!obj.contains_key(gone), "{gone} in {value}");
+        }
+        assert_eq!(value["score"], 1.97);
+        assert_eq!(value["retention"], 0.99);
+    }
+
+    #[test]
+    fn recall_returns_full_bodies_unless_snippets() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let filler = "unrelated filler text about other topics. ".repeat(40);
+        add(
+            &project,
+            "retry policy backoff",
+            &format!("retry policy backoff jitter {filler}"),
+            None,
+        );
+        add(
+            &project,
+            "retry policy",
+            &format!("retry policy {filler}"),
+            None,
+        );
+        let embedder = HashEmbedder::default();
+        let run = |snippets| {
+            recall(
+                &project,
+                &embedder,
+                "retry policy backoff jitter",
+                RecallOptions {
+                    limit: 5,
+                    snippets,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+
+        let full = run(false);
+        assert_eq!(full.len(), 2, "{full:?}");
+        assert!(full.iter().all(|h| !h.body_truncated), "{full:?}");
+
+        let clipped = run(true);
+        assert!(!clipped[0].body_truncated);
+        assert!(clipped[1].body_truncated, "{clipped:?}");
     }
 
     fn stability_of(conn: &rusqlite::Connection, id: &str) -> f64 {

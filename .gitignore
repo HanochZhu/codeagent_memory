@@ -14,3 +14,5 @@ eval/longmemeval/results/
 eval/agent_retrieval/data/
 eval/agent_retrieval/vendor/
 eval/agent_retrieval/results/
+eval/recall_payload/results/
+.deepseek.env
