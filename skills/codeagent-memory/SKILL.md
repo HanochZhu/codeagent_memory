@@ -18,7 +18,7 @@ The `cam` binary must already be on PATH (`cargo install --git https://github.co
 
 | Caller | Interface |
 | --- | --- |
-| **Main agent** (this session) | MCP tools `cam_index`, `cam_ls`, `cam_read`, `cam_ref`, `cam_recall`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
+| **Main agent** (this session) | MCP tools `cam_index`, `cam_ls`, `cam_read`, `cam_ref`, `cam_find`, `cam_recall`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
 | **Subagent** (Task / explore / delegated) | `cam --json …` in a shell — subagents usually do not get MCP |
 | No MCP wired | Fall back to `cam --json …` |
 
@@ -45,6 +45,7 @@ cam watch [--debounce-ms N]                      # auto-sync on file changes
 cam ls [virt_path]                               # dirs / files / symbols
 cam read <virt_path> [--full]                    # outline, or a symbol body
 cam ref <symbol> --dir in|out                    # one-hop callers / callees
+cam find <query> [--kind KIND] [--limit N]       # symbols whose name contains <query>
 cam recall "<query>" [--limit N] [--include-superseded]
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]
 cam mem tree | cam mem show <id>

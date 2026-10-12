@@ -5,7 +5,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::code::{index_project, ls, read, refs, RefDir, SymbolHints};
+use crate::code::{find, index_project, ls, read, refs, RefDir, SymbolHints};
 use crate::memory::{add_solution, show_solution, solution_tree, Embedder, RecallOptions};
 use crate::ops::{load_embedder, resolve_project_from_strings};
 use crate::project::Project;
@@ -21,8 +21,8 @@ Main agent: call these MCP tools. Do not shell out to `cam` unless a tool is mis
 
 Workflow:
 1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update. A hit with body_truncated (only with snippets) carries a snippet: cam_mem_show it before relying on details.
-2. Before reading code, make sure the graph is indexed: if cam_ls / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
-3. On miss / stale / needs_update: cam_ls → cam_read (prefer symbol paths) → cam_ref.
+2. Before reading code, make sure the graph is indexed: if cam_ls / cam_find / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
+3. On miss / stale / needs_update: cam_find (part of a symbol name) or cam_ls → cam_read (prefer symbol paths) → cam_ref. cam_find matches symbol names only; use your own grep for text inside function bodies.
 4. After you solve it, cam_add with both summary and body written in English. Use supersedes to replace an older revision; parent only sets the structural tree parent.
 
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
@@ -226,6 +226,17 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
             };
             to_json(refs(&project, symbol, dir, hints).map_err(err_str)?)
         }
+        "cam_find" => {
+            let project = project_from(args, ctx)?;
+            let query = required_str(args, "query")?;
+            let hints = SymbolHints {
+                file: arg_str(args, "file"),
+                kind: arg_str(args, "kind"),
+                scope: arg_str(args, "scope"),
+            };
+            let limit = arg_usize(args, "limit").unwrap_or(20);
+            to_json(find(&project, query, hints, limit).map_err(err_str)?)
+        }
         "cam_recall" => {
             let project = project_from(args, ctx)?;
             let query = required_str(args, "query")?;
@@ -356,6 +367,25 @@ fn tool_defs() -> Vec<Value> {
                     "path": path_prop()
                 },
                 "required": ["symbol", "dir"],
+                "additionalProperties": false
+            }),
+            true,
+            true,
+        ),
+        tool(
+            "cam_find",
+            "Find symbols whose name contains a substring (case-insensitive). Exact names rank first, then prefixes, then other matches. Each hit has a virtual `path` and an `id` to pass to cam_read or cam_ref. Matches names only, not text inside bodies. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Part of a symbol name, e.g. recall or parse_ref." },
+                    "kind": { "type": "string", "description": "Keep only this node kind (function, method, struct, class, trait, enum, enum_variant, type_alias)." },
+                    "file": { "type": "string", "description": "Keep only symbols whose file path contains this (case-insensitive)." },
+                    "scope": { "type": "string", "description": "Keep only symbols under this sub-directory, typically a `project` entry from cam_ls." },
+                    "limit": { "type": "integer", "minimum": 1, "default": 20 },
+                    "path": path_prop()
+                },
+                "required": ["query"],
                 "additionalProperties": false
             }),
             true,
@@ -549,8 +579,8 @@ fn get_prompt(params: &Value) -> Result<Value, DispatchError> {
                 "Question: {question}\n\n\
                  Use the cam MCP tools in this order:\n\
                  1. Call cam_recall with this question in English. Reuse a hit when it is latest and not needs_update.\n\
-                 2. If cam_ls, cam_read, or cam_ref says the graph is not indexed, call cam_index once, then retry.\n\
-                 3. On a miss, walk cam_ls, then cam_read (prefer a symbol path), then cam_ref."
+                 2. If cam_ls, cam_find, cam_read, or cam_ref says the graph is not indexed, call cam_index once, then retry.\n\
+                 3. On a miss, locate symbols with cam_find (part of a name) or cam_ls, then cam_read (prefer a symbol path), then cam_ref."
             )
         }
         "remember_solution" => {

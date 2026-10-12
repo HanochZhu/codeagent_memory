@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use cam::code::{
-    clamp_debounce_ms, index_project, ls, read, refs, sync_project, watch_project, Ambiguous,
+    clamp_debounce_ms, find, index_project, ls, read, refs, sync_project, watch_project, Ambiguous,
     ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
 };
 use cam::memory::{add_solution, format_tree, show_solution, solution_tree, RecallOptions};
@@ -78,6 +78,22 @@ enum Command {
         /// Scope to a sub-directory (a nested repo shown as `project` by `cam ls`)
         #[arg(long, value_name = "DIR")]
         scope: Option<String>,
+    },
+    /// Find symbols whose name contains a substring (case-insensitive)
+    Find {
+        /// Part of a symbol name, e.g. `recall` or `parse_ref`
+        query: String,
+        /// Keep only this node kind (function, method, struct, class, trait, enum, ...)
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        /// Keep only symbols whose file path contains this (case-insensitive)
+        #[arg(long, value_name = "SUBSTR")]
+        file: Option<String>,
+        /// Keep only symbols under this sub-directory
+        #[arg(long, value_name = "DIR")]
+        scope: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
     /// Hybrid recall: vector + BM25 fused with RRF
     Recall {
@@ -341,6 +357,37 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                         }
                     }
                     RefOutcome::Ambiguous(ambiguous) => print_ambiguous(&ambiguous),
+                }
+            }
+        }
+        Command::Find {
+            query,
+            kind,
+            file,
+            scope,
+            limit,
+        } => {
+            let project = resolve_project(project_arg)?;
+            let hints = SymbolHints {
+                file: file.as_deref(),
+                kind: kind.as_deref(),
+                scope: scope.as_deref(),
+            };
+            let result = find(&project, &query, hints, limit)?;
+            if json {
+                emit_json(&result, pretty)?;
+            } else if result.hits.is_empty() {
+                emit_text("no symbols");
+            } else {
+                for h in &result.hits {
+                    println!("{:<10} {}  {}-{}", h.kind, h.path, h.start_line, h.end_line);
+                }
+                if result.total_matches > result.hits.len() {
+                    eprintln!(
+                        "(showing {} of {})",
+                        result.hits.len(),
+                        result.total_matches
+                    );
                 }
             }
         }

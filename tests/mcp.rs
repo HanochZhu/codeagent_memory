@@ -459,6 +459,53 @@ fn mcp_ref_ambiguity_is_a_result_not_an_error() {
 }
 
 #[test]
+fn mcp_find_returns_hits_that_read_back() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src/lib.rs"),
+        "pub fn load_config() {}\npub fn reload_config() { load_config(); }\npub struct Config;\n",
+    )
+    .unwrap();
+    let root = dir.path().display().to_string();
+    let mut mcp = McpChild::spawn(None);
+    initialize(&mut mcp);
+
+    let listed = mcp.send(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
+    assert!(
+        listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "cam_find"),
+        "{listed}"
+    );
+
+    call_ok(&mut mcp, 2, "cam_index", json!({ "path": root }));
+    let found = call_ok(
+        &mut mcp,
+        3,
+        "cam_find",
+        json!({ "path": root, "query": "config", "kind": "function", "limit": 1 }),
+    );
+    assert_eq!(found["total_matches"], 2, "{found}");
+    assert_eq!(found["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(found["hits"][0]["path"], "src/lib.rs/load_config");
+
+    let body = call_ok(
+        &mut mcp,
+        4,
+        "cam_read",
+        json!({ "path": root, "virt_path": found["hits"][0]["id"] }),
+    );
+    assert_eq!(body["status"], "ok", "{body}");
+    assert!(body["source"].as_str().unwrap().contains("fn load_config"));
+
+    let missing = call_tool(&mut mcp, 5, "cam_find", json!({ "path": root }));
+    assert_eq!(missing["result"]["isError"], true, "{missing}");
+}
+
+#[test]
 fn mcp_unknown_tool_is_error() {
     let mut mcp = McpChild::spawn(None);
     initialize(&mut mcp);

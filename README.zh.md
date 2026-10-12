@@ -307,7 +307,7 @@ python3 eval/charts/generate.py
 
 探索仓库前先 `recall`；没有命中再读代码图；有需要长期留下的结论再 `add`。
 
-**主 Agent（MCP）：** `cam_recall` → `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。MCP 可用时不要开 shell。全文：[docs/agents.zh.md](docs/agents.zh.md)。
+**主 Agent（MCP）：** `cam_recall` → `cam_find` / `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。MCP 可用时不要开 shell。全文：[docs/agents.zh.md](docs/agents.zh.md)。
 
 **Subagent（CLI）：**
 
@@ -336,6 +336,7 @@ cam sync                                 # 按内容哈希增量更新图
 cam ls [virt_path]                       # 列目录 / 文件 / 符号
 cam read <virt_path> [--full]            # 文件大纲或符号源码
 cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
+cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]   # 按名字子串找符号
 cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]  # 多路召回：向量 + BM25，以 RRF 融合
 cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
 cam mem tree                             # 打印记忆树
@@ -353,6 +354,7 @@ cam mcp                                  # 主 Agent 用的 MCP stdio 服务
 | `cam ls [path]` | 列目录 / 文件 / 符号 |
 | `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
 | `cam ref <symbol> --dir in\|out` | 一跳 callers / callees。多个定义同名时返回 `status: ambiguous` 和按分排序的 `candidates`；用候选 `id` 重查，或用 `--file` / `--kind` / `--scope` 收窄 |
+| `cam find <query>` | 对符号名做不区分大小写的子串搜索（不搜函数体文本）。完全同名在前，其次前缀；每条带虚拟 `path` 和 `id`，可直接交给 `read` / `ref` |
 | `cam recall "<一句英文问题>"` | 向量 + BM25，以 **RRF**（k=60）融合；`--no-expand` 关闭版本扩展；`--include-superseded` 保留历史；`--snippets` 把第一条以外的长正文截成片段（`body_truncated`） |
 | `cam add --summary "..." [--parent ID] [--supersedes ID]` | 写入英文记忆；`parent` 表示结构层级，`supersedes` 表示替代旧修订 |
 | `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |

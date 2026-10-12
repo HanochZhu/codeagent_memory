@@ -129,6 +129,26 @@ impl SymbolHints<'_> {
 
 const MAX_CANDIDATES: usize = 20;
 
+/// One symbol whose name contains the `cam find` query.
+#[derive(Debug, Serialize)]
+pub struct FindHit {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    /// Virtual path to pass to `cam read`; use `id` when a file defines the name twice.
+    pub path: String,
+    pub file_path: String,
+    pub start_line: i64,
+    pub end_line: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FindResult {
+    pub query: String,
+    pub total_matches: usize,
+    pub hits: Vec<FindHit>,
+}
+
 pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
     let conn = project.connect()?;
     ensure_graph(project, &conn)?;
@@ -256,6 +276,76 @@ pub fn refs(
         },
         refs,
     }))
+}
+
+/// Symbols whose name contains `query` (case-insensitive). Every given hint
+/// must match. Exact names rank first (same case before other case), then
+/// prefixes, then other substrings.
+pub fn find(
+    project: &Project,
+    query: &str,
+    hints: SymbolHints<'_>,
+    limit: usize,
+) -> Result<FindResult> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        bail!("query is required");
+    }
+    let conn = project.connect()?;
+    ensure_graph(project, &conn)?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NODE_COLUMNS} FROM nodes
+         WHERE kind != 'file' AND instr(lower(name), lower(?1)) > 0"
+    ))?;
+    let rows = stmt
+        .query_map([needle], node_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let lower = needle.to_lowercase();
+    let mut ranked: Vec<(u8, NodeRow)> = rows
+        .into_iter()
+        .filter(|node| score_candidate(node, hints).1)
+        .map(|node| {
+            let name = node.name.to_lowercase();
+            let tier = if node.name == needle {
+                0
+            } else if name == lower {
+                1
+            } else if name.starts_with(&lower) {
+                2
+            } else {
+                3
+            };
+            (tier, node)
+        })
+        .collect();
+    ranked.sort_by(|(ta, a), (tb, b)| {
+        ta.cmp(tb)
+            .then_with(|| kind_priority(&b.kind).total_cmp(&kind_priority(&a.kind)))
+            .then_with(|| a.name.len().cmp(&b.name.len()))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.start_line.cmp(&b.start_line))
+    });
+
+    let total_matches = ranked.len();
+    let hits = ranked
+        .into_iter()
+        .take(limit.max(1))
+        .map(|(_, node)| FindHit {
+            path: format!("{}/{}", node.file_path, node.name),
+            id: node.id,
+            name: node.name,
+            kind: node.kind,
+            file_path: node.file_path,
+            start_line: node.start_line,
+            end_line: node.end_line,
+        })
+        .collect();
+    Ok(FindResult {
+        query: needle.to_string(),
+        total_matches,
+        hits,
+    })
 }
 
 #[derive(Debug, Clone)]

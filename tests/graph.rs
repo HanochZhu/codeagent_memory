@@ -499,6 +499,106 @@ fn ambiguous_ref_returns_candidates_and_hints_resolve() {
     }
 }
 
+fn write_find_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub struct Parser;\npub fn parse() {}\npub fn parse_ref() {}\npub fn parsexref() {}\npub fn reparse() {}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(root.join("lib/parser.rs"), "pub fn parser() {}\n").unwrap();
+    fs::create_dir_all(root.join("py")).unwrap();
+    fs::write(root.join("py/tool.py"), "def parse_ref():\n    pass\n").unwrap();
+}
+
+#[test]
+fn find_ranks_name_substrings_and_applies_filters() {
+    use cam::code::{find, index_project, read, ReadOutcome, SymbolHints};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_find_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    index_project(&project).unwrap();
+
+    let all = find(&project, "PARSE", SymbolHints::default(), 20).unwrap();
+    let names: Vec<&str> = all.hits.iter().map(|h| h.name.as_str()).collect();
+    assert_eq!(all.total_matches, 7, "{names:?}");
+    // Exact name, then prefixes (type-like kinds first), then inner substrings.
+    assert_eq!(names[0], "parse", "{names:?}");
+    assert_eq!(names[1], "Parser", "{names:?}");
+    assert_eq!(names[6], "reparse", "{names:?}");
+
+    // Same-case exact name beats a differently cased type, despite kind priority.
+    let lower = find(&project, "parser", SymbolHints::default(), 20).unwrap();
+    assert_eq!(lower.hits[0].name, "parser", "{lower:?}");
+    assert_eq!(lower.hits[1].name, "Parser", "{lower:?}");
+
+    // `_` is literal, not a LIKE wildcard.
+    let underscored = find(&project, "parse_ref", SymbolHints::default(), 20).unwrap();
+    assert_eq!(underscored.total_matches, 2, "{underscored:?}");
+    assert!(underscored.hits.iter().all(|h| h.name == "parse_ref"));
+
+    let structs = find(
+        &project,
+        "parse",
+        SymbolHints {
+            kind: Some("struct"),
+            ..SymbolHints::default()
+        },
+        20,
+    )
+    .unwrap();
+    assert_eq!(structs.total_matches, 1);
+    assert_eq!(structs.hits[0].path, "src/lib.rs/Parser");
+
+    let in_py = find(
+        &project,
+        "parse",
+        SymbolHints {
+            file: Some("PY/"),
+            ..SymbolHints::default()
+        },
+        20,
+    )
+    .unwrap();
+    assert_eq!(in_py.total_matches, 1);
+    assert_eq!(in_py.hits[0].file_path, "py/tool.py");
+
+    let limited = find(&project, "parse", SymbolHints::default(), 2).unwrap();
+    assert_eq!(limited.total_matches, 7);
+    assert_eq!(limited.hits.len(), 2);
+
+    assert!(find(&project, "nothing_here", SymbolHints::default(), 20)
+        .unwrap()
+        .hits
+        .is_empty());
+    assert!(find(&project, "  ", SymbolHints::default(), 20).is_err());
+
+    // A hit's virtual path reads straight back as the symbol body.
+    match read(&project, &structs.hits[0].path, false).unwrap() {
+        ReadOutcome::Ok(r) => assert!(r.source.contains("struct Parser"), "{r:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+
+    let cli = cam_json(dir.path(), &["find", "parse_ref", "--scope", "src"]);
+    assert_eq!(cli["total_matches"], 1, "{cli}");
+    assert_eq!(cli["hits"][0]["path"], "src/lib.rs/parse_ref");
+}
+
+#[test]
+fn find_without_index_asks_to_index() {
+    use cam::code::{find, SymbolHints};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_find_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    let err = find(&project, "parse", SymbolHints::default(), 20).unwrap_err();
+    assert!(err.to_string().contains("cam index"), "{err}");
+}
+
 #[test]
 fn ls_marks_nested_repos_and_scope_filters_refs() {
     use cam::code::{index_project, ls, refs, RefDir, RefOutcome, SymbolHints};

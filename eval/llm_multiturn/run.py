@@ -41,6 +41,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DEFAULT_LIFE = dataset("coding_life")
 IDENT_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_]{2,}\b")
+CJK_RE = re.compile(r"[\u3000-\u9fff\uff00-\uffef]")
+LOCATES = ("scan", "find-exact", "find-prefix")
 STOP = {
     "the",
     "and",
@@ -129,7 +131,7 @@ def cam_run(
     stdin: str | None = None,
     json_out: bool = False,
 ) -> str:
-    cmd = [str(cam), "--path", str(root), *args]
+    cmd = [str(cam), "--project", str(root), *args]
     if json_out:
         cmd.insert(1, "--json")
     proc = subprocess.run(
@@ -252,7 +254,24 @@ def _try_cam(cam: Path, root: Path, args: list[str]) -> str:
         return ""
 
 
-def code_cam_context(cam: Path, root: Path, question: str, hash_embed: bool) -> str:
+def find_symbol(cam: Path, root: Path, ident: str, prefix: bool) -> dict | None:
+    """Top `cam find` hit named `ident` (any case), or starting with it when `prefix`."""
+    try:
+        result = cam_json(cam, root, ["find", ident, "--limit", "1"])
+    except Exception:
+        return None
+    hits = (result or {}).get("hits") or []
+    if not hits:
+        return None
+    name, wanted = hits[0]["name"].lower(), ident.lower()
+    if name == wanted or (prefix and name.startswith(wanted)):
+        return hits[0]
+    return None
+
+
+def code_cam_context(
+    cam: Path, root: Path, question: str, hash_embed: bool, locate: str = "scan"
+) -> str:
     chunks: list[str] = []
     extra = ["--hash-embed"] if hash_embed else []
     try:
@@ -262,6 +281,18 @@ def code_cam_context(cam: Path, root: Path, question: str, hash_embed: bool) -> 
         chunks.append(f"## recall\n(error: {exc})")
     rust_files = [str(p.relative_to(root)) for p in sorted((root / "src").rglob("*.rs"))]
     for ident in idents_in(question):
+        if locate.startswith("find"):
+            hit = find_symbol(cam, root, ident, prefix=locate == "find-prefix")
+            if hit is None:
+                continue
+            for dir_ in ("in", "out"):
+                text = _try_cam(cam, root, ["ref", hit["id"], "--dir", dir_])
+                if text:
+                    chunks.append(f"## ref {hit['name']} --dir {dir_}\n{text[:1200]}")
+            body = _try_cam(cam, root, ["read", hit["id"]])
+            if body:
+                chunks.append(f"## read {hit['path']}\n{body[:2000]}")
+            continue
         for dir_ in ("in", "out"):
             text = _try_cam(cam, root, ["ref", ident, "--dir", dir_])
             if text:
@@ -411,19 +442,24 @@ def setup_code(cam: Path, hash_embed: bool) -> tuple[Path, list[dict], str]:
     tmp = Path(tempfile.mkdtemp(prefix="cam-llm-code-"))
     shutil.copytree(REPO / "src", tmp / "src")
     shutil.copy2(REPO / "DESIGN.md", tmp / "DESIGN.md")
-    subprocess.check_call([str(cam), "--path", str(tmp), "index"], cwd=tmp)
+    subprocess.check_call([str(cam), "--project", str(tmp), "index"], cwd=tmp)
     extra = ["--hash-embed"] if hash_embed else []
-    design = (tmp / "DESIGN.md").read_text()
+    # cam stores English memories only; DESIGN.md is Chinese, so remember the agent guide.
+    guide = "\n".join(
+        line
+        for line in (REPO / "docs" / "agents.md").read_text().splitlines()
+        if not CJK_RE.search(line)
+    )
     cam_json(
         cam,
         tmp,
         [
             "add",
             "--summary",
-            "cam design: code graph virtual paths, solution tree, Ebbinghaus, no MCP",
+            "cam agent guide: virtual paths, recall, supersedes revisions, MCP and CLI tools",
             *extra,
         ],
-        stdin=design,
+        stdin=guide,
     )
     return tmp, CODE_QUESTIONS, dump_rust(tmp)
 
@@ -444,8 +480,16 @@ def summarize_pair(full: dict, cam: dict) -> dict:
 
 def main() -> int:
     load_dotenv(REPO / ".env")
+    load_dotenv(REPO / ".deepseek.env")
     p = argparse.ArgumentParser()
     p.add_argument("--track", choices=("solutions", "code", "both"), default="both")
+    p.add_argument(
+        "--locate",
+        choices=(*LOCATES, "all"),
+        default="scan",
+        help="code track: locate symbols by trying every file (scan) or with `cam find`",
+    )
+    p.add_argument("--no-full", action="store_true", help="skip the full-dump arms")
     p.add_argument("--data", type=Path, default=DEFAULT_LIFE)
     p.add_argument("--hash-embed", action="store_true", default=True)
     p.add_argument("--potion", action="store_true", help="use potion embedder instead of hash")
@@ -504,37 +548,43 @@ def main() -> int:
         if args.track in {"code", "both"}:
             root, questions, dump = setup_code(cam, hash_embed)
             tmps.append(root)
-            print("\n== code / full dump ==", flush=True)
-            full = run_conversation(
-                key=key,
-                base=base,
-                model=model,
-                questions=questions,
-                mode="full",
-                system=(
-                    "You answer questions about this codebase. Use only the sources.\n\n"
-                    + dump
-                ),
-                retrieve=lambda q: "",
-            )
-            print("\n== code / cam recall+read+ref ==", flush=True)
-            cam_run_ = run_conversation(
-                key=key,
-                base=base,
-                model=model,
-                questions=questions,
-                mode="cam",
-                system=(
-                    "You answer from retrieved cam recall/read/ref snippets only. "
-                    "If context is missing, say so."
-                ),
-                retrieve=lambda q: code_cam_context(cam, root, q, hash_embed),
-            )
-            tracks["code"] = {
-                "full": full,
-                "cam": cam_run_,
-                "compare": summarize_pair(full, cam_run_),
-            }
+            full = None
+            if not args.no_full:
+                print("\n== code / full dump ==", flush=True)
+                full = run_conversation(
+                    key=key,
+                    base=base,
+                    model=model,
+                    questions=questions,
+                    mode="full",
+                    system=(
+                        "You answer questions about this codebase. Use only the sources.\n\n"
+                        + dump
+                    ),
+                    retrieve=lambda q: "",
+                )
+            locates = LOCATES if args.locate == "all" else (args.locate,)
+            for locate in locates:
+                print(f"\n== code / cam recall+read+ref (locate={locate}) ==", flush=True)
+                cam_run_ = run_conversation(
+                    key=key,
+                    base=base,
+                    model=model,
+                    questions=questions,
+                    mode="cam",
+                    system=(
+                        "You answer from retrieved cam recall/read/ref snippets only. "
+                        "If context is missing, say so."
+                    ),
+                    retrieve=lambda q, locate=locate: code_cam_context(
+                        cam, root, q, hash_embed, locate
+                    ),
+                )
+                name = "code" if len(locates) == 1 else f"code-{locate}"
+                tracks[name] = {"cam": cam_run_}
+                if full is not None:
+                    tracks[name]["full"] = full
+                    tracks[name]["compare"] = summarize_pair(full, cam_run_)
     finally:
         for root in tmps:
             shutil.rmtree(root, ignore_errors=True)
@@ -543,7 +593,17 @@ def main() -> int:
         "model": model,
         "resolved_model": ping["raw_model"],
         "embedder": "hash" if hash_embed else "potion-multilingual-128M",
-        "tracks": {name: {"compare": t["compare"], "full": {k: v for k, v in t["full"].items() if k != "rows"}, "cam": {k: v for k, v in t["cam"].items() if k != "rows"}} for name, t in tracks.items()},
+        "tracks": {
+            name: {
+                part: (
+                    value
+                    if part == "compare"
+                    else {k: v for k, v in value.items() if k != "rows"}
+                )
+                for part, value in t.items()
+            }
+            for name, t in tracks.items()
+        },
     }
     stamp = time.strftime("%Y%m%d-%H%M%S")
     payload = {"summary": summary, "tracks": tracks}
