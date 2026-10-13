@@ -1,6 +1,6 @@
 {
   "name": "codeagent-memory",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Local code graph and solution memory for coding agents. Surgical reads and recall over a project through the cam CLI and MCP server.",
   "author": {
     "name": "HanochZhu"

@@ -111,8 +111,8 @@ cargo install --path . --locked
 No Rust toolchain required. Pull the published image and run the stdio server with the current directory mounted at `/work`:
 
 ```bash
-docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.2
-docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.2
+docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.3
+docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.3
 ```
 
 Or build it from this repository: `docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
