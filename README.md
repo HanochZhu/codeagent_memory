@@ -319,7 +319,7 @@ cam --json index
 cam --json sync
 cam --json watch
 cam --json ls src/
-cam --json read src/memory/recall.rs/fuse_rrf
+cam --json read src/memory/recall/fuse.rs/fuse_rrf
 cam --json ref fuse_rrf --dir in
 cam --json recall "how to fuse BM25 and vector recall"
 cam --json add --summary "..." --body "..."

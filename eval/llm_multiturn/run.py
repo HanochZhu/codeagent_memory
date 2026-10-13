@@ -80,7 +80,7 @@ CODE_QUESTIONS = [
         "id": "c-002",
         "type": "callers",
         "question": "Which production function calls fuse_rrf?",
-        "answer": "recall() in src/memory/recall.rs (tests in the same file also call it).",
+        "answer": "recall() in src/memory/recall/mod.rs (tests in recall/fuse.rs also call it).",
     },
     {
         "id": "c-003",
@@ -103,8 +103,8 @@ CODE_QUESTIONS = [
     {
         "id": "c-006",
         "type": "followup",
-        "question": "What is the virtual path src/memory/recall.rs/fuse_rrf compared to src/memory/recall.rs?",
-        "answer": "src/memory/recall.rs is the file; src/memory/recall.rs/fuse_rrf is the symbol inside that file.",
+        "question": "What is the virtual path src/memory/recall/fuse.rs/fuse_rrf compared to src/memory/recall/fuse.rs?",
+        "answer": "src/memory/recall/fuse.rs is the file; src/memory/recall/fuse.rs/fuse_rrf is the symbol inside that file.",
     },
 ]
 

@@ -66,7 +66,7 @@ Task / explore / `claude -p` / Codex exec / Copilot CLI 脚本里的 subagent **
 ```bash
 cam --json --project <project> recall "how does hybrid recall fuse BM25 and vectors"
 cam --json --project <project> ls src/
-cam --json --project <project> read src/memory/recall.rs/fuse_rrf
+cam --json --project <project> read src/memory/recall/fuse.rs/fuse_rrf
 cam --json --project <project> ref fuse_rrf --dir in
 cam --json --project <project> add --summary "..." --file notes.md
 cam --json --project <project> add --summary "..." --supersedes <old-id> --file notes.md
