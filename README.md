@@ -204,13 +204,14 @@ Hash embedder, 2026-09-29. Separating structural hierarchy from revision replace
 
 ### Long-term memory — LongMemEval-S
 
-Cleaned LongMemEval-S, 100 non-abstention questions sampled with seed 42. Each raw dated session is stored as one memory; retrieval uses hash embeddings + RRF at k=10, without an LLM reader.
+Cleaned LongMemEval-S, 100 non-abstention questions sampled with seed 42. Each dated session is stored as one memory. Letters and marks outside the Latin script are replaced with spaces, because cam rejects them. Retrieval fuses the embedder with BM25 using RRF at k=10, without an LLM reader. `hash` is the offline test embedder. `potion-multilingual-128M` is the default model.
 
-| R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
-|---:|---:|---:|---:|---:|---:|---:|
-| 0.260 | 0.512 | **0.652** | 0.420 | 0.670 | **0.810** | 0.527 |
+| embedder | R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| hash | 0.382 | 0.803 | 0.922 | 0.580 | 0.910 | 0.970 | 0.718 |
+| **potion-multilingual-128M** | **0.474** | **0.909** | **0.952** | **0.740** | **0.980** | **0.990** | **0.840** |
 
-MRR = Mean Reciprocal Rank. Under the 8-worker run, retrieval P50 / P95 was 1.28 / 2.18 s and mean per-question ingestion was 69.6 s. This is a retrieval-only result: it measures whether gold sessions are returned, not final answer quality. The run also exposed repeated tokenizer initialization during `cam add` as the dominant ingestion cost.
+MRR = Mean Reciprocal Rank. Hash, debug binary, 8 workers: retrieval P50 / P95 was 24.1 / 35.5 ms and mean per-question ingestion was 1.35 s. Potion, release binary, 8 workers: retrieval P50 / P95 was 1.12 / 1.34 s and mean per-question ingestion was 56.6 s. This is a retrieval-only result: it measures whether gold sessions are returned, not final answer quality.
 
 ### Workflow retrieval — Agent Retrieval Bench V2
 
@@ -218,25 +219,25 @@ MRR = Mean Reciprocal Rank. Under the 8-worker run, retrieval P50 / P95 was 1.28
 
 | system | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
 |---|---:|---:|---:|---:|---:|
-| **cam graph** | 0.292 | 0.320 | 0.364 | **0.291** | 0.292 |
+| **cam graph** | 0.300 | 0.335 | 0.378 | **0.297** | 0.300 |
 | lexical | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
 | BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
 
-BCY = Budgeted Context Yield, using the benchmark's canonical 8K-token file-packing protocol. cam graph has the best first-hit rank, while lexical retrieval has much better broad gold coverage; this points to rank fusion rather than graph-only retrieval. cam query P95 was 11.6 ms; indexing the 44 snapshots took 327.6 s with 8 workers.
+BCY = Budgeted Context Yield, using the benchmark's canonical 8K-token file-packing protocol. cam graph has the best first-hit rank, while lexical retrieval has much better broad gold coverage; this points to rank fusion rather than graph-only retrieval. cam query P95 was 7.3 ms; indexing the 44 snapshots took 200.2 s with 8 workers.
 
 ### Code graph — LongMemCode clap
 
-clap v4.6.1, 536 scenarios, no LLM. cam one-hop vs codegraph on the same SCIP gold.
+clap v4.6.1, 536 scenarios, no LLM. cam one-hop vs codegraph 0.9.6 on the same SCIP gold.
 
 | slice | n | cam | codegraph |
 |---|---:|---:|---:|
-| supported (one-hop) | 478 | **0.769** | 0.769 |
+| supported (one-hop) | 478 | **0.769** | 0.768 |
 | lookup / file_symbols | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
-| callers / callees | 67 / 18 | **0.397** / **0.811** | 0.379 / 0.811 |
+| callers / callees | 67 / 18 | **0.397** / 0.811 | 0.355 / **0.867** |
 | implementors | 40 | **0.119** | 0.094 |
-| raw / weighted | 536 | 0.709 / **0.704** | — / 0.702 |
+| raw / weighted | 536 | 0.709 / **0.704** | 0.704 / 0.700 |
 
-P95 ≈ 6.5 ms, `$/1k` = 0.
+P95 ≈ 5.2 ms, `$/1k` = 0.
 
 ![LongMemCode clap accuracy bars](eval/charts/code-graph-bars.svg)
 
@@ -244,25 +245,26 @@ P95 ≈ 6.5 ms, `$/1k` = 0.
 
 ### Multi-turn tokens — DeepSeek
 
-Same conversation twice: dump every session / every `src/*.rs` file, or inject `cam recall` (plus `read` / `ref` on code) for the current turn only. Hash embedder, 2026-09-15.
+Same conversation twice: dump every session / every `src/*.rs` file, or inject `cam recall` (plus `read` / `ref` on code) for the current turn only. Hash embedder, deepseek-flash, 2026-10-13.
 
 | track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
 |---|---:|---:|---:|---:|---:|---:|
-| memory (coding-agent-life) | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
-| code (this repo after `cam index`) | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
+| memory (coding-agent-life) | 15 | 1.00 | 0.87 | 22796 | 9904 | **57%** |
+| code (this repo after `cam index`) | 6 | 0.83 | 0.33 | 379066 | 6342 | **98%** |
 
 ![DeepSeek multi-turn prompt token bars](eval/charts/multiturn-bars.svg)
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
-Mean prompt tokens / turn: memory 1521 → 838; code 28250 → 1004. Code misses were retrieval gaps (callers of the fusion helper, `INITIAL_STABILITY_DAYS`, the `cam add` update rule), not the model ignoring snippets.
+Mean prompt tokens / turn: memory 1471 → 616; code 63076 → 1000. Code cam misses were retrieval gaps (callers of `fuse_rrf`, Chinese handling in `tokenize_for_fts`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule). The full code dump missed the Chinese-tokenization question; that gold still expects segmentation the function no longer does. Memory cam missed q-002 and q-013.
 
 Corpus locations for every script below live in one file, [eval/datasets.toml](eval/datasets.toml). `coding-agent-life-v1` is not redistributed here and defaults to an `agentmemory` checkout next to this repository; point the entry elsewhere, or override a single run with `CAM_EVAL_CODING_LIFE`.
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
 python3 eval/coding_life/run.py --hash-embed              # RRF
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench
 python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench

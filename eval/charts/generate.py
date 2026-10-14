@@ -216,53 +216,73 @@ def bar_chart(
     path.write_text("\n".join(parts) + "\n")
 
 
+def newest(pattern: str) -> Path | None:
+    paths = sorted(EVAL.glob(pattern), key=lambda path: path.stat().st_mtime)
+    return paths[-1] if paths else None
+
+
+def latest_multiturn() -> Path | None:
+    """Newest run that scored both the memory track and the code track."""
+    for path in sorted(
+        (EVAL / "llm_multiturn" / "results").glob("llm-multiturn-*.json"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    ):
+        tracks = json.loads(path.read_text())["summary"]["tracks"]
+        if "solutions" in tracks and "code" in tracks:
+            return path
+    return None
+
+
 def main() -> None:
     life = latest_life()
-    grep = life["grep"]
-    cam_sum = life["cam-sum"]
-    cam_rrf = life["cam-rrf"]
     labels = [short for _, short in TYPE_ORDER]
-
-    bar_chart(
-        HERE / "solution-headline.svg",
-        title="coding-agent-life-v1 · headline R@5 and P@5 / ceiling",
-        labels=["grep", "cam sum", "cam RRF", "agentmemory"],
-        series=[
-            ("R@5", BLUE, [grep["summary"]["R@k"], cam_sum["summary"]["R@k"], cam_rrf["summary"]["R@k"], HYBRID_R]),
-            (
-                "P@5 / ceiling",
-                ORANGE,
-                [
-                    grep["summary"]["P@k"] / 0.24,
-                    cam_sum["summary"]["P@k"] / 0.24,
-                    cam_rrf["summary"]["P@k"] / 0.24,
-                    HYBRID_P / 0.24,
-                ],
-            ),
-        ],
-        y_max=1.0,
-        y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
-    )
-    line_chart(
-        HERE / "solution-recall.svg",
-        title="coding-agent-life-v1 · R@5 by question type",
-        labels=labels,
-        series=[
-            ("grep", SLATE, r_by_type(grep), ""),
-            ("cam sum", BLUE_LIGHT, r_by_type(cam_sum), ""),
-            ("agentmemory hybrid", GREEN, [HYBRID_BY_TYPE[k] for k, _ in TYPE_ORDER], "6 4"),
-            ("cam RRF", BLUE, r_by_type(cam_rrf), ""),
-        ],
-        y_max=1.0,
-        y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
-    )
-
-    # results/ is gitignored, so a checkout that only re-ran the memory bench
-    # has none of these. Redraw what the data supports instead of failing.
     skipped = []
-    cam_path = EVAL / "longmemcode" / "results" / "cam-clap-20260915-214803.json"
-    cg_path = EVAL / "longmemcode" / "results" / "codegraph-clap-20260914-222758.json"
-    if cam_path.exists() and cg_path.exists():
+    if {"grep", "cam-sum", "cam-rrf"} <= life.keys():
+        grep = life["grep"]
+        cam_sum = life["cam-sum"]
+        cam_rrf = life["cam-rrf"]
+        bar_chart(
+            HERE / "solution-headline.svg",
+            title="coding-agent-life-v1 · headline R@5 and P@5 / ceiling",
+            labels=["grep", "cam sum", "cam RRF", "agentmemory"],
+            series=[
+                ("R@5", BLUE, [grep["summary"]["R@k"], cam_sum["summary"]["R@k"], cam_rrf["summary"]["R@k"], HYBRID_R]),
+                (
+                    "P@5 / ceiling",
+                    ORANGE,
+                    [
+                        grep["summary"]["P@k"] / 0.24,
+                        cam_sum["summary"]["P@k"] / 0.24,
+                        cam_rrf["summary"]["P@k"] / 0.24,
+                        HYBRID_P / 0.24,
+                    ],
+                ),
+            ],
+            y_max=1.0,
+            y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
+        )
+        line_chart(
+            HERE / "solution-recall.svg",
+            title="coding-agent-life-v1 · R@5 by question type",
+            labels=labels,
+            series=[
+                ("grep", SLATE, r_by_type(grep), ""),
+                ("cam sum", BLUE_LIGHT, r_by_type(cam_sum), ""),
+                ("agentmemory hybrid", GREEN, [HYBRID_BY_TYPE[k] for k, _ in TYPE_ORDER], "6 4"),
+                ("cam RRF", BLUE, r_by_type(cam_rrf), ""),
+            ],
+            y_max=1.0,
+            y_ticks=[0.0, 0.25, 0.5, 0.75, 1.0],
+        )
+    else:
+        skipped.append("coding-agent-life (needs grep, cam-sum, and cam-rrf)")
+
+    # results/ is gitignored, so a checkout that only re-ran one bench
+    # has none of these. Redraw what the data supports instead of failing.
+    cam_path = newest("longmemcode/results/cam-clap-*.json")
+    cg_path = newest("longmemcode/results/codegraph-clap-*.json")
+    if cam_path is not None and cg_path is not None:
         cam_ops = load_op(cam_path, "cam")
         cg_ops = load_op(cg_path, "codegraph")
         bar_chart(
@@ -290,11 +310,19 @@ def main() -> None:
     else:
         skipped.append("code-graph (eval/longmemcode/results)")
 
-    llm_path = EVAL / "llm_multiturn" / "results" / "llm-multiturn-20260915-235953.json"
-    if llm_path.exists():
+    llm_path = latest_multiturn()
+    if llm_path is not None:
         tracks = json.loads(llm_path.read_text())["summary"]["tracks"]
         sol = tracks["solutions"]["compare"]
         code = tracks["code"]["compare"]
+        peak = max(
+            sol["full_tokens"],
+            sol["cam_tokens"],
+            code["full_tokens"],
+            code["cam_tokens"],
+        )
+        y_max = max(180_000, ((int(peak) // 100_000) + 1) * 100_000)
+        y_ticks = [y_max * i // 4 for i in range(5)]
         bar_chart(
             HERE / "multiturn-bars.svg",
             title="DeepSeek multi-turn · prompt tokens",
@@ -303,8 +331,8 @@ def main() -> None:
                 ("full dump", GRAY, [sol["full_tokens"], code["full_tokens"]]),
                 ("cam retrieve", BLUE, [sol["cam_tokens"], code["cam_tokens"]]),
             ],
-            y_max=180000,
-            y_ticks=[0, 45000, 90000, 135000, 180000],
+            y_max=y_max,
+            y_ticks=y_ticks,
             y_fmt="{:,.0f}",
             value_fmt="{:,.0f}",
             width=560,
@@ -317,8 +345,8 @@ def main() -> None:
                 ("full dump", GRAY, [sol["full_tokens"], code["full_tokens"]], ""),
                 ("cam retrieve", BLUE, [sol["cam_tokens"], code["cam_tokens"]], ""),
             ],
-            y_max=180000,
-            y_ticks=[0, 45000, 90000, 135000, 180000],
+            y_max=y_max,
+            y_ticks=y_ticks,
             y_fmt="{:,.0f}",
             width=560,
             height=300,

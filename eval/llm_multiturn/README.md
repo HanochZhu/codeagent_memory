@@ -13,16 +13,16 @@ python3 eval/llm_multiturn/run.py --track code
 
 Thinking mode is disabled so CoT does not eat `max_tokens`.
 
-deepseek-flash, hash embedder, 2026-09-15:
+deepseek-flash, hash embedder, 2026-10-13:
 
 | track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
 |---|---:|---:|---:|---:|---:|---:|
-| solutions (coding-agent-life-v1) | 15 | 1.00 | 1.00 | 23673 | 13255 | 44% |
-| code (this repo after `cam index`) | 6 | 1.00 | 0.50 | 169838 | 6432 | 96% |
+| solutions (coding-agent-life-v1) | 15 | 1.00 | 0.87 | 22796 | 9904 | 57% |
+| code (this repo after `cam index`) | 6 | 0.83 | 0.33 | 379066 | 6342 | 98% |
 
-Mean prompt tokens / turn: solutions 1521 → 838; code 28250 → 1004.
+Mean prompt tokens / turn: solutions 1471 → 616; code 63076 → 1000.
 
-Code misses (cam): callers of the fusion helper not in the snippet; `retention` body without `INITIAL_STABILITY_DAYS = 7`; DESIGN.md recall missed the memory update command.
+Code misses (cam): callers of `fuse_rrf`; what `tokenize_for_fts` does for Chinese; `retention` body without `INITIAL_STABILITY_DAYS = 7`; the `cam add` update rule. The full dump also missed the Chinese-tokenization question, whose gold still expects segmentation the function no longer does. Memory cam missed q-002 and q-013.
 
 ## Locating symbols: scan vs `cam find`
 
@@ -32,12 +32,12 @@ python3 eval/llm_multiturn/run.py --track code --locate all --no-full
 
 `--locate` sets how the code arm finds each identifier from the question before `ref` / `read`. `scan` tries `read <file>/<ident>` on every `src/**/*.rs` file. `find-exact` takes the top `cam find` hit whose name equals the identifier in any case. `find-prefix` also accepts a name that only starts with it. The design memory is now `docs/agents.md`, because cam stores English memories only and DESIGN.md is Chinese, so these runs are not comparable with the table above.
 
-deepseek-flash, hash embedder, 2026-10-12, three runs each:
+deepseek-flash, hash embedder, three runs on 2026-10-13. Context-build ranges are from 2026-10-12; this rerun did not log them.
 
 | locate | correct of 6 (runs) | mean prompt tokens / turn | context build / question |
 |---|---|---:|---:|
-| scan | 2, 2, 2 | 1001 | 450–1100 ms |
-| find-exact | 4, 4, 3 | 1052 | 50–100 ms |
-| find-prefix | 3, 3, 3 | 1172 | 50–100 ms |
+| scan | 3, 2, 2 | 997 | 450–1100 ms |
+| find-exact | 3, 4, 4 | 1043 | 50–100 ms |
+| find-prefix | 2, 3, 3 | 1172 | 50–100 ms |
 
-Most of the accuracy gap is not better code. On c-002 both arms retrieve the same `ref fuse_rrf --dir in` listing `recall`; find-exact only adds an empty `Calls` enum chunk, yet scan answers "not in context" every run. On c-005, find-exact adds the `Cli` struct and the judge accepts a vague answer. Prefix matching pulls in loosely related symbols for English words (`initial` → `initialize_result`, `memory` → `memory_tree_resource`) and costs about 17% more prompt tokens. c-003's gold is outdated: `tokenize_for_fts` no longer segments Chinese.
+Most of the accuracy gap is not better code. On c-002 both arms retrieve the same `ref fuse_rrf --dir in` listing `recall`; find-exact only adds an empty `Calls` enum chunk, yet scan misses every run. On c-005, find-exact is accepted on two of the three runs. Prefix matching pulls in loosely related symbols for English words (`initial` → `initialize_result`, `memory` → `memory_tree_resource`) and costs about 18% more prompt tokens. c-003's gold is outdated: `tokenize_for_fts` no longer segments Chinese.

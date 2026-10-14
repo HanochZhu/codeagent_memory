@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -49,9 +50,18 @@ def download(url: str, dest: Path) -> None:
     partial.replace(dest)
 
 
+POTION_MODEL = "minishlab/potion-multilingual-128M"
+
+
 class CamMcp:
-    def __init__(self, executable: Path, project: Path) -> None:
-        env = {**os.environ, "CAM_HASH_EMBED": "1"}
+    def __init__(self, executable: Path, project: Path, hash_embed: bool) -> None:
+        env = os.environ.copy()
+        if hash_embed:
+            env["CAM_HASH_EMBED"] = "1"
+        else:
+            env.pop("CAM_HASH_EMBED", None)
+            env["CAM_EMBED_MODEL"] = POTION_MODEL
+            env["CAM_REQUIRE_MODEL2VEC"] = "1"
         self.next_id = 1
         self.process = subprocess.Popen(
             [str(executable), "mcp", "--project", str(project)],
@@ -137,6 +147,22 @@ class CamMcp:
         self.process.stdin.flush()
 
 
+def without_non_latin_letters(text: str) -> str:
+    """Replace letters and marks cam will reject. Latin text stays put.
+
+    Python ``str.isalpha`` misses some marks Rust treats as alphabetic
+    (for example Hebrew points), so this keys off the general category.
+    """
+    kept = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat[0] in {"L", "M"} and not unicodedata.name(ch, "").startswith("LATIN"):
+            kept.append(" ")
+        else:
+            kept.append(ch)
+    return "".join(kept)
+
+
 def session_body(session_id: str, date: str, turns: list[dict]) -> str:
     lines = [f"SESSION_ID: {session_id}", f"DATE: {date}"]
     lines.extend(
@@ -167,24 +193,30 @@ def evaluate_instance(
     index: int,
     total: int,
     k: int,
+    hash_embed: bool,
 ) -> dict:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="cam-longmemeval-") as tmp:
-        with CamMcp(executable, Path(tmp)) as cam:
+        with CamMcp(executable, Path(tmp), hash_embed) as cam:
             for session_id, date, turns in zip(
                 instance["haystack_session_ids"],
                 instance["haystack_dates"],
                 instance["haystack_sessions"],
                 strict=True,
             ):
-                cam.call(
-                    "cam_add",
-                    {
-                        "summary": f"Session {session_id} at {date}",
-                        "body": session_body(session_id, date, turns),
-                        "hash_embed": True,
-                    },
-                )
+                body = session_body(session_id, date, turns)
+                payload = {
+                    "summary": f"Session {session_id} at {date}",
+                    "body": body,
+                    "hash_embed": hash_embed,
+                }
+                try:
+                    cam.call("cam_add", payload)
+                except RuntimeError as exc:
+                    if "must be written in English" not in str(exc):
+                        raise
+                    payload["body"] = without_non_latin_letters(body)
+                    cam.call("cam_add", payload)
             ingestion_ms = (time.perf_counter() - started) * 1000
             recall_started = time.perf_counter()
             hits = cam.call(
@@ -192,7 +224,7 @@ def evaluate_instance(
                 {
                     "query": instance["question"],
                     "limit": k,
-                    "hash_embed": True,
+                    "hash_embed": hash_embed,
                 },
             )
             recall_ms = (time.perf_counter() - recall_started) * 1000
@@ -237,8 +269,8 @@ def aggregate(rows: list[dict], args: argparse.Namespace, data_sha256: str) -> d
         "sample_seed": args.seed,
         "k": args.k,
         "adapter": "cam",
-        "embedder": "hash",
-        "ingestion": "one raw session per memory",
+        "embedder": "hash" if args.hash_embed else POTION_MODEL,
+        "ingestion": "one session per memory; non-Latin letters and marks replaced with spaces",
         "MRR": statistics.mean(
             1 / row["gold_rank"] if row["gold_rank"] else 0 for row in rows
         ),
@@ -276,7 +308,13 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--potion",
+        action="store_true",
+        help=f"embed with {POTION_MODEL} instead of the hash embedder",
+    )
     args = parser.parse_args()
+    args.hash_embed = not args.potion
 
     download(DATA_URL, args.data)
     data_bytes = args.data.read_bytes()
@@ -302,6 +340,7 @@ def main() -> int:
                 index,
                 len(selected),
                 args.k,
+                args.hash_embed,
             ): index
             for index, instance in enumerate(selected, 1)
         }
@@ -314,7 +353,8 @@ def main() -> int:
     output_dir = HERE / "results"
     output_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    output_path = output_dir / f"cam-longmemeval-s-{stamp}.json"
+    tag = "hash" if args.hash_embed else "potion"
+    output_path = output_dir / f"cam-longmemeval-s-{tag}-{stamp}.json"
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     print(f"result: {output_path}")

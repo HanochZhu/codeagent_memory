@@ -202,13 +202,14 @@ hash embedder，2026-09-29。结构层级与版本替代分离、旧修订在 to
 
 ### 长期记忆 — LongMemEval-S
 
-使用清洗版 LongMemEval-S，以固定种子 42 抽取 100 个非拒答问题。每个带日期的原始会话存成一条记忆；检索使用 hash 向量 + RRF，k=10，不接大语言模型 reader。
+使用清洗版 LongMemEval-S，以固定种子 42 抽取 100 个非拒答问题。每个带日期的会话存成一条记忆；拉丁字母以外的字母和记号会换成空格，因为 cam 会拒绝它们。检索把嵌入器和 BM25 用 RRF 融合，k=10，不接大语言模型 reader。`hash` 是离线测试嵌入器，`potion-multilingual-128M` 是默认模型。
 
-| R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
-|---:|---:|---:|---:|---:|---:|---:|
-| 0.260 | 0.512 | **0.652** | 0.420 | 0.670 | **0.810** | 0.527 |
+| 嵌入器 | R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| hash | 0.382 | 0.803 | 0.922 | 0.580 | 0.910 | 0.970 | 0.718 |
+| **potion-multilingual-128M** | **0.474** | **0.909** | **0.952** | **0.740** | **0.980** | **0.990** | **0.840** |
 
-MRR = Mean Reciprocal Rank（平均倒数排名）。8 worker 并发运行时，召回 P50 / P95 为 1.28 / 2.18 秒，每题平均入库 69.6 秒。这是纯检索结果：只衡量 gold 会话能否被召回，不衡量最终回答质量。运行同时暴露了 `cam add` 反复初始化分词器是入库的主要耗时。
+MRR = Mean Reciprocal Rank（平均倒数排名）。hash、debug 二进制、8 worker：召回 P50 / P95 为 24.1 / 35.5 ms，每题平均入库 1.35 秒。potion、release 二进制、8 worker：召回 P50 / P95 为 1.12 / 1.34 秒，每题平均入库 56.6 秒。这是纯检索结果：只衡量 gold 会话能否被召回，不衡量最终回答质量。
 
 ### 工作流检索 — Agent Retrieval Bench V2
 
@@ -216,25 +217,25 @@ MRR = Mean Reciprocal Rank（平均倒数排名）。8 worker 并发运行时，
 
 | 系统 | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
 |---|---:|---:|---:|---:|---:|
-| **cam 图邻居** | 0.292 | 0.320 | 0.364 | **0.291** | 0.292 |
+| **cam 图邻居** | 0.300 | 0.335 | 0.378 | **0.297** | 0.300 |
 | 词法检索 | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
 | BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
 
-BCY = Budgeted Context Yield（预算内上下文命中率），按基准官方的 8K Token 文件装箱协议计算。cam 图邻居的首个命中排名最好，但词法检索的 gold 覆盖明显更高；结果指向图与词法融合，而不是单独使用图检索。cam 查询 P95 为 11.6 ms；8 worker 建立 44 个快照索引耗时 327.6 秒。
+BCY = Budgeted Context Yield（预算内上下文命中率），按基准官方的 8K Token 文件装箱协议计算。cam 图邻居的首个命中排名最好，但词法检索的 gold 覆盖明显更高；结果指向图与词法融合，而不是单独使用图检索。cam 查询 P95 为 7.3 ms；8 worker 建立 44 个快照索引耗时 200.2 秒。
 
 ### 代码图 — LongMemCode clap
 
-clap v4.6.1，536 题，无 LLM。cam 一跳 vs codegraph，同一套 SCIP gold。
+clap v4.6.1，536 题，无 LLM。cam 一跳 vs codegraph 0.9.6，同一套 SCIP gold。
 
 | 切片 | n | cam | codegraph |
 |---|---:|---:|---:|
-| supported（一跳） | 478 | **0.769** | 0.769 |
+| supported（一跳） | 478 | **0.769** | 0.768 |
 | lookup / file_symbols | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
-| callers / callees | 67 / 18 | **0.397** / **0.811** | 0.379 / 0.811 |
+| callers / callees | 67 / 18 | **0.397** / 0.811 | 0.355 / **0.867** |
 | implementors | 40 | **0.119** | 0.094 |
-| raw / weighted | 536 | 0.709 / **0.704** | — / 0.702 |
+| raw / weighted | 536 | 0.709 / **0.704** | 0.704 / 0.700 |
 
-P95 ≈ 6.5 ms，`$/1k` = 0。
+P95 ≈ 5.2 ms，`$/1k` = 0。
 
 ![LongMemCode clap 正确率柱状图](eval/charts/code-graph-bars.svg)
 
@@ -242,25 +243,26 @@ P95 ≈ 6.5 ms，`$/1k` = 0。
 
 ### 多轮 token — DeepSeek
 
-同一段对话跑两遍：系统提示里塞进全部 session / 全部 `src/*.rs`，或每轮只注入 `cam recall`（代码再加 `read` / `ref`）。hash embedder，2026-09-15。
+同一段对话跑两遍：系统提示里塞进全部 session / 全部 `src/*.rs`，或每轮只注入 `cam recall`（代码再加 `read` / `ref`）。hash embedder，deepseek-flash，2026-10-13。
 
 | 线 | n | full 正确率 | cam 正确率 | full token | cam token | 节省 |
 |---|---:|---:|---:|---:|---:|---:|
-| 记忆（coding-agent-life） | 15 | 1.00 | **1.00** | 23673 | 13255 | **44%** |
-| 代码（本仓 `cam index`） | 6 | 1.00 | 0.50 | 169838 | 6432 | **96%** |
+| 记忆（coding-agent-life） | 15 | 1.00 | 0.87 | 22796 | 9904 | **57%** |
+| 代码（本仓 `cam index`） | 6 | 0.83 | 0.33 | 379066 | 6342 | **98%** |
 
 ![DeepSeek 多轮 prompt token 柱状图](eval/charts/multiturn-bars.svg)
 
 ![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
 
-平均每轮 prompt：记忆 1521 → 838；代码 28250 → 1004。代码线 miss 是检索缺口（融合函数的 callers、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则），不是模型没用片段。
+平均每轮 prompt：记忆 1471 → 616；代码 63076 → 1000。代码线 cam miss 是检索缺口（`fuse_rrf` 的 callers、`tokenize_for_fts` 对中文的处理、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则）。全量代码 dump 漏了中文分词那一题；gold 仍要求函数已经不再做的切分。记忆线 cam 漏了 q-002 和 q-013。
 
 下面所有脚本的语料位置都集中在一个文件 [eval/datasets.toml](eval/datasets.toml)。`coding-agent-life-v1` 不随仓库分发，默认指向与本仓库同级的 `agentmemory` 检出；改这个条目即可换位置，临时换一次用 `CAM_EVAL_CODING_LIFE` 覆盖。
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
 python3 eval/coding_life/run.py --hash-embed              # RRF
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench
 python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench

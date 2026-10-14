@@ -96,12 +96,11 @@ def index_corpus(backend: str, corpus: Path) -> None:
         bin_ = codegraph_bin()
         marker = corpus / ".codegraph"
         if not marker.exists():
-            subprocess.check_call([bin_, "init", "-y", str(corpus)], cwd=corpus)
-        else:
-            subprocess.check_call([bin_, "index", str(corpus)], cwd=corpus)
+            subprocess.check_call([bin_, "init", str(corpus)], cwd=corpus)
+        subprocess.check_call([bin_, "index", str(corpus)], cwd=corpus)
         return
     cam = cam_bin()
-    subprocess.check_call([str(cam), "--path", str(corpus), "index"], cwd=corpus)
+    subprocess.check_call([str(cam), "--project", str(corpus), "index"], cwd=corpus)
 
 
 def graph_db(backend: str, corpus: Path) -> Path:
