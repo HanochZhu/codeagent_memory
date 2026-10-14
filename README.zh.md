@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="cam logo" width="128" height="128">
+
 # cam
 
 [English](README.md) · [中文](README.zh.md)
@@ -33,40 +35,67 @@
 
 - [为什么需要 cam？](#为什么需要-cam)
 - [开始](#开始)
-- [评测](#评测)
 - [能力](#能力)
 - [原理](#原理)
 - [Agent 怎么用](#agent-怎么用)
 - [命令一览](#命令一览)
 - [记忆规则](#记忆规则)
 - [配置](#配置)
-- [支持的平台](#支持的平台)
+- [评测](#评测)
 - [支持的 Agent](#支持的-agent)
 - [支持的语言](#支持的语言)
+- [支持的平台](#支持的平台)
 - [许可证](#许可证)
 
 详细用法：[主 Agent 与 Subagent](docs/agents.zh.md) · [各 IDE 的 MCP 配置](docs/mcp.zh.md) · [English](docs/agents.md)
 
+---
+
 ## 为什么需要 cam？
 
-Agent 理解代码、复用已经记下的项目结论时，通常靠 grep / glob / Read 一份份翻。下一轮对话又重来一遍。
+AI 编程 Agent 探索仓库时，通常靠 `grep`、`glob` 和整文件 `Read` 一份份翻找结构；到了下一轮对话又全部遗忘、重来一遍。
 
-**cam 给 Agent 两样东西，一条 shell 命令就能查：**
+**`cam` 用一个本地二进制为 Agent 提供两个检索平面：**
 
-1. **代码图** — 已索引的文件和符号做成虚拟文件系统，外加一跳 callers / callees。
-2. **记忆树** — 用户习惯、项目事实、设计方案、解法说明；用向量 + BM25 召回，避免把同一项目再学一遍。
+| 平面 | 存什么 | Agent 怎么用 |
+| --- | --- | --- |
+| **代码图（Code Graph）** | 基于 tree-sitter 的文件/符号虚拟文件系统 + 一跳 callers/callees | `ls`、`find`、`read src/file.rs/symbol`、`ref symbol --dir in\|out` —— 按符号精准切片，不再整文件塞进上下文 |
+| **记忆树（Memory Tree）** | 项目事实、架构决策、排障结论与用户习惯 | `recall`（向量 + BM25 以 RRF 融合召回）与 `add`（`--parent` 结构分层、`--supersedes` 版本迭代） |
 
-按符号读，而不是整文件扫。记忆落在本地磁盘，100% 本地。
-
-> 一个二进制，两扇门：**主 Agent** 走 MCP（`cam mcp`）；**Subagent** 通常没有 MCP，跑同一套 CLI。配置见 [docs/mcp.zh.md](docs/mcp.zh.md)，用法见 [docs/agents.zh.md](docs/agents.zh.md)。
+> **一个二进制，两扇门：** **主 Agent** 通过 **MCP**（`cam mcp`）直接调用工具；通常拿不到 MCP 的 **Subagent** 在终端跑同一套 **CLI**（`cam --json …`）。两者共享项目下的 `.cam/cam.db`，100% 本地，零 API 费用。
 
 ---
 
 ## 开始
 
-### 1. 安装 CLI
+### 方式一：让 Agent 一句话自动安装（推荐）
 
-没有 Rust 先去 [rustup.rs](https://rustup.rs/) 装，然后：
+直接把下面这段话复制粘贴给你的 AI 编程助手（**Cursor**、**Claude Code**、**Codex**、**Windsurf**、**GitHub Copilot**、**Cline** 等），它会自动完成编译安装、项目建图与 MCP 接入：
+
+```text
+请从 https://github.com/HanochZhu/codeagent_memory 安装 cam：先确认本机有 rustup/cargo，执行 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`，把 ~/.cargo/bin（Windows 为 %USERPROFILE%\.cargo\bin）加入 PATH，用 `cam --help` 验证。然后在当前仓库执行 `cam index`。给主 Agent 注册 MCP stdio：command 为 `cam`，args 为 `["mcp"]`（Cursor：.cursor/mcp.json；Claude Code：.mcp.json）。Subagent 在 shell 里跑 `cam --json`。不要额外写说明文档。
+```
+
+<details>
+<summary><b>各 IDE / Agent 中如何使用这段话</b></summary>
+
+| 环境 | 用法 |
+| --- | --- |
+| **Cursor / Windsurf / Claude Code / Codex** | 粘贴到 Agent / Chat 对话框，它会自动在终端安装、生成 `.cam/cam.db` 并写入 MCP 配置 |
+| **VS Code**（Copilot / Continue / Cline） | 在开启终端权限的 Agent / Chat 模式下粘贴 |
+| **JetBrains**（IntelliJ / RustRover / GoLand） | 粘贴给 AI Assistant，或在内置终端手动执行下方安装命令 |
+
+<sub>提示：`cargo install` 会把 `cam` 安装到 `~/.cargo/bin`（Windows：`%USERPROFILE%\.cargo\bin`）。若当前终端提示找不到命令，重新打开终端或重启 IDE 即可。</sub>
+
+</details>
+
+---
+
+### 方式二：手动安装与配置
+
+#### 1. 安装 CLI
+
+需先安装 [Rust 工具链（rustup）](https://rustup.rs/)：
 
 ```bash
 cargo install --git https://github.com/HanochZhu/codeagent_memory --locked
@@ -74,26 +103,9 @@ cam --help
 ```
 
 <details>
-<summary><b>或者把这段丢给 AI（Cursor、Claude Code、Copilot …）</b></summary>
+<summary><b>其它安装方式：本地克隆编译 / Docker</b></summary>
 
-```text
-请从 https://github.com/HanochZhu/codeagent_memory 安装 cam：先确认本机有 rustup/cargo，执行 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`，把 ~/.cargo/bin（Windows 为 %USERPROFILE%\.cargo\bin）加入 PATH，用 `cam --help` 验证。然后在当前仓库执行 `cam index`。给主 Agent 注册 MCP stdio：command 为 `cam`，args 为 `["mcp"]`（Cursor：.cursor/mcp.json；Claude Code：.mcp.json）。Subagent 在 shell 里跑 `cam --json`。不要额外写说明文档。
-```
-
-| 环境 | 怎么用这段话 |
-| --- | --- |
-| **Cursor** | Agent / Chat 里粘贴即可；它会自己开终端装 |
-| **VS Code** + Copilot / Continue / Cline | 同样丢给 Chat / Agent |
-| **Claude Code** / **Windsurf** / **Codex** | 对话里粘贴，让它跑 shell |
-| **JetBrains** (IntelliJ / RustRover / GoLand) | AI Assistant 或内置终端执行同一条 `cargo install` |
-| **本机终端** | 不需要 AI，直接跑上面的命令 |
-
-<sub>安装会把 `cam` 放到 `~/.cargo/bin`（Windows：`%USERPROFILE%\.cargo\bin`），**不会刷新当前 shell** — 找不到命令就新开一个终端。</sub>
-
-</details>
-
-<details>
-<summary><b>从本地克隆编译</b></summary>
+**从本地克隆编译：**
 
 ```bash
 git clone https://github.com/HanochZhu/codeagent_memory.git
@@ -101,194 +113,69 @@ cd codeagent_memory
 cargo install --path . --locked
 ```
 
-</details>
-
-<details>
-<summary><b>Docker</b></summary>
-
-不需要本机安装 Rust。拉取已发布的镜像，把当前目录挂到 `/work`，以 stdio 启动 MCP：
+**Docker（无需本机安装 Rust）：**
 
 ```bash
 docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.3
 docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.3
 ```
 
-也可以从本仓库构建：`docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
+或从源码构建镜像：`docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
 
 </details>
 
-### 2. 建图
+#### 2. 建图与查询
 
 ```bash
 cd your-project
-cam index
-```
+cam index                                              # 解析仓库写入 .cam/cam.db
 
-<sub>`cam index` 会在需要时自动创建 `.cam/`，再用 tree-sitter 解析进 `.cam/cam.db`。其它命令同样：第一次调用时自动创建 `.cam/`，不用手动跑。</sub>
+# 查代码图
+cam ls src/                                            # 列出目录、文件或文件内符号
+cam read src/main.rs/main                              # 只读指定符号的源码
+cam ref main --dir in                                  # 查一跳 callers (in) 或 callees (out)
 
-### 3. 先查图，再记下答案
-
-```bash
-cam ls src/
-cam read src/main.rs/main
-cam ref main --dir in
+# 查记忆与写回结论
 cam recall "how does hybrid recall fuse BM25 and vectors"
 cam add --summary "..." < notes.md
 ```
 
-**主 Agent**（当前对话）：接一次 `cam mcp`，之后调 `cam_*` 工具。**Subagent**（Task / explore / 被委派的 CLI）：继续在 shell 里跑同一套命令。输出默认尽量短；要结构化结果就加 `--json`。
+<sub>`cam` 首次执行时会自动初始化 `.cam/`。如需随文件保存自动增量更新代码图，可在后台运行 `cam watch`。</sub>
+
+#### 3. 为主 Agent 接入 MCP
+
+将以下配置加入宿主的 MCP 配置文件（如 Cursor 的 `.cursor/mcp.json` 或 Claude Code 的 `.mcp.json`）：
 
 ```json
-{ "mcpServers": { "cam": { "command": "cam", "args": ["mcp"] } } }
+{
+  "mcpServers": {
+    "cam": {
+      "command": "cam",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
-贴到 Cursor 的 `.cursor/mcp.json`、Claude Code 的 `.mcp.json`，或宿主自己的 MCP 设置。分工具配置：[docs/mcp.zh.md](docs/mcp.zh.md)。谁走 MCP、谁走 CLI：[docs/agents.zh.md](docs/agents.zh.md)。
+各 IDE 的详细配置文件路径见 [docs/mcp.zh.md](docs/mcp.zh.md)，主 Agent 与 Subagent 的分工说明见 [docs/agents.zh.md](docs/agents.zh.md)。
 
-首次 `recall` / `add` 会下载 `potion-multilingual-128M`。这个默认模型不可用时回退 hash embedder。换成其它 model2vec 模型：`cam config set embedding_model <仓库或本地目录>`（见 [配置](#配置)）。
-
----
-
-## 评测
-
-cam 有两面检索。每一面只和**同一语料上最近的开源系统**比，不要合成一张总分。
-
-| 面 | 最近对照 | 共用基准 |
-|---|---|---|
-| 记忆 | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + 分词 **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
-| 长期记忆 | BM25 / 稠密记忆检索 | [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) |
-| 代码图 | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
-| 工作流检索 | 词法 / BM25 文件检索 | [Agent Retrieval Bench V2](https://agent-retrieval-bench.github.io/) `edit2ripple` |
-| Token | 全文塞进上下文 | [DeepSeek 多轮](eval/llm_multiturn/README.md) |
-
-Mem0、Zep、Letta 是通用会话记忆，没有跑过这两套语料，不进分数表。
-
-### 机制对照
-
-| | **cam** | **agentmemory** | **codegraph** |
-|---|---|---|---|
-| 存什么 | 代码图 + 记忆树 | 会话 / 聊天记忆 | 代码图 |
-| 怎么查 | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
-| 接入 | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
-| 融合 | 向量 + BM25 + **RRF** | BM25 + 向量 + rerank | FTS5 + 图遍历 |
-| 本地 / 费用 | 100% 本地，检索 `$0` | 本地 server | 本地 |
-
-### 记忆 — coding-agent-life-v1
-
-15 段会话、15 条查询、k=5。计分与 agentmemory `score.ts` 相同。P@5 天花板 0.240。
-
-| 系统 | Hit rate | R@5 | P@5 | 来源 |
-|---|---|---:|---:|---|
-| grep（分词子串） | 15 / 15 | 0.967 | 0.227 | 本树，2026-09-23 |
-| cam min-max 求和（旧实现） | 15 / 15 | 0.933 | 0.213 | 历史结果，hash embed |
-| **cam RRF** | **15 / 15** | **1.000** | **0.240** | 本树，hash embed |
-| agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | 已发表 v0.9.26 |
-
-![coding-agent-life 总览 R@5 与 P@5 / 天花板](eval/charts/solution-headline.svg)
-
-![coding-agent-life 各题型 R@5](eval/charts/solution-recall.svg)
-
-RRF 追平 hybrid 天花板，并在 `temporal`（q-015）上超过 grep。min-max 求和仍丢掉 `temporal` 和 `multi-session-causal`（q-011）的第二枚 gold。
-
-#### 修订链
-
-上表用的是扁平语料：一段会话一条记忆，不挂 `--supersedes`。`--lineage` 会把每一轮对话都作为取代上一轮的修订重新灌入，并多出两个指标。**newest R@k** 看 top-k 里有没有带上每条 gold 链的最新节点；**stale `latest`** 数的是返回结果里明明已被更新的修订取代、却仍标着 `latest` 的条数。
-
-| k | R@k | P@k | newest R@k | stale `latest` |
-|---:|---:|---:|---:|---:|
-| 5 | 1.000 | 0.240 | 1.000 | **0** |
-| 10 | 1.000 | 0.120 | 1.000 | **0** |
-
-hash embedder，2026-09-29。结构层级与版本替代分离、旧修订在 top-k 前折叠后，newest R@5 从 0.567 提升到 1.000，newest R@10 从 0.800 提升到 1.000，stale `latest` 仍为零。
-
-### 长期记忆 — LongMemEval-S
-
-使用清洗版 LongMemEval-S，以固定种子 42 抽取 100 个非拒答问题。每个带日期的会话存成一条记忆；拉丁字母以外的字母和记号会换成空格，因为 cam 会拒绝它们。检索把嵌入器和 BM25 用 RRF 融合，k=10，不接大语言模型 reader。`hash` 是离线测试嵌入器，`potion-multilingual-128M` 是默认模型。
-
-| 嵌入器 | R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| hash | 0.382 | 0.803 | 0.922 | 0.580 | 0.910 | 0.970 | 0.718 |
-| **potion-multilingual-128M** | **0.474** | **0.909** | **0.952** | **0.740** | **0.980** | **0.990** | **0.840** |
-
-MRR = Mean Reciprocal Rank（平均倒数排名）。hash、debug 二进制、8 worker：召回 P50 / P95 为 24.1 / 35.5 ms，每题平均入库 1.35 秒。potion、release 二进制、8 worker：召回 P50 / P95 为 1.12 / 1.34 秒，每题平均入库 56.6 秒。这是纯检索结果：只衡量 gold 会话能否被召回，不衡量最终回答质量。
-
-### 工作流检索 — Agent Retrieval Bench V2
-
-`edit2ripple`：58 个锚定改动查询、44 个冻结仓库快照，无大语言模型。cam adapter 对锚定文件中各符号的图邻居文件排序。58 题全部计分；其中 55 个锚定文件属于已支持语言，3 个 Java 锚点按未命中保留。
-
-| 系统 | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
-|---|---:|---:|---:|---:|---:|
-| **cam 图邻居** | 0.300 | 0.335 | 0.378 | **0.297** | 0.300 |
-| 词法检索 | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
-| BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
-
-BCY = Budgeted Context Yield（预算内上下文命中率），按基准官方的 8K Token 文件装箱协议计算。cam 图邻居的首个命中排名最好，但词法检索的 gold 覆盖明显更高；结果指向图与词法融合，而不是单独使用图检索。cam 查询 P95 为 7.3 ms；8 worker 建立 44 个快照索引耗时 200.2 秒。
-
-### 代码图 — LongMemCode clap
-
-clap v4.6.1，536 题，无 LLM。cam 一跳 vs codegraph 0.9.6，同一套 SCIP gold。
-
-| 切片 | n | cam | codegraph |
-|---|---:|---:|---:|
-| supported（一跳） | 478 | **0.769** | 0.768 |
-| lookup / file_symbols | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
-| callers / callees | 67 / 18 | **0.397** / 0.811 | 0.355 / **0.867** |
-| implementors | 40 | **0.119** | 0.094 |
-| raw / weighted | 536 | 0.709 / **0.704** | 0.704 / 0.700 |
-
-P95 ≈ 5.2 ms，`$/1k` = 0。
-
-![LongMemCode clap 正确率柱状图](eval/charts/code-graph-bars.svg)
-
-![LongMemCode clap 分操作正确率](eval/charts/code-graph.svg)
-
-### 多轮 token — DeepSeek
-
-同一段对话跑两遍：系统提示里塞进全部 session / 全部 `src/*.rs`，或每轮只注入 `cam recall`（代码再加 `read` / `ref`）。hash embedder，deepseek-flash，2026-10-13。
-
-| 线 | n | full 正确率 | cam 正确率 | full token | cam token | 节省 |
-|---|---:|---:|---:|---:|---:|---:|
-| 记忆（coding-agent-life） | 15 | 1.00 | 0.87 | 22796 | 9904 | **57%** |
-| 代码（本仓 `cam index`） | 6 | 0.83 | 0.33 | 379066 | 6342 | **98%** |
-
-![DeepSeek 多轮 prompt token 柱状图](eval/charts/multiturn-bars.svg)
-
-![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
-
-平均每轮 prompt：记忆 1471 → 616；代码 63076 → 1000。代码线 cam miss 是检索缺口（`fuse_rrf` 的 callers、`tokenize_for_fts` 对中文的处理、`INITIAL_STABILITY_DAYS`、`cam add` 更新规则）。全量代码 dump 漏了中文分词那一题；gold 仍要求函数已经不再做的切分。记忆线 cam 漏了 q-002 和 q-013。
-
-下面所有脚本的语料位置都集中在一个文件 [eval/datasets.toml](eval/datasets.toml)。`coding-agent-life-v1` 不随仓库分发，默认指向与本仓库同级的 `agentmemory` 检出；改这个条目即可换位置，临时换一次用 `CAM_EVAL_CODING_LIFE` 覆盖。
-
-```bash
-python3 eval/coding_life/run.py --adapter grep
-python3 eval/coding_life/run.py --hash-embed              # RRF
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
-git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
-  eval/agent_retrieval/vendor/agent-retrieval-bench
-python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
-arb download-benchmark --version v2_edit2ripple \
-  --local-dir eval/agent_retrieval/data --force
-python3 eval/agent_retrieval/run.py --workers 8
-python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
-python3 eval/longmemcode/run.py --corpus clap
-python3 eval/charts/generate.py
-```
+<sub>首次执行 `recall` 或 `add` 时会自动下载默认嵌入模型 `potion-multilingual-128M`（缓存在 `~/.cam/models/`）；若离线或不可用则自动回退到词面 hash embedder。</sub>
 
 ---
 
 ## 能力
 
-| | |
-|---|---|
-| **SQLite 代码图** | tree-sitter 解析进 `.cam/cam.db` — 列目录、读符号、跳 callers/callees，不必打开整文件 |
-| **虚拟路径** | `src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号 |
-| **多路召回** | 向量 + BM25，以 **RRF**（k=60）融合 |
-| **版本扩展** | 召回会拉入命中记忆的最新替代版本并默认隐藏旧修订；`--no-expand` 关闭扩展，`--include-superseded` 保留历史 |
-| **艾宾浩斯保留** | `R = exp(-t / S)` 最多调整召回分 10%；过期和遗忘只打标，不删除 |
-| **记忆树** | `--parent` 建立允许分叉的结构层级；`--supersedes` 建立线性替代版本 |
-| **MCP + CLI** | 主 Agent：`cam_*` 工具。Subagent：`cam --json …`。同一个二进制 |
-| **100% 本地** | 无 API key。SQLite + 可选的本地向量模型（`~/.cam/models/`） |
-| **9 种语言** | Rust、Python、TypeScript、JavaScript、Go、Java、C、C++、C# |
+| 特性 | 说明 |
+| --- | --- |
+| **SQLite 代码图** | tree-sitter 解析函数、类型与调用边写入 `.cam/cam.db`，无需打开整文件即可定位与跳转 |
+| **虚拟路径寻址** | `src/main.rs` 指向文件大纲；`src/main.rs/main` 直接指向该文件内的符号源码 |
+| **增量同步与监听** | `cam sync` 按内容哈希增量更新；`cam watch` 监听源文件变动自动同步 |
+| **多路混合召回（RRF）** | 本地稠密向量（`model2vec`）+ 标识符分词 BM25，通过 **RRF**（$k=60$）融合排序 |
+| **版本链与记忆树** | `--parent` 构建可分叉的主题树；`--supersedes` 建立线性替代修订并自动折叠旧版 |
+| **艾宾浩斯保留率** | $R = e^{-t / S}$ 温和调节排序分（幅度 $\le 10\%$），对过期和遗忘条目打标（`stale` / `needs_update`），永不删历史 |
+| **MCP + CLI 双接口** | 主 Agent 调 `cam_*` MCP 工具；Subagent 调 `cam --json …`，共用同一套内核 |
+| **100% 本地隐私** | 无需任何外部 API Key，数据与模型全部保存在本地磁盘 |
+| **支持 9 种语言** | Rust、Python、TypeScript、JavaScript、Go、Java、C、C++、C# |
 
 ---
 
@@ -296,154 +183,258 @@ python3 eval/charts/generate.py
 
 ![cam 原理](docs/images/how-it-works.zh.svg)
 
-1. **抽取** — tree-sitter 遍历项目，把节点（函数、类型）和边（调用）写入 SQLite。
-2. **按需读** — `ls` / `read` / `ref` 走虚拟文件系统。`read` 给大纲或符号切片；`--full` 才整文件。
-3. **召回** — `recall` 只接受英文查询；查询经过向量化和英文归一化 BM25 后，每路先去掉远低于本路第一名的结果，再用 **RRF**（k=60）融合。最后乘以 `0.9 + 0.1 × R`。命中记忆的最新替代版本会被拉入，旧修订在 top-k 前折叠。
-4. **写回** — Agent 有需要长期留下的结论时，`add` 存英文摘要和英文正文。`--parent` 增加结构层级，`--supersedes` 替代旧修订但保留历史。
+1. **抽取（Extraction）** — `tree-sitter` 遍历项目，将符号定义（函数、类型）和调用边写入 `.cam/cam.db`。
+2. **按需读（Surgical Read）** — 通过虚拟路径（`ls` → `find` → `read` → `ref`）浏览代码。`read` 默认返回文件符号大纲或单个符号切片，加 `--full` 才读取整文件。
+3. **混合召回（Recall）** — `recall` 接收英文查询，同时执行向量检索与标识符感知的 BM25（自动切分 `snake_case`、`kebab-case`、`camelCase` 并提取英文词干），截断各路低分尾部后用 **RRF**（$k=60$）融合，并乘以保留率系数 $0.9 + 0.1 \times R$。命中旧修订时自动拉入最新替代版本并在 top-$k$ 前折叠旧版。
+4. **写回（Write-Back）** — 解决完问题后，`add` 写入英文摘要与正文。`--parent` 挂载结构层级，`--supersedes` 替代旧结论同时保留历史脉络。
 
-设计细节见 [DESIGN.md](DESIGN.md)。
+架构与设计细节见 [DESIGN.md](DESIGN.md)。
 
 ---
 
 ## Agent 怎么用
 
-探索仓库前先 `recall`；没有命中再读代码图；有需要长期留下的结论再 `add`。
+无论是主 Agent 还是 Subagent，都遵循统一的四步工作流：
 
-**主 Agent（MCP）：** `cam_recall` → `cam_find` / `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。MCP 可用时不要开 shell。全文：[docs/agents.zh.md](docs/agents.zh.md)。
+1. **先 Recall** — 探索代码前先把问题转成一句英文调用 `cam_recall` / `cam recall`；若命中条目为 `latest` 且非 `needs_update`，直接复用。
+2. **确认已建图** — 若代码图工具提示 `not_indexed`，在项目根跑一次 `cam_index` / `cam index`。
+3. **按图索骥** — 未命中时，用 `find` 或 `ls` 找符号，用 `read <文件>/<符号>` 读实现，用 `ref <符号> --dir in|out` 查上下游调用。
+4. **写回记忆** — 任务完成后，用英文通过 `cam_add` / `cam add` 记录关键结论或修复方案。
 
-**Subagent（CLI）：**
+| 角色 | 调用方式 | 典型用法 |
+| --- | --- | --- |
+| **主 Agent**（当前对话） | **MCP**（`cam mcp`） | 直接调用 `cam_recall`、`cam_find`、`cam_ls`、`cam_read`、`cam_ref`、`cam_add`、`cam_mem_tree`、`cam_mem_show` |
+| **Subagent**（Task / explore / CLI） | **CLI**（`cam --json`） | 在终端执行 `cam --json --project <dir> <cmd>`（大多数宿主不会把 MCP 传给 Subagent） |
 
-```text
-cam --json index
-cam --json ls src/
-cam --json read src/memory/recall/fuse.rs/fuse_rrf
-cam --json ref fuse_rrf --dir in
-cam --json recall "how to fuse BM25 and vector recall"
-cam --json add --summary "..." --body "..."
-cam --json mem tree
-cam --json mem show <id>
-cam --json status
-```
-
-全局参数：`--project <dir>`、`--json`（紧凑 JSON）、`--pretty`（美化 JSON，隐含 `--json`）。未指定 `--project` 时依次用 `CAM_PROJECT`、向上查找 `.cam` / `.git`。`--json` 下失败会在 stdout 输出 `{"error":{"code":…,"message":…}}` 并返回非零退出码。MCP 服务：`cam mcp`（可加 `--project`）。
+完整提示词模板与分工指南见 [docs/agents.zh.md](docs/agents.zh.md)。
 
 ---
 
 ## 命令一览
 
-```bash
-cam index                                # tree-sitter 解析进 SQLite
-cam watch [--debounce-ms N]              # 监听源文件；--json 每次 sync 输出一行
-cam sync                                 # 按内容哈希增量更新图
-cam ls [virt_path]                       # 列目录 / 文件 / 符号
-cam read <virt_path> [--full]            # 文件大纲或符号源码
-cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # 一跳 callers (in) 或 callees (out)；支持 --callers / --callees
-cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]   # 按名字子串找符号
-cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]  # 多路召回：向量 + BM25，以 RRF 融合
-cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # 写入记忆（正文：--body / --file / stdin）
-cam mem tree                             # 打印记忆树
-cam mem show <id>                        # 查看一条记忆
-cam status                               # 当前项目、数据库统计与配置
-cam config get | config set stale_days N | config set embedding_model <model> # 读取或更新 ~/.cam/config.toml
-cam mcp                                  # 主 Agent 用的 MCP stdio 服务
-```
+### 代码图命令
 
 | 命令 | 作用 |
 | --- | --- |
-| `cam index` | tree-sitter 解析进 SQLite（`.cam/cam.db`）；没有 `.cam/` 时自动创建 |
-| `cam sync` | 按内容哈希增量更新图 |
-| `cam watch` | 文件监听，静默窗口后自动 `sync` |
-| `cam ls [path]` | 列目录 / 文件 / 符号 |
-| `cam read <path>` | 文件大纲，或符号源码；`--full` 才整文件 |
-| `cam ref <symbol> --dir in\|out` | 一跳 callers / callees。多个定义同名时返回 `status: ambiguous` 和按分排序的 `candidates`；用候选 `id` 重查，或用 `--file` / `--kind` / `--scope` 收窄 |
-| `cam find <query>` | 对符号名做不区分大小写的子串搜索（不搜函数体文本）。完全同名在前，其次前缀；每条带虚拟 `path` 和 `id`，可直接交给 `read` / `ref` |
-| `cam recall "<一句英文问题>"` | 向量 + BM25，以 **RRF**（k=60）融合；`--no-expand` 关闭版本扩展；`--include-superseded` 保留历史；`--snippets` 把第一条以外的长正文截成片段（`body_truncated`） |
-| `cam add --summary "..." [--parent ID] [--supersedes ID]` | 写入英文记忆；`parent` 表示结构层级，`supersedes` 表示替代旧修订 |
-| `cam mem tree` / `cam mem show <id>` | 浏览记忆树 |
-| `cam status` | 当前项目根、数据库路径、节点/边/记忆数与配置 |
-| `cam config get` / `cam config set stale_days N` / `cam config set embedding_model <model>` | 读取或更新 `~/.cam/config.toml` |
-| `cam mcp` | stdio MCP 服务（主 Agent）。见 [docs/mcp.zh.md](docs/mcp.zh.md) |
+| `cam index` | 使用 tree-sitter 解析项目写入 `.cam/cam.db`（无 `.cam/` 时自动创建） |
+| `cam sync` | 按文件内容哈希增量更新代码图 |
+| `cam watch [--debounce-ms N]` | 监听源文件变动并自动 `sync`（`--json` 下每次同步输出一行 JSON） |
+| `cam ls [virt_path]` | 列出目录、文件或文件内的符号 |
+| `cam read <virt_path> [--full]` | 读取文件符号大纲、指定符号源码（`文件/符号`），或加 `--full` 读整文件 |
+| `cam find <query> [--kind K] [--file S] [--scope D] [--limit N]` | 对符号名做不区分大小写的子串搜索（完全同名优先，其次前缀匹配） |
+| `cam ref <symbol> --dir in\|out [--file S] [--kind K] [--scope D]` | 查一跳 callers（`in` / `--callers`）或 callees（`out` / `--callees`）；同名歧义时返回排序后的 `candidates` |
 
-虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。歧义响应里的节点 id（`src/main.rs:function:main:12`）可以在任何接受符号的地方直接使用。
+### 记忆命令
 
-**多仓库目录。** `.gitignore` 与 `.camignore`（同语法）在任意层级生效，根目录本身不是 git 仓库也一样。submodule 与 linked worktree（`.git` 是文件的目录）会被跳过；嵌套的独立 clone 正常索引，并在 `cam ls` 里以 `project` 类型列出，可直接作为 `--scope` 传入。
+| 命令 | 作用 |
+| --- | --- |
+| `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` | 向量 + BM25 RRF 混合召回（英文查询）。`--no-expand` 关闭新版扩展；`--include-superseded` 保留旧修订；`--snippets` 截断排名第一以外的长正文 |
+| `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` | 写入英文记忆（支持 `--body`、`--file` 或 `stdin`）。`--parent` 挂结构树；`--supersedes` 替代旧修订 |
+| `cam mem tree` | 打印记忆树与修订链结构 |
+| `cam mem show <id>` | 查看单条记忆的完整内容与元数据 |
+
+### 服务与配置命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `cam mcp` | 启动供主 Agent 使用的 stdio MCP 服务（见 [docs/mcp.zh.md](docs/mcp.zh.md)） |
+| `cam status` | 查看解析出的项目根路径、数据库位置、节点/边/记忆统计与当前配置 |
+| `cam config get` | 查看 `~/.cam/config.toml` 当前配置 |
+| `cam config set stale_days <N>` | 设置记忆标记为 `stale` 的天数阈值（默认 `30`） |
+| `cam config set embedding_model <model>` | 设置 Hugging Face model2vec 模型仓库、本地模型目录、`hash` 或 `default` |
+
+**全局参数与约定：**
+- `--project <dir>`（或环境变量 `CAM_PROJECT`）显式指定项目根；未指定时自动向上查找 `.cam` 或 `.git`。
+- `--json` 输出紧凑 JSON（`--pretty` 输出缩进 JSON）。`--json` 模式下报错会在 `stdout` 输出 `{"error":{"code":…,"message":…}}` 并以非零状态码退出。
+- **同名符号消歧：** 当 `read` 或 `ref` 匹配到多个同名定义时，返回 `status: "ambiguous"` 与候选节点 ID（如 `src/main.rs:function:main:12`），可将该 ID 直接传回 `read` 或 `ref`。
+- **忽略规则与多仓库目录：** 任意层级均遵循 `.gitignore` 与 `.camignore`。自动跳过 git submodule 与 linked worktree；嵌套的独立 git 仓库会正常索引并在 `cam ls` 中标为 `project`（可传给 `--scope` 收窄范围）。
 
 ---
 
 ## 记忆规则
 
-- 超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`
-- 艾宾浩斯保留率 `R = exp(-t / S)`：排序分为 `relevance × (0.9 + 0.1 × R)`；`R < 0.3` 标 `needs_update`
-- 成功返回的真实命中（`needs_update = false`）会刷新 C0，并把 `S *= 1.7`；扩展出的新版和被过滤的旧版不刷新
-- 记忆不删除。线性 `supersedes` 链的最后节点标 `latest`；默认隐藏旧修订，`--include-superseded` 可查看历史
-- `--parent` 用于允许分叉的结构层级，`--supersedes` 用于完整替代旧修订
-- 召回问题、记忆摘要和正文必须使用英语；含非拉丁文字的输入会被拒绝
-- BM25 会拆分 snake_case、kebab-case、camelCase 标识符，并同时索引英文原词与词干
+- **统一英文索引：** `recall` 查询、`add` 摘要与正文均要求使用英文（含非拉丁字符的输入会被拒绝，以保证 BM25 词干提取与向量空间一致）。
+- **艾宾浩斯保留与强化：** 保留率 $R = e^{-t / S}$，最终排序分为 $\text{relevance} \times (0.9 + 0.1 \times R)$。$R < 0.3$ 标为 `needs_update`；超过 `stale_days`（默认 30 天）标为 `stale`。每次真实命中返回（`needs_update = false`）会刷新访问时间并将稳定性 $S \times 1.7$。
+- **非破坏性演化：** 记忆永不删除。`--parent` 构建允许分叉的结构树；`--supersedes` 构建线性修订链，链尾标为 `latest`，被替代的旧版本默认折叠隐藏（可用 `--include-superseded` 查看）。
 
 ---
 
 ## 配置
 
-`~/.cam/config.toml`：
+全局配置文件位于 `~/.cam/config.toml`：
 
 ```toml
 stale_days = 30
-# embedding_model = "minishlab/potion-base-8M"  # Hugging Face 上的 model2vec 仓库
-# embedding_model = "/path/to/model2vec"         # 本地目录，需含 tokenizer.json、config.json、model.safetensors
-# embedding_model = "hash"                       # 不下载模型，只用词面 hash
+# embedding_model = "minishlab/potion-multilingual-128M" # 默认模型（下载缓存至 ~/.cam/models/）
+# embedding_model = "minishlab/potion-base-8M"           # 更轻量的 Hugging Face model2vec 仓库
+# embedding_model = "/path/to/local/model2vec"           # 本地目录（需含 tokenizer.json、config.json、model.safetensors）
+# embedding_model = "hash"                               # 不下载模型，仅使用词面 hash
 ```
 
-`embedding_model` 默认是 `minishlab/potion-multilingual-128M`。设成 `default` 会清掉自定义值。`CAM_EMBED_MODEL` 只覆盖当前进程。换模型后的第一次 `recall` 会先用新模型重算已有向量，再参加当次打分。下载的模型缓存在 `~/.cam/models/`。
+可通过环境变量 `CAM_EMBED_MODEL` 临时覆盖当前进程模型，或用 `cam config set embedding_model default` 恢复默认。切换模型后的首次 `recall` 会自动用新模型重算已有记忆向量。
 
 ---
 
-## 支持的平台
+## 评测
 
-`cam` 是 Rust 二进制。`cargo install` 在当前机器上编译：
+`cam` 的记忆平面与代码图平面分别在**相同语料**上与最接近的开源系统对照评测：
 
-| 平台 | 安装 |
-|----------|---------|
-| Windows | `cargo install --git … --locked` |
-| macOS | `cargo install --git … --locked` |
-| Linux | `cargo install --git … --locked` |
+| 评测面 | 对照基线 | 评测基准 | 核心结论 |
+| --- | --- | --- | --- |
+| **会话记忆** | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + 分词 `grep` | [coding-agent-life-v1](eval/coding_life/README.md) | **1.000 R@5 / 0.240 P@5**（追平 hybrid 天花板，修订链 **newest R@5 = 1.000**） |
+| **长期记忆** | BM25 / 稠密记忆检索 | [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) | `potion-multilingual-128M` 下 **0.909 R@5 / 0.980 Hit@5 / 0.840 MRR** |
+| **代码图** | [codegraph](https://github.com/colbymchenry/codegraph) v0.9.6 | [LongMemCode](eval/longmemcode/README.md) (`clap`) | 一跳支持集准确率 **0.769** vs 0.768，P95 ≈ 5.2 ms，费用 `$0` |
+| **工作流检索** | 词法 / BM25 文件检索 | [Agent Retrieval Bench V2](https://agent-retrieval-bench.github.io/) `edit2ripple` | **0.297 MRR**（首命中排名最高，查询 P95 7.3 ms） |
+| **多轮 Token 消耗** | 全量上下文塞入 | [DeepSeek 多轮问答](eval/llm_multiturn/README.md) | 记忆线节省 **57% Token**，代码线节省 **98% Token** |
 
-完整命令见 [开始](#开始)。
+<sub>通用聊天记忆框架（Mem0、Zep、Letta）面向普通对话日志，未在以上编程语料评测，故不列入下表。</sub>
+
+### 机制对照
+
+| | **cam** | **agentmemory** | **codegraph** |
+| --- | --- | --- | --- |
+| **存储内容** | 代码图 + 记忆树 | 会话 / 聊天记忆 | 代码图 |
+| **查询原语** | `recall` / `ls` / `find` / `read` / `ref` | `smart-search` / `remember` | `explore` / callers / callees |
+| **接入方式** | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
+| **融合排序** | 向量 + BM25 + **RRF** + 保留率 | BM25 + 向量 + rerank | FTS5 + 图遍历 |
+| **本地 / 费用** | 100% 本地（`$0`） | 本地 server | 本地 |
+
+### 1. 记忆 — `coding-agent-life-v1`
+
+15 段会话、15 条查询、$k=5$（计分与 `agentmemory` `score.ts` 一致，P@5 理论上限为 `0.240`）。
+
+| 系统 | Hit Rate | R@5 | P@5 | 来源 |
+| --- | --- | ---: | ---: | --- |
+| `grep`（分词子串） | 15 / 15 | 0.967 | 0.227 | 本仓库，2026-09-23 |
+| `cam` min-max 求和（旧版） | 15 / 15 | 0.933 | 0.213 | 历史结果，hash embed |
+| **`cam` RRF** | **15 / 15** | **1.000** | **0.240** | 本仓库，hash embed |
+| `agentmemory` hybrid | 15 / 15 | 1.000 | 0.240 | 已发表 v0.9.26 |
+
+![coding-agent-life 总览 R@5 与 P@5 / 天花板](eval/charts/solution-headline.svg)
+
+![coding-agent-life 各题型 R@5](eval/charts/solution-recall.svg)
+
+**修订链测试（`--lineage`）：** 将每轮对话作为取代上一轮的 `--supersedes` 修订灌入，检验 top-$k$ 是否带出每条 gold 链的最新节点（**newest R@k**），以及是否有被取代节点误标为 `latest`（**stale `latest`**）。
+
+| k | R@k | P@k | newest R@k | stale `latest` |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 1.000 | 0.240 | **1.000** | **0** |
+| 10 | 1.000 | 0.120 | **1.000** | **0** |
+
+### 2. 长期记忆 — `LongMemEval-S`
+
+清洗版 `LongMemEval-S`，固定种子 42 抽取 100 个非拒答问题，以 RRF（$k=10$）融合向量与 BM25，不接 LLM reader。
+
+| 嵌入器 | R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR | 召回延迟 P50 / P95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `hash`（离线测试） | 0.382 | 0.803 | 0.922 | 0.580 | 0.910 | 0.970 | 0.718 | 24.1 / 35.5 ms |
+| **`potion-multilingual-128M`** | **0.474** | **0.909** | **0.952** | **0.740** | **0.980** | **0.990** | **0.840** | 1.12 / 1.34 s |
+
+### 3. 工作流检索 — Agent Retrieval Bench V2（`edit2ripple`）
+
+44 个冻结仓库快照上的 58 个锚定改动查询（无 LLM；BCY = 官方 8K Token 装箱协议下的预算内上下文命中率）。
+
+| 系统 | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **`cam` 图邻居** | 0.300 | 0.335 | 0.378 | **0.297** | 0.300 |
+| 词法检索 | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
+| BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
+
+`cam` 图邻居的首命中排名最高（MRR `0.297`，查询 P95 `7.3 ms`），词法检索则在多文件广度覆盖上更高，指向图与词法融合路线。
+
+### 4. 代码图 — LongMemCode（`clap`）
+
+`clap` v4.6.1，536 题对照 SCIP gold（无 LLM，P95 ≈ 5.2 ms，`$/1k` = 0）。
+
+| 切片 | n | `cam` | `codegraph` 0.9.6 |
+| --- | ---: | ---: | ---: |
+| **supported（一跳）** | 478 | **0.769** | 0.768 |
+| `lookup` / `file_symbols` | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
+| `callers` / `callees` | 67 / 18 | **0.397** / 0.811 | 0.355 / **0.867** |
+| `implementors` | 40 | **0.119** | 0.094 |
+| Raw / Weighted（全量 536） | 536 | **0.709** / **0.704** | 0.704 / 0.700 |
+
+![LongMemCode clap 正确率柱状图](eval/charts/code-graph-bars.svg)
+
+![LongMemCode clap 分操作正确率](eval/charts/code-graph.svg)
+
+### 5. 多轮 Token 节省 — DeepSeek
+
+全量上下文塞入 vs. 每轮按需注入 `cam` 检索结果（`deepseek-flash`，hash embedder，2026-10-13）：
+
+| 评测线 | n | Full 正确率 | `cam` 正确率 | Full Token | `cam` Token | 节省比例 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| **记忆**（`coding-agent-life`） | 15 | 1.00 | 0.87 | 22,796 | 9,904 | **57%**（1,471 → 616 / 轮） |
+| **代码**（本仓 `cam index`） | 6 | 0.83 | 0.33 | 379,066 | 6,342 | **98%**（63,076 → 1,000 / 轮） |
+
+![DeepSeek 多轮 prompt token 柱状图](eval/charts/multiturn-bars.svg)
+
+![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
+
+<details>
+<summary><b>复现全部评测脚本</b></summary>
+
+所有语料路径集中在 [eval/datasets.toml](eval/datasets.toml)（`coding-agent-life-v1` 默认指向同级目录的 `../agentmemory`，也可通过 `CAM_EVAL_CODING_LIFE` 临时覆盖）。
+
+```bash
+python3 eval/coding_life/run.py --adapter grep
+python3 eval/coding_life/run.py --hash-embed                                # RRF
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
+
+git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
+  eval/agent_retrieval/vendor/agent-retrieval-bench
+python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
+arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval/data --force
+python3 eval/agent_retrieval/run.py --workers 8
+
+python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
+python3 eval/longmemcode/run.py --corpus clap
+python3 eval/charts/generate.py
+```
+
+</details>
 
 ---
 
 ## 支持的 Agent
 
-**主 Agent：** 注册 `cam mcp`（stdio）。**Subagent：** 同一套 CLI，不用再配。
+**主 Agent** 注册 `cam mcp`（stdio）；**Subagent** 直接在终端调用 `cam --json`，无需额外配置。
 
-| 宿主 | MCP 配置 | 说明 |
+| 宿主 | MCP 配置位置 | Subagent / 备注 |
 | --- | --- | --- |
-| Cursor | `.cursor/mcp.json` 或 `~/.cursor/mcp.json` | Task / explore 走 CLI |
-| Claude Code | `.mcp.json` / `~/.claude.json` / `claude mcp add` | 工具被裁过的 subagent 走 CLI |
-| Codex | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` 走 CLI |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | Cascade = MCP |
-| GitHub Copilot | `.vscode/mcp.json` / `~/.copilot/mcp-config.json` | Chat = MCP；脚本 = CLI |
-| Continue | `~/.continue/config.yaml` | |
-| Cline | `~/.cline/mcp.json` | |
-| JetBrains | AI Assistant → MCP | PATH 为空时写 `cam.exe` 绝对路径 |
-| Gemini CLI / Antigravity / OpenCode / Zed / Droid | 见 [docs/mcp.zh.md](docs/mcp.zh.md) | |
+| **Cursor** | `.cursor/mcp.json`、`~/.cursor/mcp.json` 或 `.cursor-plugin/plugin.json` | `Task` / `explore` 走 CLI |
+| **Claude Code** | `.mcp.json`、`~/.claude.json` 或 `claude mcp add cam -- cam mcp` | 受限工具的 subagent 走 CLI |
+| **Codex** | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` 走 CLI |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | Cascade 走 MCP |
+| **GitHub Copilot** | `.vscode/mcp.json` 或 `~/.copilot/mcp-config.json` | Chat 走 MCP；脚本走 CLI |
+| **Continue / Cline** | `~/.continue/config.yaml` / `~/.cline/mcp.json` | |
+| **JetBrains** | AI Assistant → MCP（`cam` / `mcp`） | 若 IDE `PATH` 为空请填 `cam` 绝对路径 |
+| **Gemini CLI / Antigravity / OpenCode / Zed / Droid** | 见 [docs/mcp.zh.md](docs/mcp.zh.md) | |
 
-把 [一句话安装](#开始) 贴给 Agent，再补上 MCP 配置。分工具文件：[docs/mcp.zh.md](docs/mcp.zh.md)。提示词：[docs/agents.zh.md](docs/agents.zh.md)。
+各宿主配置模板：[docs/mcp.zh.md](docs/mcp.zh.md) · Agent 提示词：[docs/agents.zh.md](docs/agents.zh.md)。
 
 ---
 
 ## 支持的语言
 
 | 语言 | 扩展名 | 索引内容 |
-|----------|-----------|-----------------|
-| Rust | `.rs` | 函数、struct、enum、trait、调用 |
-| Python | `.py` | 函数、类、调用 |
-| TypeScript | `.ts`, `.tsx` | 函数、方法、类、调用 |
-| JavaScript | `.js`, `.jsx` | 函数、方法、类、调用 |
-| Go | `.go` | 函数、方法、struct、调用 |
-| Java | `.java` | 函数、方法、类、接口、调用 |
-| C | `.c` | 函数、struct、调用 |
-| C++ | `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp` | 函数、方法、类、struct、调用 |
-| C# | `.cs` | 函数、方法、类、接口、调用 |
+| --- | --- | --- |
+| **Rust** | `.rs` | 函数、struct、enum、trait、调用 |
+| **Python** | `.py` | 函数、类、调用 |
+| **TypeScript** | `.ts`, `.tsx` | 函数、方法、类、调用 |
+| **JavaScript** | `.js`, `.jsx` | 函数、方法、类、调用 |
+| **Go** | `.go` | 函数、方法、struct、调用 |
+| **Java** | `.java` | 函数、方法、类、接口、调用 |
+| **C** | `.c` | 函数、struct、调用 |
+| **C++** | `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp` | 函数、方法、类、struct、调用 |
+| **C#** | `.cs` | 函数、方法、类、接口、调用 |
+
+---
+
+## 支持的平台
+
+`cam` 支持在 **macOS**、**Linux** 和 **Windows** 上通过 `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked` 原生编译安装，或通过 Docker 镜像（`ghcr.io/hanochzhu/codeagent-memory:0.1.3`）跨平台运行。详见 [开始](#开始)。
 
 ---
 

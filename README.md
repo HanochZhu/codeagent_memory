@@ -35,40 +35,67 @@
 
 - [Why cam?](#why-cam)
 - [Get Started](#get-started)
-- [Benchmarks](#benchmarks)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
 - [Agent Workflow](#agent-workflow)
 - [CLI Reference](#cli-reference)
 - [Memory Rules](#memory-rules)
 - [Configuration](#configuration)
-- [Supported Platforms](#supported-platforms)
+- [Benchmarks](#benchmarks)
 - [Supported Agents](#supported-agents)
 - [Supported Languages](#supported-languages)
+- [Supported Platforms](#supported-platforms)
 - [License](#license)
 
-Usage details: [main agent vs subagent](docs/agents.md) · [MCP configs for each IDE](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+Guides: [Main Agent vs Subagent](docs/agents.md) · [MCP Configs by IDE](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+
+---
 
 ## Why cam?
 
-When an AI agent needs to understand code — or reuse what it already learned about this project — it discovers structure the slow way: grep, glob, and Read, one file at a time. Next session it does the same work again.
+When an AI coding agent explores a repository, it usually rediscovers structure the slow way — running `grep`, `glob`, and full-file `Read` one file at a time — and forgets everything in the next session.
 
-**cam hands the agent two things it can query in one shell call:**
+**`cam` gives the agent two local retrieval planes in a single binary:**
 
-1. A **code graph** — every indexed file and symbol as a virtual filesystem, plus one-hop callers / callees.
-2. A **memory tree** — habits, project facts, designs, write-ups; recalled with vector + BM25 so the agent does not re-learn the same project.
+| Plane | What it stores | How the agent uses it |
+| --- | --- | --- |
+| **Code Graph** | Tree-sitter symbols (functions, types, methods) as a virtual filesystem + 1-hop callers/callees | `ls`, `find`, `read src/file.rs/symbol`, `ref symbol --dir in\|out` — surgical symbol reads instead of whole-file dumps |
+| **Memory Tree** | Project facts, architecture decisions, debugging write-ups, and user habits | `recall` (Vector + BM25 fused with RRF) and `add` (with branching `--parent` and revision `--supersedes`) |
 
-Surgical reads, not a file-by-file search. Memories stay on disk, 100% local.
-
-> One binary, two doors: the **main agent** uses MCP (`cam mcp`); **subagents** usually have no MCP, so they run the same CLI. Configs: [docs/mcp.md](docs/mcp.md). Usage: [docs/agents.md](docs/agents.md).
+> **One binary, two interfaces:** The **main agent** calls `cam` over **MCP** (`cam mcp`); **subagents** (which rarely inherit MCP tools) call the exact same **CLI** (`cam --json …`). Both share `.cam/cam.db` on disk, 100% local, zero API cost.
 
 ---
 
 ## Get Started
 
-### 1. Install the CLI
+### Option 1: One-Sentence Agent Install (Recommended)
 
-Need Rust first? Install it from [rustup.rs](https://rustup.rs/), then:
+Paste this prompt directly into your coding agent (**Cursor**, **Claude Code**, **Codex**, **Windsurf**, **GitHub Copilot**, **Cline**, etc.) and let it install, index, and wire `cam` for you:
+
+```text
+Install cam from https://github.com/HanochZhu/codeagent_memory: require a working Rust toolchain (rustup), run `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, ensure ~/.cargo/bin (or %USERPROFILE%\.cargo\bin on Windows) is on PATH, then verify with `cam --help`. In this repo run `cam index`. For the main agent, register MCP stdio: command `cam`, args `["mcp"]` (Cursor: .cursor/mcp.json; Claude Code: .mcp.json). Subagents call `cam --json` in the shell. Do not add extra docs.
+```
+
+<details>
+<summary><b>How each IDE / agent handles this prompt</b></summary>
+
+| Environment | What to do |
+| --- | --- |
+| **Cursor / Windsurf / Claude Code / Codex** | Paste into Agent / Chat; the agent runs the terminal install, builds `.cam/cam.db`, and writes the MCP config |
+| **VS Code** (Copilot / Continue / Cline) | Paste into Agent / Chat mode with terminal access enabled |
+| **JetBrains** (IntelliJ / RustRover / GoLand) | Paste into AI Assistant, or run `cargo install` in the built-in terminal |
+
+<sub>Note: `cargo install` places `cam` in `~/.cargo/bin` (Windows: `%USERPROFILE%\.cargo\bin`). Restart your terminal or IDE if `cam` is not immediately found on `PATH`.</sub>
+
+</details>
+
+---
+
+### Option 2: Manual Setup
+
+#### 1. Install the CLI
+
+Requires a [Rust toolchain](https://rustup.rs/):
 
 ```bash
 cargo install --git https://github.com/HanochZhu/codeagent_memory --locked
@@ -76,26 +103,9 @@ cam --help
 ```
 
 <details>
-<summary><b>Paste this into an AI instead (Cursor, Claude Code, Copilot, …)</b></summary>
+<summary><b>Alternative: Build from local clone or run via Docker</b></summary>
 
-```text
-Install cam from https://github.com/HanochZhu/codeagent_memory: require a working Rust toolchain (rustup), run `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, ensure ~/.cargo/bin (or %USERPROFILE%\.cargo\bin on Windows) is on PATH, then verify with `cam --help`. In this repo run `cam index`. For the main agent, register MCP stdio: command `cam`, args `["mcp"]` (Cursor: .cursor/mcp.json; Claude Code: .mcp.json). Subagents call `cam --json` in the shell. Do not add extra docs.
-```
-
-| Environment | How to use it |
-| --- | --- |
-| **Cursor** | Paste into Agent / Chat; it runs the install in the terminal |
-| **VS Code** + Copilot / Continue / Cline | Same: paste into Chat / Agent |
-| **Claude Code** / **Windsurf** / **Codex** | Paste in the conversation and let it run the shell |
-| **JetBrains** (IntelliJ / RustRover / GoLand) | AI Assistant, or run the same `cargo install` in the built-in terminal |
-| **Local terminal** | Skip the AI; run the command above |
-
-<sub>The installer puts `cam` in `~/.cargo/bin` (Windows: `%USERPROFILE%\.cargo\bin`) but **doesn't change your current shell** — open a new terminal if `cam` is not found.</sub>
-
-</details>
-
-<details>
-<summary><b>Build from a local clone</b></summary>
+**From a local clone:**
 
 ```bash
 git clone https://github.com/HanochZhu/codeagent_memory.git
@@ -103,195 +113,69 @@ cd codeagent_memory
 cargo install --path . --locked
 ```
 
-</details>
-
-<details>
-<summary><b>Docker</b></summary>
-
-No Rust toolchain required. Pull the published image and run the stdio server with the current directory mounted at `/work`:
+**Docker (no Rust toolchain required):**
 
 ```bash
 docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.3
 docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.3
 ```
 
-Or build it from this repository: `docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
+Or build locally: `docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
 
 </details>
 
-### 2. Index the project
+#### 2. Index & query your project
 
 ```bash
 cd your-project
-cam index
-```
+cam index                                              # parse repo into .cam/cam.db
 
-<sub>`cam index` creates `.cam/` if needed and parses the tree with tree-sitter into `.cam/cam.db`. Other commands do the same: they auto-init on first use. Leave `cam watch` running if you want the graph to follow later edits.</sub>
+# Query the code graph
+cam ls src/                                            # list files or symbols in a file
+cam read src/main.rs/main                              # read a single symbol body
+cam ref main --dir in                                  # 1-hop callers (in) or callees (out)
 
-### 3. Ask the graph, then remember the answer
-
-```bash
-cam ls src/
-cam read src/main.rs/main
-cam ref main --dir in
+# Query & write to the memory tree
 cam recall "how does hybrid recall fuse BM25 and vectors"
 cam add --summary "..." < notes.md
 ```
 
-**Main agent** (the chat session): wire `cam mcp` once, then call `cam_*` tools. **Subagent** (Task / explore / delegated CLI): run the same commands in the shell. Output is compact by default; pass `--json` when you need structured results.
+<sub>`cam` auto-initializes `.cam/` on first use. Run `cam watch` in the background if you want live incremental graph updates as files change.</sub>
+
+#### 3. Connect MCP for the main agent
+
+Add `cam mcp` to your host's MCP configuration (e.g. `.cursor/mcp.json` or `.mcp.json`):
 
 ```json
-{ "mcpServers": { "cam": { "command": "cam", "args": ["mcp"] } } }
+{
+  "mcpServers": {
+    "cam": {
+      "command": "cam",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
-Paste that into Cursor `.cursor/mcp.json`, Claude Code `.mcp.json`, or the host's MCP settings. Per-tool files: [docs/mcp.md](docs/mcp.md). Who should call MCP vs CLI: [docs/agents.md](docs/agents.md).
+See [docs/mcp.md](docs/mcp.md) for host-specific config paths and [docs/agents.md](docs/agents.md) for main-agent / subagent prompt rules.
 
-The first `recall` / `add` downloads `potion-multilingual-128M`. If that default model is unavailable, `cam` falls back to a hash embedder. Set another model2vec model with `cam config set embedding_model <repo-or-path>` (see [Configuration](#configuration)).
-
----
-
-## Benchmarks
-
-cam has two retrieval planes. Each is scored against the closest open system **on the same corpus**. Do not fold them into one number.
-
-| Plane | Closest analogue | Shared bench |
-|---|---|---|
-| Memory | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid search + tokenized **grep** | [coding-agent-life-v1](eval/coding_life/README.md) |
-| Long-term memory | BM25 / dense memory retrievers | [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) |
-| Code graph | [codegraph](https://github.com/colbymchenry/codegraph) | [LongMemCode](eval/longmemcode/README.md) clap |
-| Workflow retrieval | lexical / BM25 file retrieval | [Agent Retrieval Bench V2](https://agent-retrieval-bench.github.io/) `edit2ripple` |
-| Token cost | full context dump | [DeepSeek multi-turn](eval/llm_multiturn/README.md) |
-
-Mem0, Zep, and Letta are general chat memories. They are not on these two corpora, so they are not in the score tables.
-
-### How the systems differ
-
-| | **cam** | **agentmemory** | **codegraph** |
-|---|---|---|---|
-| What it stores | code graph + memory tree | session / chat memories | code graph |
-| Query | `recall` / `ls` / `read` / `ref` | smart-search / remember | `explore` / callers / callees |
-| Interface | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
-| Fusion | vector + BM25 + **RRF** | BM25 + embed + rerank | FTS5 + graph walk |
-| Local / cost | 100% local, retrieval `$0` | local server | local |
-
-### Memory — coding-agent-life-v1
-
-15 sessions, 15 queries, k=5. Same formula as agentmemory `score.ts`. P@5 ceiling is 0.240.
-
-| system | Hit rate | R@5 | P@5 | source |
-|---|---|---:|---:|---|
-| grep (tokenized substring) | 15 / 15 | 0.967 | 0.227 | this tree, 2026-09-23 |
-| cam min-max sum (legacy) | 15 / 15 | 0.933 | 0.213 | historical result, hash embed |
-| **cam RRF** | **15 / 15** | **1.000** | **0.240** | this tree, hash embed |
-| agentmemory hybrid | 15 / 15 | 1.000 | 0.240 | published v0.9.26 |
-
-![coding-agent-life headline R@5 and P@5 / ceiling](eval/charts/solution-headline.svg)
-
-![coding-agent-life R@5 by question type](eval/charts/solution-recall.svg)
-
-RRF matches the published hybrid ceiling and beats grep on `temporal` (q-015). Min-max sum still drops the second gold on `temporal` and `multi-session-causal` (q-011).
-
-#### Revision chains
-
-The corpus above is flat: one memory per session, no `--supersedes`. `--lineage` re-ingests every conversation turn as a revision that supersedes the previous one and adds two metrics. **newest R@k** asks whether the top-k carried the newest node of each gold chain; **stale `latest`** counts returned hits that claimed `latest` while a newer revision existed.
-
-| k | R@k | P@k | newest R@k | stale `latest` |
-|---:|---:|---:|---:|---:|
-| 5 | 1.000 | 0.240 | 1.000 | **0** |
-| 10 | 1.000 | 0.120 | 1.000 | **0** |
-
-Hash embedder, 2026-09-29. Separating structural hierarchy from revision replacement and collapsing older revisions before top-k raised newest R@5 from 0.567 to 1.000 and newest R@10 from 0.800 to 1.000, while stale `latest` stayed at zero.
-
-### Long-term memory — LongMemEval-S
-
-Cleaned LongMemEval-S, 100 non-abstention questions sampled with seed 42. Each dated session is stored as one memory. Letters and marks outside the Latin script are replaced with spaces, because cam rejects them. Retrieval fuses the embedder with BM25 using RRF at k=10, without an LLM reader. `hash` is the offline test embedder. `potion-multilingual-128M` is the default model.
-
-| embedder | R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| hash | 0.382 | 0.803 | 0.922 | 0.580 | 0.910 | 0.970 | 0.718 |
-| **potion-multilingual-128M** | **0.474** | **0.909** | **0.952** | **0.740** | **0.980** | **0.990** | **0.840** |
-
-MRR = Mean Reciprocal Rank. Hash, debug binary, 8 workers: retrieval P50 / P95 was 24.1 / 35.5 ms and mean per-question ingestion was 1.35 s. Potion, release binary, 8 workers: retrieval P50 / P95 was 1.12 / 1.34 s and mean per-question ingestion was 56.6 s. This is a retrieval-only result: it measures whether gold sessions are returned, not final answer quality.
-
-### Workflow retrieval — Agent Retrieval Bench V2
-
-`edit2ripple`: 58 anchored-change queries over 44 frozen repository snapshots, no LLM. The cam adapter ranks files connected to symbols in the anchored file. All 58 questions are scored; 55 anchor files use supported languages and three Java anchors remain misses.
-
-| system | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
-|---|---:|---:|---:|---:|---:|
-| **cam graph** | 0.300 | 0.335 | 0.378 | **0.297** | 0.300 |
-| lexical | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
-| BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
-
-BCY = Budgeted Context Yield, using the benchmark's canonical 8K-token file-packing protocol. cam graph has the best first-hit rank, while lexical retrieval has much better broad gold coverage; this points to rank fusion rather than graph-only retrieval. cam query P95 was 7.3 ms; indexing the 44 snapshots took 200.2 s with 8 workers.
-
-### Code graph — LongMemCode clap
-
-clap v4.6.1, 536 scenarios, no LLM. cam one-hop vs codegraph 0.9.6 on the same SCIP gold.
-
-| slice | n | cam | codegraph |
-|---|---:|---:|---:|
-| supported (one-hop) | 478 | **0.769** | 0.768 |
-| lookup / file_symbols | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
-| callers / callees | 67 / 18 | **0.397** / 0.811 | 0.355 / **0.867** |
-| implementors | 40 | **0.119** | 0.094 |
-| raw / weighted | 536 | 0.709 / **0.704** | 0.704 / 0.700 |
-
-P95 ≈ 5.2 ms, `$/1k` = 0.
-
-![LongMemCode clap accuracy bars](eval/charts/code-graph-bars.svg)
-
-![LongMemCode clap accuracy by operation](eval/charts/code-graph.svg)
-
-### Multi-turn tokens — DeepSeek
-
-Same conversation twice: dump every session / every `src/*.rs` file, or inject `cam recall` (plus `read` / `ref` on code) for the current turn only. Hash embedder, deepseek-flash, 2026-10-13.
-
-| track | n | full acc. | cam acc. | full tokens | cam tokens | saving |
-|---|---:|---:|---:|---:|---:|---:|
-| memory (coding-agent-life) | 15 | 1.00 | 0.87 | 22796 | 9904 | **57%** |
-| code (this repo after `cam index`) | 6 | 0.83 | 0.33 | 379066 | 6342 | **98%** |
-
-![DeepSeek multi-turn prompt token bars](eval/charts/multiturn-bars.svg)
-
-![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
-
-Mean prompt tokens / turn: memory 1471 → 616; code 63076 → 1000. Code cam misses were retrieval gaps (callers of `fuse_rrf`, Chinese handling in `tokenize_for_fts`, `INITIAL_STABILITY_DAYS`, the `cam add` update rule). The full code dump missed the Chinese-tokenization question; that gold still expects segmentation the function no longer does. Memory cam missed q-002 and q-013.
-
-Corpus locations for every script below live in one file, [eval/datasets.toml](eval/datasets.toml). `coding-agent-life-v1` is not redistributed here and defaults to an `agentmemory` checkout next to this repository; point the entry elsewhere, or override a single run with `CAM_EVAL_CODING_LIFE`.
-
-```bash
-python3 eval/coding_life/run.py --adapter grep
-python3 eval/coding_life/run.py --hash-embed              # RRF
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
-git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
-  eval/agent_retrieval/vendor/agent-retrieval-bench
-python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
-arb download-benchmark --version v2_edit2ripple \
-  --local-dir eval/agent_retrieval/data --force
-python3 eval/agent_retrieval/run.py --workers 8
-python3 eval/llm_multiturn/run.py --track both   # needs DEEPSEEK_API_KEY
-python3 eval/longmemcode/run.py --corpus clap
-python3 eval/charts/generate.py
-```
+<sub>The first `recall` or `add` downloads the default embedding model (`potion-multilingual-128M` to `~/.cam/models/`) and falls back to a lexical hash embedder if offline.</sub>
 
 ---
 
 ## Key Features
 
-| | |
-|---|---|
-| **Code graph in SQLite** | tree-sitter parse into `.cam/cam.db` — list, read, and hop callers/callees without opening whole files |
-| **Live sync** | `cam watch` incrementally updates the graph when source files change |
-| **Virtual paths** | `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file |
-| **Hybrid recall** | Vector + BM25 fused with **RRF** (k=60) |
-| **Revision expansion** | Recall pulls in the newest replacement of whatever matched and hides older revisions by default; `--no-expand` disables expansion and `--include-superseded` keeps history |
-| **Ebbinghaus retention** | `R = exp(-t / S)` moves the recall score by at most 10%; stale and forgotten entries are flagged, never deleted |
-| **Memory tree** | `--parent` creates branching structural hierarchy; `--supersedes` creates a linear replacement revision |
-| **MCP + CLI** | Main agent: `cam_*` tools. Subagent: `cam --json …`. Same binary |
-| **100% local** | No API keys. SQLite + an optional on-disk embedding model under `~/.cam/models/` |
-| **9 languages** | Rust, Python, TypeScript, JavaScript, Go, Java, C, C++, C# |
+| Feature | Details |
+| --- | --- |
+| **SQLite Code Graph** | Tree-sitter parses functions, types, and call edges into `.cam/cam.db` for instant symbol-level navigation |
+| **Virtual Paths** | `src/main.rs` addresses a file outline; `src/main.rs/main` addresses the symbol body directly |
+| **Live Incremental Sync** | `cam sync` hashes file contents; `cam watch` keeps the graph updated on save |
+| **Hybrid Recall (RRF)** | Combines local dense embeddings (`model2vec`) + identifier-aware BM25 via Reciprocal Rank Fusion ($k=60$) |
+| **Revision Chains & Tree** | `--parent` builds branching topic hierarchies; `--supersedes` links linear revisions and folds older entries automatically |
+| **Ebbinghaus Retention** | Retention $R = e^{-t / S}$ gently weights ranking ($\le 10\%$) and flags `stale` / `needs_update` memories without deleting history |
+| **Dual Interface (MCP + CLI)** | Main agent uses `cam_*` MCP tools; subagents run `cam --json …` in the shell |
+| **100% Local & Private** | Zero external API keys; runs entirely on local SQLite and on-disk embeddings |
+| **9 Languages** | Rust, Python, TypeScript, JavaScript, Go, Java, C, C++, C# |
 
 ---
 
@@ -299,159 +183,258 @@ python3 eval/charts/generate.py
 
 ![How cam works](docs/images/how-it-works.svg)
 
-1. **Extraction** — tree-sitter walks the project and stores nodes (functions, types) and edges (calls) in SQLite.
-2. **Surgical read** — `ls` / `read` / `ref` walk a virtual filesystem. `read` returns an outline or a symbol slice; `--full` is the whole file.
-3. **Recall** — `recall` requires an English query, embeds it, runs English-normalized BM25, drops entries far below each path's best, and fuses the two ranked lists with **RRF** (k=60). The result is scaled by `0.9 + 0.1 × R`. The newest replacement of each top match is pulled in and older revisions are folded before top-k.
-4. **Write-back** — after the agent learns something worth keeping, `add` stores an English summary + body. `--parent` adds hierarchy; `--supersedes` replaces an older revision while preserving it for history.
+1. **Extract** — `tree-sitter` walks the workspace and stores symbol definitions and call edges in `.cam/cam.db`.
+2. **Surgical Read** — Agents navigate via virtual paths (`ls` → `find` → `read` → `ref`). Reading a file returns its symbol outline; reading `file/symbol` returns only that symbol's source slice.
+3. **Hybrid Recall** — `recall` takes an English query, embeds it locally, runs identifier-aware BM25 (splitting `snake_case`, `kebab-case`, `camelCase` + English stemming), prunes low-confidence tails, and fuses both lists with **RRF** ($k=60$) scaled by $0.9 + 0.1 \times R$. Superseded revisions are automatically expanded to their newest replacement.
+4. **Write-Back** — When an agent solves a non-trivial task, `add` stores an English summary and body. `--parent` attaches it to a structural topic; `--supersedes` replaces an outdated memory while preserving lineage.
 
-Design notes (Chinese): [DESIGN.md](DESIGN.md).
+Architecture deep dive (Chinese): [DESIGN.md](DESIGN.md).
 
 ---
 
 ## Agent Workflow
 
-`recall` first. If nothing hits, walk the code graph. After you learn something worth keeping, `add`.
+Every coding task follows the same four-step loop:
 
-**Main agent (MCP):** `cam_recall` → `cam_find` / `cam_ls` / `cam_read` / `cam_ref` → `cam_add`. Do not shell out unless MCP is down. Full text: [docs/agents.md](docs/agents.md).
+1. **Recall first** — Query `cam_recall` / `cam recall` in English before grepping. Reuse a hit if it is `latest` and not `needs_update`.
+2. **Ensure indexed** — If graph tools return `not_indexed`, run `cam_index` / `cam index` once for the project.
+3. **Walk the graph** — On a memory miss, locate symbols with `find` or `ls`, read symbol bodies with `read <file>/<symbol>`, and trace callers/callees with `ref <symbol> --dir in|out`.
+4. **Write back** — Persist newly discovered architecture facts or fixes with `cam_add` / `cam add` in English.
 
-**Subagent (CLI):**
+| Role | Interface | Typical Usage |
+| --- | --- | --- |
+| **Main Agent** (Chat / IDE session) | **MCP** (`cam mcp`) | Calls `cam_recall`, `cam_find`, `cam_ls`, `cam_read`, `cam_ref`, `cam_add`, `cam_mem_tree`, `cam_mem_show` directly |
+| **Subagent** (Task / explore / CLI) | **CLI** (`cam --json`) | Runs `cam --json --project <dir> <cmd>` in the shell (subagents rarely inherit MCP tools) |
 
-```text
-cam --json index
-cam --json sync
-cam --json watch
-cam --json ls src/
-cam --json read src/memory/recall/fuse.rs/fuse_rrf
-cam --json ref fuse_rrf --dir in
-cam --json recall "how to fuse BM25 and vector recall"
-cam --json add --summary "..." --body "..."
-cam --json mem tree
-cam --json mem show <id>
-cam --json status
-cam mcp
-```
-
-Global flags: `--project <dir>`, `--json` (compact JSON), `--pretty` (pretty JSON, implies `--json`). Without `--project`, resolution is `CAM_PROJECT`, then walk up for `.cam` / `.git`. With `--json`, failures print `{"error":{"code":…,"message":…}}` to stdout and exit non-zero. Start the MCP server with `cam mcp` (optional `--project`).
+Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 
 ---
 
 ## CLI Reference
 
-```bash
-cam index                                # Parse the project with tree-sitter into SQLite
-cam sync                                 # Incrementally update the graph for changed files
-cam watch [--debounce-ms N]              # Watch source files; --json streams one report per sync
-cam ls [virt_path]                       # List directories / files / symbols
-cam read <virt_path> [--full]            # File outline or symbol body
-cam ref <symbol> --dir in|out [--file SUBSTR] [--kind KIND] [--scope DIR]  # One-hop callers (in) or callees (out); --callers / --callees aliases
-cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]   # Symbols whose name contains <query>
-cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]  # Hybrid recall: vector + BM25 fused with RRF
-cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]  # Store a memory (body: --body, --file, or stdin)
-cam mem tree                             # Print the memory tree
-cam mem show <id>                        # Show one memory
-cam status                               # Resolved project, database counts, and config
-cam config get | config set stale_days N | config set embedding_model <model> # Read or update ~/.cam/config.toml
-cam mcp                                  # MCP stdio server for the main agent
-```
+### Code Graph Commands
 
-| Command | What it does |
+| Command | Description |
 | --- | --- |
-| `cam index` | Parse with tree-sitter into SQLite (`.cam/cam.db`); creates `.cam/` if needed |
-| `cam sync` | Incrementally update the graph from content hashes |
-| `cam watch` | Debounced file watcher that runs `sync` on source changes |
-| `cam ls [path]` | List directories / files / symbols |
-| `cam read <path>` | File outline or symbol body; `--full` for the whole file |
-| `cam ref <symbol> --dir in\|out` | One-hop callers / callees. A name shared by several definitions returns `status: ambiguous` with ranked `candidates`; re-run with a candidate `id`, or narrow with `--file` / `--kind` / `--scope` |
-| `cam find <query>` | Case-insensitive substring search over symbol names (not body text). Exact names first, then prefixes; each hit has a virtual `path` and `id` for `read` / `ref` |
-| `cam recall "<one English sentence>"` | Vector + BM25 fused with **RRF** (k=60); `--no-expand` skips revision expansion; `--include-superseded` keeps history; `--snippets` clips long bodies below the top hit (`body_truncated`) |
-| `cam add --summary "..." [--parent ID] [--supersedes ID]` | Store an English memory; `parent` is structural and `supersedes` replaces an older revision |
-| `cam mem tree` / `cam mem show <id>` | Browse the memory tree |
-| `cam status` | Resolved project root, db path, node/edge/memory counts, config |
-| `cam config get` / `cam config set stale_days N` / `cam config set embedding_model <model>` | Read or update `~/.cam/config.toml` |
-| `cam mcp` | Stdio MCP server (main agent). See [docs/mcp.md](docs/mcp.md) |
+| `cam index` | Parse the project with tree-sitter into `.cam/cam.db` (creates `.cam/` if needed) |
+| `cam sync` | Incrementally update the graph for modified files using content hashes |
+| `cam watch [--debounce-ms N]` | Watch source files and auto-sync (`--json` streams one JSON report per sync) |
+| `cam ls [virt_path]` | List directories, files, or symbols inside a file |
+| `cam read <virt_path> [--full]` | Read a file's symbol outline, a specific symbol body (`path/symbol`), or the `--full` file |
+| `cam find <query> [--kind K] [--file S] [--scope D] [--limit N]` | Case-insensitive substring search over symbol names (exact matches first, then prefixes) |
+| `cam ref <symbol> --dir in\|out [--file S] [--kind K] [--scope D]` | 1-hop callers (`in` / `--callers`) or callees (`out` / `--callees`). Returns ranked `candidates` on ambiguous names |
 
-Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Node ids (`src/main.rs:function:main:12`) from an ambiguous answer are accepted wherever a symbol is.
+### Memory Commands
 
-**Multi-repo folders.** `.gitignore` and `.camignore` (same syntax) are honored at any depth, even when the root itself is not a git repo. Submodules and linked worktrees (directories whose `.git` is a file) are skipped; nested standalone clones are indexed, and `cam ls` lists them with kind `project` so you can pass that path as `--scope`.
+| Command | Description |
+| --- | --- |
+| `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` | Hybrid RRF recall (English query). `--no-expand` skips newest-revision expansion; `--include-superseded` keeps old revisions; `--snippets` clips long bodies below rank 1 |
+| `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` | Store an English memory (`--body`, `--file`, or `stdin`). `--parent` for topic hierarchy; `--supersedes` to replace an older memory |
+| `cam mem tree` | Render the memory hierarchy and revision chains |
+| `cam mem show <id>` | Inspect a single memory entry in full |
+
+### Server & Configuration Commands
+
+| Command | Description |
+| --- | --- |
+| `cam mcp` | Start the stdio MCP server for the main agent (see [docs/mcp.md](docs/mcp.md)) |
+| `cam status` | Show resolved project root, database path, node/edge/memory counts, and active config |
+| `cam config get` | Print current `~/.cam/config.toml` settings |
+| `cam config set stale_days <N>` | Set age threshold (in days) for marking memories `stale` |
+| `cam config set embedding_model <model>` | Set Hugging Face model2vec repo, local model directory, `hash`, or `default` |
+
+**Global flags & conventions:**
+- `--project <dir>` (or `CAM_PROJECT` env var) overrides automatic upward `.cam` / `.git` root detection.
+- `--json` emits compact JSON (`--pretty` for indented JSON). Errors on `--json` print `{"error":{"code":…,"message":…}}` to `stdout` and exit non-zero.
+- **Ambiguous symbols:** When `read` or `ref` matches multiple definitions, `cam` returns `status: "ambiguous"` with candidate node IDs (e.g. `src/main.rs:function:main:12`) that can be passed directly back to `read` or `ref`.
+- **Ignore rules & multi-repo directories:** Honors `.gitignore` and `.camignore` at any depth. Skips git submodules and linked worktrees; indexes nested standalone clones as `kind: "project"` (passable to `--scope`).
 
 ---
 
 ## Memory Rules
 
-- Entries older than `stale_days` in `~/.cam/config.toml` (default 30) are marked `stale`
-- Ebbinghaus retention `R = exp(-t / S)`: the sort score is `relevance × (0.9 + 0.1 × R)`; `R < 0.3` is marked `needs_update`
-- A successful returned match (`needs_update = false`) refreshes C0 and multiplies `S` by 1.7. Expanded revisions and filtered older revisions are not refreshed
-- Memories are never deleted. The newest node of each linear `supersedes` chain is `latest`; older revisions are hidden by default and available with `--include-superseded`
-- Use `--parent` for branching hierarchy and `--supersedes` for a complete replacement revision
-- Recall queries and stored memory summaries/bodies must be in English. Inputs containing non-Latin scripts are rejected
-- BM25 splits snake_case, kebab-case, and camelCase identifiers and indexes both surface and English-stemmed terms
+- **English-only indexing:** Queries, summaries, and bodies must be written in English (non-Latin scripts are rejected so BM25 stemming and embeddings share one language space).
+- **Retention & reinforcement:** Ebbinghaus retention $R = e^{-t / S}$ adjusts recall score via $\text{relevance} \times (0.9 + 0.1 \times R)$. Entries with $R < 0.3$ are marked `needs_update`; entries older than `stale_days` (default `30`) are marked `stale`. Every valid recall hit (`needs_update = false`) refreshes last-accessed time and multiplies stability $S$ by `1.7`.
+- **Non-destructive lineage:** Memories are never deleted. `--parent` forms branching trees; `--supersedes` forms linear revision chains where only the tail is marked `latest` and older revisions are folded out of default recall results.
 
 ---
 
 ## Configuration
 
-`~/.cam/config.toml`:
+Global settings live in `~/.cam/config.toml`:
 
 ```toml
 stale_days = 30
-# embedding_model = "minishlab/potion-base-8M"  # Hugging Face model2vec repo
-# embedding_model = "/path/to/model2vec"         # local tokenizer.json + config.json + model.safetensors
-# embedding_model = "hash"                       # no download; lexical hash only
+# embedding_model = "minishlab/potion-multilingual-128M" # default (cached under ~/.cam/models/)
+# embedding_model = "minishlab/potion-base-8M"           # lighter Hugging Face model2vec repo
+# embedding_model = "/path/to/local/model2vec"           # dir with tokenizer.json, config.json, model.safetensors
+# embedding_model = "hash"                               # zero-download lexical hash embedder
 ```
 
-`embedding_model` defaults to `minishlab/potion-multilingual-128M`. `default` clears a custom value. `CAM_EMBED_MODEL` overrides the file for one process. The first `recall` after a model change re-embeds stored memories with the new model before scoring, so vector recall keeps working. Downloaded models are cached under `~/.cam/models/`.
+Use `CAM_EMBED_MODEL` to override the model for a single process, or `cam config set embedding_model default` to reset. When the embedding model changes, the next `recall` automatically re-embeds existing memories before scoring.
 
 ---
 
-## Supported Platforms
+## Benchmarks
 
-`cam` is a Rust binary. `cargo install` builds it for the machine you are on:
+`cam` evaluates its code graph and memory planes separately against the closest open-source systems **on identical corpora**:
 
-| Platform | Install |
-|----------|---------|
-| Windows | `cargo install --git … --locked` |
-| macOS | `cargo install --git … --locked` |
-| Linux | `cargo install --git … --locked` |
+| Plane | Baseline / Analogue | Benchmark Corpus | Headline Takeaway |
+| --- | --- | --- | --- |
+| **Memory** | [agentmemory](https://github.com/rohitg00/agentmemory) hybrid + tokenized `grep` | [coding-agent-life-v1](eval/coding_life/README.md) | **1.000 R@5 / 0.240 P@5** (matches hybrid ceiling, **1.000 newest R@5** on revision chains) |
+| **Long-term Memory** | BM25 / dense retrievers | [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) | **0.909 R@5 / 0.980 Hit@5 / 0.840 MRR** with `potion-multilingual-128M` |
+| **Code Graph** | [codegraph](https://github.com/colbymchenry/codegraph) v0.9.6 | [LongMemCode](eval/longmemcode/README.md) (`clap`) | **0.769** vs 0.768 on supported 1-hop tasks, P95 ≈ 5.2 ms, `$0` |
+| **Workflow Retrieval** | Lexical / BM25 file retrieval | [Agent Retrieval Bench V2](https://agent-retrieval-bench.github.io/) `edit2ripple` | **0.297 MRR** (best first-hit rank, P95 7.3 ms) |
+| **Multi-turn Tokens** | Full context dump | [DeepSeek multi-turn](eval/llm_multiturn/README.md) | **57% fewer tokens** on memory track, **98% fewer tokens** on code track |
 
-See [Get Started](#get-started) for the full command.
+<sub>General chat memory frameworks (Mem0, Zep, Letta) target conversational logs rather than these coding-agent corpora and are omitted from the tables below.</sub>
+
+### System Comparison
+
+| | **cam** | **agentmemory** | **codegraph** |
+| --- | --- | --- | --- |
+| **What it stores** | Code graph + memory tree | Session / chat memories | Code graph |
+| **Query primitives** | `recall` / `ls` / `find` / `read` / `ref` | `smart-search` / `remember` | `explore` / callers / callees |
+| **Interface** | **MCP + CLI** | MCP + REST + hooks | MCP + CLI |
+| **Ranking / Fusion** | Vector + BM25 + **RRF** + retention | BM25 + embed + rerank | FTS5 + graph walk |
+| **Cost** | 100% local (`$0`) | Local server | Local |
+
+### 1. Memory — `coding-agent-life-v1`
+
+15 sessions, 15 queries, $k=5$ (same scoring as `agentmemory` `score.ts`; P@5 ceiling is `0.240`).
+
+| System | Hit Rate | R@5 | P@5 | Source |
+| --- | --- | ---: | ---: | --- |
+| `grep` (tokenized substring) | 15 / 15 | 0.967 | 0.227 | this repo, 2026-09-23 |
+| `cam` min-max sum (legacy) | 15 / 15 | 0.933 | 0.213 | historical, hash embed |
+| **`cam` RRF** | **15 / 15** | **1.000** | **0.240** | this repo, hash embed |
+| `agentmemory` hybrid | 15 / 15 | 1.000 | 0.240 | published v0.9.26 |
+
+![coding-agent-life headline R@5 and P@5 / ceiling](eval/charts/solution-headline.svg)
+
+![coding-agent-life R@5 by question type](eval/charts/solution-recall.svg)
+
+**Revision chains (`--lineage`):** Re-ingesting every turn as a `--supersedes` revision tests whether top-$k$ returns the newest node of each gold chain (**newest R@k**) and whether any superseded node falsely claims `latest` (**stale `latest`**).
+
+| k | R@k | P@k | newest R@k | stale `latest` |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 1.000 | 0.240 | **1.000** | **0** |
+| 10 | 1.000 | 0.120 | **1.000** | **0** |
+
+### 2. Long-Term Memory — `LongMemEval-S`
+
+100 non-abstention questions sampled with seed 42 from cleaned `LongMemEval-S`. Retrieval fuses embeddings + BM25 with RRF at $k=10$ without an LLM reader.
+
+| Embedder | R@1 | R@5 | R@10 | Hit@1 | Hit@5 | Hit@10 | MRR | Retrieval P50 / P95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `hash` (offline test) | 0.382 | 0.803 | 0.922 | 0.580 | 0.910 | 0.970 | 0.718 | 24.1 / 35.5 ms |
+| **`potion-multilingual-128M`** | **0.474** | **0.909** | **0.952** | **0.740** | **0.980** | **0.990** | **0.840** | 1.12 / 1.34 s |
+
+### 3. Workflow Retrieval — Agent Retrieval Bench V2 (`edit2ripple`)
+
+58 anchored-change queries across 44 frozen repository snapshots (no LLM; BCY = Budgeted Context Yield under the canonical 8K-token file-packing protocol).
+
+| System | Recall@5 | Recall@10 | Recall@20 | MRR | BCY@8k |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **`cam` graph** | 0.300 | 0.335 | 0.378 | **0.297** | 0.300 |
+| Lexical | **0.412** | **0.536** | **0.588** | 0.243 | **0.447** |
+| BM25 | 0.207 | 0.287 | 0.499 | 0.154 | 0.243 |
+
+`cam` graph achieves the highest first-hit rank (MRR `0.297`, query P95 `7.3 ms`), while lexical search provides broader multi-file coverage — motivating graph + lexical rank fusion.
+
+### 4. Code Graph — LongMemCode (`clap`)
+
+`clap` v4.6.1, 536 scenarios against SCIP gold (no LLM, P95 ≈ 5.2 ms, `$/1k` = 0).
+
+| Slice | n | `cam` | `codegraph` 0.9.6 |
+| --- | ---: | ---: | ---: |
+| **Supported (1-hop)** | 478 | **0.769** | 0.768 |
+| `lookup` / `file_symbols` | 293 / 55 | 0.808 / 0.915 | 0.808 / 0.915 |
+| `callers` / `callees` | 67 / 18 | **0.397** / 0.811 | 0.355 / **0.867** |
+| `implementors` | 40 | **0.119** | 0.094 |
+| Raw / Weighted (all 536) | 536 | **0.709** / **0.704** | 0.704 / 0.700 |
+
+![LongMemCode clap accuracy bars](eval/charts/code-graph-bars.svg)
+
+![LongMemCode clap accuracy by operation](eval/charts/code-graph.svg)
+
+### 5. Multi-Turn Token Savings — DeepSeek
+
+Full context dump vs. per-turn `cam` retrieval (`deepseek-flash`, hash embedder, 2026-10-13):
+
+| Track | n | Full Acc. | `cam` Acc. | Full Tokens | `cam` Tokens | Token Saving |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Memory** (`coding-agent-life`) | 15 | 1.00 | 0.87 | 22,796 | 9,904 | **57%** (1,471 → 616 / turn) |
+| **Code** (this repo indexed) | 6 | 0.83 | 0.33 | 379,066 | 6,342 | **98%** (63,076 → 1,000 / turn) |
+
+![DeepSeek multi-turn prompt token bars](eval/charts/multiturn-bars.svg)
+
+![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
+
+<details>
+<summary><b>Reproduce all benchmarks</b></summary>
+
+Dataset paths are configured in [eval/datasets.toml](eval/datasets.toml) (`coding-agent-life-v1` defaults to `../agentmemory` or `CAM_EVAL_CODING_LIFE`).
+
+```bash
+python3 eval/coding_life/run.py --adapter grep
+python3 eval/coding_life/run.py --hash-embed                                # RRF
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
+
+git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
+  eval/agent_retrieval/vendor/agent-retrieval-bench
+python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
+arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval/data --force
+python3 eval/agent_retrieval/run.py --workers 8
+
+python3 eval/llm_multiturn/run.py --track both   # requires DEEPSEEK_API_KEY
+python3 eval/longmemcode/run.py --corpus clap
+python3 eval/charts/generate.py
+```
+
+</details>
 
 ---
 
 ## Supported Agents
 
-**Main agent:** register `cam mcp` (stdio). **Subagent:** same CLI, no extra wiring.
+Register `cam mcp` (stdio) for the **main agent**; **subagents** use the `cam --json` CLI directly with zero extra setup.
 
-| Host | MCP config | Notes |
+| Host | MCP Configuration | Subagent / Notes |
 | --- | --- | --- |
-| Cursor | `.cursor/mcp.json` or `~/.cursor/mcp.json`, or the `codeagent-memory` plugin | Task / explore subagents use CLI |
-| Claude Code | `.mcp.json` / `~/.claude.json` / `claude mcp add` | Limited-tool subagents use CLI |
-| Codex | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` uses CLI |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | Cascade = MCP |
-| GitHub Copilot | `.vscode/mcp.json` / `~/.copilot/mcp-config.json` | Chat = MCP; CLI scripts = CLI |
-| Continue | `~/.continue/config.yaml` | |
-| Cline | `~/.cline/mcp.json` | |
-| JetBrains | AI Assistant → MCP | Use an absolute `cam.exe` if PATH is empty |
-| Gemini CLI / Antigravity / OpenCode / Zed / Droid | see [docs/mcp.md](docs/mcp.md) | |
+| **Cursor** | `.cursor/mcp.json`, `~/.cursor/mcp.json`, or `.cursor-plugin/plugin.json` | `Task` / `explore` subagents use CLI |
+| **Claude Code** | `.mcp.json`, `~/.claude.json`, or `claude mcp add cam -- cam mcp` | Limited-tool subagents use CLI |
+| **Codex** | `~/.codex/config.toml` → `[mcp_servers.cam]` | `codex exec` uses CLI |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | Cascade uses MCP |
+| **GitHub Copilot** | `.vscode/mcp.json` or `~/.copilot/mcp-config.json` | Chat uses MCP; CLI scripts use CLI |
+| **Continue / Cline** | `~/.continue/config.yaml` / `~/.cline/mcp.json` | |
+| **JetBrains** | AI Assistant → MCP (`cam` / `mcp`) | Use absolute path to `cam` if IDE `PATH` is empty |
+| **Gemini CLI / Antigravity / OpenCode / Zed / Droid** | See [docs/mcp.md](docs/mcp.md) | |
 
-Paste the [one-sentence install](#get-started) into the agent, then add the MCP block. Copy-paste files: [docs/mcp.md](docs/mcp.md). Agent prompts: [docs/agents.md](docs/agents.md).
-
-The Cursor plugin (`.cursor-plugin/plugin.json`) registers the same `cam mcp` server and a skill. Install the `cam` binary first and keep it on `PATH`; the plugin does not ship the binary.
+Copy-paste configs: [docs/mcp.md](docs/mcp.md) · System prompts: [docs/agents.md](docs/agents.md).
 
 ---
 
 ## Supported Languages
 
-| Language | Extension | What is indexed |
-|----------|-----------|-----------------|
-| Rust | `.rs` | functions, structs, enums, traits, calls |
-| Python | `.py` | functions, classes, calls |
-| TypeScript | `.ts`, `.tsx` | functions, methods, classes, calls |
-| JavaScript | `.js`, `.jsx` | functions, methods, classes, calls |
-| Go | `.go` | functions, methods, structs, calls |
-| Java | `.java` | functions, methods, classes, interfaces, calls |
-| C | `.c` | functions, structs, calls |
-| C++ | `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp` | functions, methods, classes, structs, calls |
-| C# | `.cs` | functions, methods, classes, interfaces, calls |
+| Language | Extensions | Indexed Nodes & Edges |
+| --- | --- | --- |
+| **Rust** | `.rs` | functions, structs, enums, traits, calls |
+| **Python** | `.py` | functions, classes, calls |
+| **TypeScript** | `.ts`, `.tsx` | functions, methods, classes, calls |
+| **JavaScript** | `.js`, `.jsx` | functions, methods, classes, calls |
+| **Go** | `.go` | functions, methods, structs, calls |
+| **Java** | `.java` | functions, methods, classes, interfaces, calls |
+| **C** | `.c` | functions, structs, calls |
+| **C++** | `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp` | functions, methods, classes, structs, calls |
+| **C#** | `.cs` | functions, methods, classes, interfaces, calls |
+
+---
+
+## Supported Platforms
+
+`cam` compiles natively on **macOS**, **Linux**, and **Windows** via `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, or runs anywhere via Docker (`ghcr.io/hanochzhu/codeagent-memory:0.1.3`). See [Get Started](#get-started).
 
 ---
 
