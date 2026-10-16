@@ -4,6 +4,8 @@ Compare a full context dump against cam retrieval in one conversation. Token cou
 
 ```bash
 # needs DEEPSEEK_API_KEY in .env (MODEL / DEEPSEEK_BASE_URL optional)
+# default recall vector is potion-multilingual-128M and errors if the model fails to load
+# add --hash-embed for the hash tables below
 python3 eval/llm_multiturn/run.py
 python3 eval/llm_multiturn/run.py --track solutions
 python3 eval/llm_multiturn/run.py --track code

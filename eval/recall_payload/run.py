@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import shutil
 import statistics
@@ -37,7 +36,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import cam_binary, dataset  # noqa: E402
+from eval_paths import (  # noqa: E402
+    POTION_MODEL,
+    add_hash_embed_argument,
+    cam_binary,
+    dataset,
+    embed_env,
+)
 
 HERE = Path(__file__).resolve().parent
 
@@ -59,12 +64,12 @@ except ImportError:
 
 
 class Mcp:
-    def __init__(self, executable: Path, project: Path) -> None:
+    def __init__(self, executable: Path, project: Path, *, hash_embed: bool = False) -> None:
         self.next_id = 1
         self.process = subprocess.Popen(
             [str(executable), "mcp", "--project", str(project)],
             cwd=project,
-            env={**os.environ, "CAM_HASH_EMBED": "1"},
+            env=embed_env(hash_embed=hash_embed),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -181,7 +186,7 @@ def key_of(hit: dict, keys: list[str]) -> str | None:
 
 
 def measure(mcp: Mcp, group: dict, query: dict, limit: int, snippets: bool) -> dict:
-    args = {"query": query["question"], "limit": limit, "hash_embed": True}
+    args = {"query": query["question"], "limit": limit}
     if snippets:
         args["snippets"] = True
     text = mcp.call_text("cam_recall", args)
@@ -207,14 +212,12 @@ def measure(mcp: Mcp, group: dict, query: dict, limit: int, snippets: bool) -> d
     }
 
 
-def ingest(cam: Path, root: Path, memories: list[dict]) -> bool:
+def ingest(cam: Path, root: Path, memories: list[dict], *, hash_embed: bool = False) -> bool:
     """False when cam rejects a memory (non-Latin text); the group is skipped."""
-    with Mcp(cam, root) as mcp:
+    with Mcp(cam, root, hash_embed=hash_embed) as mcp:
         for m in memories:
             try:
-                mcp.call_text(
-                    "cam_add", {"summary": m["summary"], "body": m["body"], "hash_embed": True}
-                )
+                mcp.call_text("cam_add", {"summary": m["summary"], "body": m["body"]})
             except RuntimeError as exc:
                 if "must be written in English" in str(exc):
                     return False
@@ -222,7 +225,7 @@ def ingest(cam: Path, root: Path, memories: list[dict]) -> bool:
     return True
 
 
-def run(baseline: Path, candidate: Path, groups: list[dict], limit: int) -> dict:
+def run(baseline: Path, candidate: Path, groups: list[dict], limit: int, *, hash_embed: bool = False) -> dict:
     arms = {
         "baseline": (baseline, False),
         "slim": (candidate, False),
@@ -234,14 +237,14 @@ def run(baseline: Path, candidate: Path, groups: list[dict], limit: int) -> dict
         with tempfile.TemporaryDirectory(prefix="cam-payload-") as tmp:
             seed = Path(tmp) / "seed"
             seed.mkdir()
-            if not ingest(candidate, seed, group["memories"]):
+            if not ingest(candidate, seed, group["memories"], hash_embed=hash_embed):
                 skipped += 1
                 continue
             for name, (cam, snippets) in arms.items():
                 # Recall refreshes retention, so each arm gets an untouched copy.
                 root = Path(tmp) / name
                 shutil.copytree(seed, root)
-                with Mcp(cam, root) as mcp:
+                with Mcp(cam, root, hash_embed=hash_embed) as mcp:
                     for q in group["queries"]:
                         rows[name].append(measure(mcp, group, q, limit, snippets))
         if len(groups) > 1 and gi % 10 == 0:
@@ -256,6 +259,7 @@ def run(baseline: Path, candidate: Path, groups: list[dict], limit: int) -> dict
         "skipped_non_english": skipped,
         "limit": limit,
         "tokenizer": TOKENIZER,
+        "embedder": "hash" if hash_embed else POTION_MODEL,
     }
     for name in arms:
         t = total(name, "tokens")
@@ -286,6 +290,7 @@ def main() -> int:
     p.add_argument("--limit", type=int, default=3)
     p.add_argument("--sample", type=int, default=50, help="longmemeval instances")
     p.add_argument("--seed", type=int, default=42)
+    add_hash_embed_argument(p)
     args = p.parse_args()
     candidate = (args.candidate or cam_binary()).resolve()
     baseline = args.baseline.resolve()
@@ -295,7 +300,7 @@ def main() -> int:
     else:
         groups = load_longmemeval(dataset("longmemeval"), args.sample, args.seed)
 
-    out = run(baseline, candidate, groups, args.limit)
+    out = run(baseline, candidate, groups, args.limit, hash_embed=args.hash_embed)
     out["summary"]["corpus"] = args.corpus
     results = HERE / "results"
     results.mkdir(exist_ok=True)

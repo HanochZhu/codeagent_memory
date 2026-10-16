@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -19,7 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import cam_binary, dataset  # noqa: E402
+from eval_paths import (  # noqa: E402
+    POTION_MODEL,
+    add_hash_embed_argument,
+    cam_binary,
+    dataset,
+    embed_env,
+)
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -169,11 +174,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--data", type=Path, default=DEFAULT_DATA)
     p.add_argument("--k", type=int, default=5)
-    p.add_argument(
-        "--hash-embed",
-        action="store_true",
-        help="use the test hash embedder (no model2vec download)",
-    )
+    add_hash_embed_argument(p)
     p.add_argument(
         "--adapter",
         choices=("cam", "grep"),
@@ -207,9 +208,7 @@ def main() -> int:
     else:
         cam = cam_binary()
         embed_flag = ["--hash-embed"] if args.hash_embed else []
-        env = os.environ.copy()
-        if not args.hash_embed:
-            env["CAM_REQUIRE_MODEL2VEC"] = "1"
+        env = embed_env(hash_embed=args.hash_embed)
         expand_flag = ["--no-expand"] if args.no_expand else []
 
         with tempfile.TemporaryDirectory(prefix="cam-life-") as tmp:
@@ -257,7 +256,7 @@ def main() -> int:
         "embedder": (
             "n/a"
             if args.adapter == "grep"
-            else ("hash" if args.hash_embed else "potion-multilingual-128M")
+            else ("hash" if args.hash_embed else POTION_MODEL)
         ),
         "fusion": None if args.adapter == "grep" else "rrf",
         "corpus": "lineage" if args.lineage else "flat",

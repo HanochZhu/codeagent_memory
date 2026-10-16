@@ -24,7 +24,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import POTION_MODEL, cam_binary, dataset, embed_env  # noqa: E402
+from eval_paths import (  # noqa: E402
+    POTION_MODEL,
+    add_hash_embed_argument,
+    cam_binary,
+    dataset,
+    embed_env,
+)
 
 HERE = Path(__file__).resolve().parent
 DATA_URL = (
@@ -296,11 +302,7 @@ def main() -> int:
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument(
-        "--hash-embed",
-        action="store_true",
-        help="use the hash embedder instead of potion-multilingual-128M",
-    )
+    add_hash_embed_argument(parser)
     args = parser.parse_args()
 
     download(DATA_URL, args.data)

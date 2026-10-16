@@ -17,7 +17,7 @@ python3 eval/coding_life/run.py --hash-embed --lineage
 python3 eval/coding_life/run.py --hash-embed --lineage --no-expand
 ```
 
-Without `--hash-embed`, `CAM_REQUIRE_MODEL2VEC=1` is set so a failed model download does not silently fall back to the hash embedder.
+Without `--hash-embed`, recall loads `potion-multilingual-128M`. A failed model load is an error, not a fallback to the hash embedder. `--hash-embed` is the other path. The published RRF row and the revision-chain table were measured with `--hash-embed`.
 
 Reports R@5, hit rate, P@5 (ceiling 0.240). Recall uses RRF (k=60).
 

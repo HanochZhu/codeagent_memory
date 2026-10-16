@@ -35,7 +35,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import cam_binary, dataset  # noqa: E402
+from eval_paths import (  # noqa: E402
+    POTION_MODEL,
+    add_hash_embed_argument,
+    apply_embed_env,
+    cam_binary,
+    dataset,
+)
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -491,10 +497,10 @@ def main() -> int:
     )
     p.add_argument("--no-full", action="store_true", help="skip the full-dump arms")
     p.add_argument("--data", type=Path, default=DEFAULT_LIFE)
-    p.add_argument("--hash-embed", action="store_true", default=True)
-    p.add_argument("--potion", action="store_true", help="use potion embedder instead of hash")
+    add_hash_embed_argument(p)
     args = p.parse_args()
-    hash_embed = not args.potion
+    hash_embed = args.hash_embed
+    apply_embed_env(hash_embed)
     key, base, model = llm_config()
     cam = cam_bin()
 
@@ -592,7 +598,7 @@ def main() -> int:
     summary = {
         "model": model,
         "resolved_model": ping["raw_model"],
-        "embedder": "hash" if hash_embed else "potion-multilingual-128M",
+        "embedder": "hash" if hash_embed else POTION_MODEL,
         "tracks": {
             name: {
                 part: (

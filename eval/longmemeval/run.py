@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import random
 import statistics
 import subprocess
@@ -22,7 +21,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval_paths import cam_binary, dataset  # noqa: E402
+from eval_paths import (  # noqa: E402
+    POTION_MODEL,
+    add_hash_embed_argument,
+    cam_binary,
+    dataset,
+    embed_env,
+)
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -50,18 +55,9 @@ def download(url: str, dest: Path) -> None:
     partial.replace(dest)
 
 
-POTION_MODEL = "minishlab/potion-multilingual-128M"
-
-
 class CamMcp:
     def __init__(self, executable: Path, project: Path, hash_embed: bool) -> None:
-        env = os.environ.copy()
-        if hash_embed:
-            env["CAM_HASH_EMBED"] = "1"
-        else:
-            env.pop("CAM_HASH_EMBED", None)
-            env["CAM_EMBED_MODEL"] = POTION_MODEL
-            env["CAM_REQUIRE_MODEL2VEC"] = "1"
+        env = embed_env(hash_embed=hash_embed)
         self.next_id = 1
         self.process = subprocess.Popen(
             [str(executable), "mcp", "--project", str(project)],
@@ -308,13 +304,8 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument(
-        "--potion",
-        action="store_true",
-        help=f"embed with {POTION_MODEL} instead of the hash embedder",
-    )
+    add_hash_embed_argument(parser)
     args = parser.parse_args()
-    args.hash_embed = not args.potion
 
     download(DATA_URL, args.data)
     data_bytes = args.data.read_bytes()

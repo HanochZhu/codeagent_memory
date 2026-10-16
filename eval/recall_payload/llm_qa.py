@@ -34,7 +34,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
-from eval_paths import cam_binary, dataset  # noqa: E402
+from eval_paths import POTION_MODEL, add_hash_embed_argument, cam_binary, dataset  # noqa: E402
 from run import Mcp, ingest, load_longmemeval  # noqa: E402
 
 MAX_TOOL_ROUNDS = 4
@@ -120,7 +120,7 @@ def chat(messages: list[dict], max_tokens: int, tools: list | None = None) -> di
 def answer(
     mcp: Mcp, question: str, question_date: str, limit: int, system: str, snippets: bool
 ) -> dict:
-    args = {"query": question, "limit": limit, "hash_embed": True}
+    args = {"query": question, "limit": limit}
     if snippets:
         args["snippets"] = True
     recall_text = mcp.call_text("cam_recall", args)
@@ -182,20 +182,25 @@ def judge(question: str, gold: str, response: str, qtype: str) -> tuple[bool, in
 
 
 def run_instance(
-    group: dict, arms: dict[str, tuple[Path, bool]], limit: int, system: str
+    group: dict,
+    arms: dict[str, tuple[Path, bool]],
+    limit: int,
+    system: str,
+    *,
+    hash_embed: bool = False,
 ) -> dict | None:
     q = group["queries"][0]
     inst = group["instance"]
     with tempfile.TemporaryDirectory(prefix="cam-llmqa-") as tmp:
         seed = Path(tmp) / "seed"
         seed.mkdir()
-        if not ingest(arms["tiered"][0], seed, group["memories"]):
+        if not ingest(arms["tiered"][0], seed, group["memories"], hash_embed=hash_embed):
             return None
         out = {"question_id": inst["question_id"], "type": inst["question_type"]}
         for name, (cam, snippets) in arms.items():
             root = Path(tmp) / name
             shutil.copytree(seed, root)
-            with Mcp(cam, root) as mcp:
+            with Mcp(cam, root, hash_embed=hash_embed) as mcp:
                 res = answer(
                     mcp, q["question"], inst.get("question_date", ""), limit, system, snippets
                 )
@@ -217,6 +222,7 @@ def main() -> int:
     p.add_argument("--limit", type=int, default=3)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--strict", action="store_true", help="push the agent to open every snippet")
+    add_hash_embed_argument(p)
     args = p.parse_args()
     system = SYSTEM + (STRICT if args.strict else "")
     candidate = (args.candidate or cam_binary()).resolve()
@@ -229,7 +235,14 @@ def main() -> int:
     groups = load_longmemeval(dataset("longmemeval"), args.sample, args.seed)
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        rows = [r for r in pool.map(lambda g: run_instance(g, arms, args.limit, system), groups) if r]
+        rows = [
+            r
+            for r in pool.map(
+                lambda g: run_instance(g, arms, args.limit, system, hash_embed=args.hash_embed),
+                groups,
+            )
+            if r
+        ]
 
     summary: dict = {
         "model": os.environ.get("MODEL"),
@@ -237,6 +250,7 @@ def main() -> int:
         "skipped_non_english": len(groups) - len(rows),
         "limit": args.limit,
         "strict": args.strict,
+        "embedder": "hash" if args.hash_embed else POTION_MODEL,
     }
     for name in arms:
         rs = [r[name] for r in rows]

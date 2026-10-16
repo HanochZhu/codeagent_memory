@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -31,6 +32,28 @@ def embed_env(base: dict[str, str] | None = None, *, hash_embed: bool) -> dict[s
         env["CAM_EMBED_MODEL"] = POTION_MODEL
         env["CAM_REQUIRE_MODEL2VEC"] = "1"
     return env
+
+
+def apply_embed_env(hash_embed: bool) -> None:
+    """Install `embed_env` on this process so child `cam` commands inherit it."""
+    chosen = embed_env(hash_embed=hash_embed)
+    for key in ("CAM_HASH_EMBED", "CAM_EMBED_MODEL", "CAM_REQUIRE_MODEL2VEC"):
+        if key in chosen:
+            os.environ[key] = chosen[key]
+        else:
+            os.environ.pop(key, None)
+
+
+def add_hash_embed_argument(parser: argparse.ArgumentParser) -> None:
+    """Second eval path. The default path loads the embedding model and errors on failure."""
+    parser.add_argument(
+        "--hash-embed",
+        action="store_true",
+        help=(
+            f"use the hash embedder for recall vectors; "
+            f"the default loads {POTION_MODEL} and errors if that model fails"
+        ),
+    )
 
 
 def dataset(name: str) -> Path:

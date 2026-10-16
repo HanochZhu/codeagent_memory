@@ -379,10 +379,11 @@ stale_days = 30
 
 ```bash
 python3 eval/coding_life/run.py --adapter grep
-python3 eval/coding_life/run.py --hash-embed                                # RRF
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
-python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
-python3 eval/locomo/run.py --workers 4                                          # potion，证据召回
+python3 eval/coding_life/run.py                                             # potion；模型加载失败则报错
+python3 eval/coding_life/run.py --hash-embed                                # hash embedder
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # potion
+python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --hash-embed
+python3 eval/locomo/run.py --workers 4                                      # potion，证据召回
 
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench
@@ -390,7 +391,7 @@ python3 -m pip install -e eval/agent_retrieval/vendor/agent-retrieval-bench
 arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval/data --force
 python3 eval/agent_retrieval/run.py --workers 8
 
-python3 eval/llm_multiturn/run.py --track both   # 需要 DEEPSEEK_API_KEY
+python3 eval/llm_multiturn/run.py --track both   # potion；需要 DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```
