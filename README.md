@@ -186,7 +186,7 @@ See [docs/mcp.md](docs/mcp.md) for host-specific config paths and [docs/agents.m
 1. **Extract** — `tree-sitter` walks the workspace and stores symbol definitions and call edges in `.cam/cam.db`.
 2. **Surgical Read** — Agents navigate via virtual paths (`ls` → `find` → `read` → `ref`). Reading a file returns its symbol outline; reading `file/symbol` returns only that symbol's source slice.
 3. **Hybrid Recall** — `recall` takes an English query, embeds it locally, runs identifier-aware BM25 (splitting `snake_case`, `kebab-case`, `camelCase` + English stemming), prunes low-confidence tails, and fuses both lists with **RRF** ($k=60$) scaled by $0.9 + 0.1 \times R$. Superseded revisions are automatically expanded to their newest replacement.
-4. **Write-Back** — When an agent solves a non-trivial task, `add` stores an English summary and body. `--parent` attaches it to a structural topic; `--supersedes` replaces an outdated memory while preserving lineage.
+4. **Write-Back** — When an agent solves a non-trivial task, it extracts atomic facts so each `add` stores only one fact (English summary; body supports non-Latin characters). Related facts are connected via `--link` / `links` into a knowledge graph (inspected via `mem show`; recall does not traverse graph links yet). `--parent` attaches a memory to a structural topic; `--supersedes` replaces an outdated memory while preserving lineage.
 
 Architecture deep dive (Chinese): [DESIGN.md](DESIGN.md).
 
@@ -199,7 +199,7 @@ Every coding task follows the same four-step loop:
 1. **Recall first** — Query `cam_recall` / `cam recall` in English before grepping. Reuse a hit if it is `latest` and not `needs_update`.
 2. **Ensure indexed** — If graph tools return `not_indexed`, run `cam_index` / `cam index` once for the project.
 3. **Walk the graph** — On a memory miss, locate symbols with `find` or `ls`, read symbol bodies with `read <file>/<symbol>`, and trace callers/callees with `ref <symbol> --dir in|out`.
-4. **Write back** — Persist newly discovered architecture facts or fixes with `cam_add` / `cam add` in English.
+4. **Write back** — Persist newly discovered architecture facts or fixes with `cam_add` / `cam add` as atomic facts (one fact per memory, English summary; body supports non-Latin characters), linking related facts with `links` / `--link`.
 
 | Role | Interface | Typical Usage |
 | --- | --- | --- |
@@ -229,7 +229,7 @@ Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 | Command | Description |
 | --- | --- |
 | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` | Hybrid RRF recall (English query). `--no-expand` skips newest-revision expansion; `--include-superseded` keeps old revisions; `--snippets` clips long bodies below rank 1 |
-| `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` | Store an English memory (`--body`, `--file`, or `stdin`). `--parent` for topic hierarchy; `--supersedes` to replace an older memory |
+| `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT \| --file PATH]` | Store one atomic fact as a memory (English summary required; body supports non-Latin characters; via `--body`, `--file`, or `stdin`). `--link` connects related facts in the knowledge graph; `--parent` for topic hierarchy; `--supersedes` to replace an older memory |
 | `cam mem tree` | Render the memory hierarchy and revision chains |
 | `cam mem show <id>` | Inspect a single memory entry in full |
 
@@ -253,7 +253,8 @@ Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 
 ## Memory Rules
 
-- **English-only indexing:** Queries, summaries, and bodies must be written in English (non-Latin scripts are rejected so BM25 stemming and embeddings share one language space).
+- **Atomic facts & knowledge graph links:** Store only one atomic fact per memory to avoid packing excessive information into a single entry. When multiple facts are related, link them with `--link` / `links` to form a knowledge graph (graph recall is not enabled yet).
+- **English queries and summaries:** Recall queries and memory summaries must be written in English. Memory bodies support non-Latin characters.
 - **Retention & reinforcement:** Ebbinghaus retention $R = e^{-t / S}$ adjusts recall score via $\text{relevance} \times (0.9 + 0.1 \times R)$. Entries with $R < 0.3$ are marked `needs_update`; entries older than `stale_days` (default `30`) are marked `stale`. Every valid recall hit (`needs_update = false`) refreshes last-accessed time and multiplies stability $S$ by `1.7`.
 - **Non-destructive lineage:** Memories are never deleted. `--parent` forms branching trees; `--supersedes` forms linear revision chains where only the tail is marked `latest` and older revisions are folded out of default recall results.
 
@@ -381,6 +382,7 @@ python3 eval/coding_life/run.py --adapter grep
 python3 eval/coding_life/run.py --hash-embed                                # RRF
 python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
 python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
+python3 eval/locomo/run.py --workers 4                                          # potion, evidence recall
 
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench

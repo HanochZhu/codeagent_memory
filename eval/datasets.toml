@@ -18,6 +18,9 @@ coding_life = "../agentmemory/eval/data/coding-agent-life-v1"
 # it to this path on first use, so change it only to keep the file elsewhere.
 longmemeval = "eval/longmemeval/data/longmemeval_s_cleaned.json"
 
+# snap-research/locomo locomo10.json. eval/locomo/run.py downloads it on first use.
+locomo = "eval/locomo/data/locomo10.json"
+
 # Agent Retrieval Bench V2, fetched with `arb download-benchmark --local-dir`.
 # Both entries have to stay inside the same --local-dir.
 agent_retrieval_benchmark = "eval/agent_retrieval/data/benchmark/v2_edit2ripple"

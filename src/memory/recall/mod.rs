@@ -658,4 +658,53 @@ mod tests {
         assert_eq!(model, "hash");
         assert_eq!(kept_updated_at, updated_at);
     }
+
+    #[test]
+    fn recall_does_not_traverse_fact_links() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let matched = add(
+            &project,
+            "multi path recall fuses bm25 and vectors",
+            "rank each path then apply reciprocal rank fusion",
+            None,
+        );
+        let linked = crate::memory::add_solution_with_links(
+            &project,
+            &embedder,
+            "zzz",
+            "zzz",
+            None,
+            None,
+            std::slice::from_ref(&matched),
+        )
+        .unwrap()
+        .id;
+        let conn = project.connect().unwrap();
+        conn.execute(
+            "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id = ?1",
+            [&linked],
+        )
+        .unwrap();
+        drop(conn);
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "bm25 and vectors",
+            RecallOptions {
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(hits.iter().any(|h| h.id == matched), "{hits:?}");
+        assert!(
+            !hits.iter().any(|h| h.id == linked),
+            "fact links must not trigger graph recall: {hits:?}"
+        );
+    }
 }

@@ -18,7 +18,7 @@
 1. **先 recall。** 默认会把命中的旧修订扩展到最新版，并隐藏已被取代的旧版。命中且 `latest`、不是 `needs_update` 才直接复用；只有查询历史或版本对比时才传 `include_superseded` / `--include-superseded`。
 2. **读代码前先确保已建图。** 若 `ls` / `read` / `ref` 提示未建图，对该项目跑一次 `cam_index` / `cam index`。`cam_index` 是全量重建，之后代码变动用 `cam sync`。
 3. **未命中 / stale / needs_update**，走代码图：`ls` → `read`（符号路径）→ `ref`。
-4. **解完再 add。** `parent` 只表示结构层级；新记忆完整取代旧修订时使用 `supersedes`。
+4. **解完再 add。** 提取记忆时一条记忆只存储一条事实（避免单条记忆包含过多信息）；若多个事实之间有相关性，用 `links` / `--link` 将事实连接成知识图谱（当前暂不做图召回）。`parent` 只表示结构层级；新记忆完整取代旧修订时使用 `supersedes`。
 
 虚拟路径：`src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号。
 
@@ -37,7 +37,7 @@
 | `cam_read` | 文件大纲，或符号源码。优先 `src/foo.rs/bar`，少用 `full=true` |
 | `cam_ref` | 一跳 callers（`dir=in`）或 callees（`dir=out`）。返回 `status: ambiguous` 时，用候选 `id` 重查，或加 `file` / `kind` / `scope` |
 | `cam_find` | 按名字子串找符号（不区分大小写；只搜名字不搜正文）。完全同名在前，其次前缀；每条带虚拟 `path` 和 `id`，可交给 cam_read / cam_ref |
-| `cam_add` | 用英语写入记忆。`summary` + 完整 `body`。结构层级用 `parent`，替代旧修订用 `supersedes` |
+| `cam_add` | 写入单条原子事实记忆。`summary` 要求英语，正文支持非拉丁字符。相关事实用 `links` 连接，结构层级用 `parent`，替代旧修订用 `supersedes` |
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
 | `cam_index` | 每个仓库做一次（或代码大挪移之后）。`.cam/` 会在首次调用时自动创建。 |
 
@@ -50,7 +50,7 @@
 
 主 Agent：调用 MCP 工具 cam_recall / cam_find / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show。MCP 可用时不要跑 cam CLI。
 
-流程：先把问题翻译成英语，再 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时用 cam_find（名字片段）或 cam_ls 定位，再 cam_read（符号路径）→ cam_ref 走代码图。解完用英语 cam_add（摘要 + 全文；parent 表示结构层级，supersedes 表示替代旧修订）。
+流程：先把问题翻译成英语，再 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时用 cam_find（名字片段）或 cam_ls 定位，再 cam_read（符号路径）→ cam_ref 走代码图。解完按原子事实提取记忆（一条记忆只存一条事实），用英语写 summary（正文支持非拉丁字符）后 cam_add（多个相关事实用 links 建立知识图谱连接，parent 表示结构层级，supersedes 表示替代旧修订）。
 
 Subagent 通常没有 MCP。委派时让它们在项目目录执行 `cam --json`（见 docs/agents.zh.md）。
 ```
@@ -69,6 +69,7 @@ cam --json --project <project> ls src/
 cam --json --project <project> read src/memory/recall/fuse.rs/fuse_rrf
 cam --json --project <project> ref fuse_rrf --dir in
 cam --json --project <project> add --summary "..." --file notes.md
+cam --json --project <project> add --summary "..." --link <related-id> --file notes.md
 cam --json --project <project> add --summary "..." --supersedes <old-id> --file notes.md
 # 或：printf '%s' "$BODY" | cam --json --project <project> add --summary "..."
 cam --json --project <project> mem tree
@@ -86,11 +87,11 @@ cam --json --project <PROJECT> recall "<一句话>"
 cam --json --project <PROJECT> ls [virt_path]
 cam --json --project <PROJECT> read <virt_path> [--full]
 cam --json --project <PROJECT> ref <symbol> --dir in|out
-cam --json --project <PROJECT> add --summary "<一行摘要>" --file <path>
+cam --json --project <PROJECT> add --summary "<单条事实摘要>" [--link <id>] --file <path>
 cam --json --project <PROJECT> mem tree
 cam --json --project <PROJECT> mem show <id>
 
-先把问题翻译成英语再 recall。读代码前若提示未建图，先 `cam index` 一次。未命中再 ls → read 符号路径 → ref。解完用英语写 summary 和 body 后 add。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
+先把问题翻译成英语再 recall。读代码前若提示未建图，先 `cam index` 一次。未命中再 ls → read 符号路径 → ref。解完按单条原子事实提取记忆，用英语写 summary（正文支持非拉丁字符）后 add，多个相关事实用 `--link` 连接。虚拟路径：文件是 src/main.rs，符号是 src/main.rs/main。
 ```
 
 ### 对照表
@@ -103,7 +104,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_find` | `cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 

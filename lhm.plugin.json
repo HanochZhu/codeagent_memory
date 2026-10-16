@@ -29,16 +29,16 @@
     },
     {
       "name": "remember_solution",
-      "description": "Store what was just learned as an English memory.",
+      "description": "Store what was just learned as atomic fact memories linked in a knowledge graph.",
       "arguments": [
         {
           "name": "summary",
-          "description": "One-line English title.",
+          "description": "One-line English title for a single atomic fact.",
           "required": true
         },
         {
           "name": "body",
-          "description": "Full English write-up.",
+          "description": "Full write-up for this single atomic fact.",
           "required": true
         }
       ]
@@ -237,17 +237,24 @@
     },
     {
       "name": "cam_add",
-      "description": "Store a memory with its summary and full body written in English. Non-Latin scripts are rejected. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] --body \"...\" (or --file / stdin)",
+      "description": "Store one atomic fact as a memory with its summary written in English (avoid packing multiple facts into a single memory). Non-Latin scripts in summary are rejected; the body supports non-Latin characters. When multiple facts are related, pass their IDs in `links` to connect them in the knowledge graph. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] [--link ID]... --body \"...\" (or --file / stdin)",
       "inputSchema": {
         "type": "object",
         "properties": {
           "body": {
-            "description": "Full write-up in English. Required.",
+            "description": "Full write-up for this single atomic fact. Supports non-Latin characters. Required.",
             "type": "string"
           },
           "hash_embed": {
             "description": "Use the test hash embedder instead of model2vec.",
             "type": "boolean"
+          },
+          "links": {
+            "description": "Related memory IDs to link to this fact in the knowledge graph.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Structural parent memory id. This relation may branch and does not affect latest.",
@@ -258,7 +265,7 @@
             "type": "string"
           },
           "summary": {
-            "description": "One-line English title stored on the solution tree.",
+            "description": "One-line English title for a single atomic fact. Must be written in English.",
             "type": "string"
           },
           "supersedes": {

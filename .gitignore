@@ -11,6 +11,8 @@ eval/coding_life/results/
 eval/llm_multiturn/results/
 eval/longmemeval/data/
 eval/longmemeval/results/
+eval/locomo/data/
+eval/locomo/results/
 eval/agent_retrieval/data/
 eval/agent_retrieval/vendor/
 eval/agent_retrieval/results/

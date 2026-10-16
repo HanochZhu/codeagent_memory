@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
 use serde::Serialize;
 
@@ -17,6 +19,8 @@ pub struct SolutionView {
     pub id: String,
     pub parent_id: Option<String>,
     pub supersedes_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
     pub summary: String,
     pub body: String,
     pub created_at: i64,
@@ -98,10 +102,12 @@ pub fn show_solution(project: &Project, id: &str) -> Result<SolutionView> {
         [&id],
         |row| row.get(0),
     )?;
+    let links = load_links(&conn, &id)?;
     Ok(SolutionView {
         id,
         parent_id,
         supersedes_id,
+        links,
         summary,
         body,
         created_at,
@@ -112,6 +118,24 @@ pub fn show_solution(project: &Project, id: &str) -> Result<SolutionView> {
         latest: successor_count == 0,
         age_days: Config::age_days(updated_at),
     })
+}
+
+fn load_links(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT target_id FROM solution_links WHERE source_id = ?1
+         UNION ALL
+         SELECT source_id FROM solution_links WHERE target_id = ?1",
+    )?;
+    let rows = stmt.query_map([id], |row| row.get::<_, String>(0))?;
+    let mut seen = HashSet::new();
+    let mut links = Vec::new();
+    for row in rows {
+        let linked = row?;
+        if seen.insert(linked.clone()) {
+            links.push(linked);
+        }
+    }
+    Ok(links)
 }
 
 pub fn format_tree(nodes: &[TreeNode], indent: usize) -> String {

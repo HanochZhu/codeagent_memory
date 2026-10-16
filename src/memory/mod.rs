@@ -4,7 +4,7 @@ pub mod embed;
 pub mod recall;
 pub mod tree;
 
-pub use add::add_solution;
+pub use add::{add_solution, add_solution_with_links};
 pub use ebbinghaus::{retention, FORGET_THRESHOLD, INITIAL_STABILITY_DAYS};
 pub use embed::{Embedder, HashEmbedder, Model2VecEmbedder};
 pub use recall::{clip_body, fuse_rrf, recall, RawHit, RecallHit, RecallOptions};

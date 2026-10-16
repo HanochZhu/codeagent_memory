@@ -7,7 +7,9 @@ use cam::code::{
     clamp_debounce_ms, find, index_project, ls, read, refs, sync_project, watch_project, Ambiguous,
     ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
 };
-use cam::memory::{add_solution, format_tree, show_solution, solution_tree, RecallOptions};
+use cam::memory::{
+    add_solution_with_links, format_tree, show_solution, solution_tree, RecallOptions,
+};
 use cam::ops::{load_embedder, resolve_project};
 use cam::output::{emit_error_json, emit_json, emit_text};
 use cam::project::Project;
@@ -113,8 +115,9 @@ enum Command {
         #[arg(long, hide = true)]
         hash_embed: bool,
     },
-    /// Add a memory (body from --body, --file, or stdin)
+    /// Add a memory (one atomic fact per memory; body from --body, --file, or stdin)
     Add {
+        /// One-line English description/summary of the atomic fact
         #[arg(long)]
         summary: String,
         /// Structural parent in the memory tree
@@ -123,10 +126,18 @@ enum Command {
         /// Older revision replaced by this complete current memory
         #[arg(long)]
         supersedes: Option<String>,
+        /// Related memory IDs to link in the knowledge graph
+        #[arg(
+            long = "link",
+            visible_alias = "links",
+            value_name = "ID",
+            value_delimiter = ','
+        )]
+        links: Vec<String>,
         /// Read the body from a file
         #[arg(long, conflicts_with = "body")]
         file: Option<PathBuf>,
-        /// Pass the body inline
+        /// Pass the body inline (supports non-Latin characters)
         #[arg(long, conflicts_with = "file")]
         body: Option<String>,
         #[arg(long, hide = true)]
@@ -450,6 +461,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             summary,
             parent,
             supersedes,
+            links,
             file,
             body,
             hash_embed,
@@ -457,13 +469,14 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             let project = resolve_project(project_arg)?;
             let body = read_body(file.as_ref(), body)?;
             let embedder = load_embedder(hash_embed)?;
-            let added = add_solution(
+            let added = add_solution_with_links(
                 &project,
                 embedder.as_ref(),
                 &summary,
                 &body,
                 parent.as_deref(),
                 supersedes.as_deref(),
+                &links,
             )?;
             if json {
                 emit_json(&added, pretty)?;
@@ -511,6 +524,9 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                         }
                         if let Some(supersedes) = &view.supersedes_id {
                             println!("supersedes   {supersedes}");
+                        }
+                        if !view.links.is_empty() {
+                            println!("links        {}", view.links.join(", "));
                         }
                         println!("{}", view.summary);
                         println!("{}", view.body);

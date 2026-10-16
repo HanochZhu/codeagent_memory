@@ -6,7 +6,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::code::{find, index_project, ls, read, refs, RefDir, SymbolHints};
-use crate::memory::{add_solution, show_solution, solution_tree, Embedder, RecallOptions};
+use crate::memory::{
+    add_solution_with_links, show_solution, solution_tree, Embedder, RecallOptions,
+};
 use crate::ops::{load_embedder, resolve_project_from_strings};
 use crate::project::Project;
 
@@ -23,7 +25,7 @@ Workflow:
 1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update. A hit with body_truncated (only with snippets) carries a snippet: cam_mem_show it before relying on details.
 2. Before reading code, make sure the graph is indexed: if cam_ls / cam_find / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
 3. On miss / stale / needs_update: cam_find (part of a symbol name) or cam_ls → cam_read (prefer symbol paths) → cam_ref. cam_find matches symbol names only; use your own grep for text inside function bodies.
-4. After you solve it, cam_add with both summary and body written in English. Use supersedes to replace an older revision; parent only sets the structural tree parent.
+4. After you solve it, extract memories as atomic facts: store only one fact per cam_add call so a single memory never packs excessive information, with an English summary (the body may contain non-Latin characters). When multiple facts are related, link them via `links` to build a knowledge graph. Use supersedes to replace an older revision; parent only sets the structural tree parent.
 
 Subagents usually have no MCP. Instruct them to run the equivalent CLI with --json in the project directory (see each tool description), including `cam index` once if the graph is not built.
 
@@ -257,15 +259,17 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
             let body = required_str(args, "body")?;
             let parent = arg_str(args, "parent");
             let supersedes = arg_str(args, "supersedes");
+            let links = arg_string_list(args, "links")?;
             let embedder = embedder_from(args)?;
             to_json(
-                add_solution(
+                add_solution_with_links(
                     &project,
                     embedder.as_ref(),
                     summary,
                     body,
                     parent,
                     supersedes,
+                    &links,
                 )
                 .map_err(err_str)?,
             )
@@ -413,14 +417,19 @@ fn tool_defs() -> Vec<Value> {
         ),
         tool(
             "cam_add",
-            "Store a memory with its summary and full body written in English. Non-Latin scripts are rejected. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] --body \"...\" (or --file / stdin)",
+            "Store one atomic fact as a memory with its summary written in English (avoid packing multiple facts into a single memory). Non-Latin scripts in summary are rejected; the body supports non-Latin characters. When multiple facts are related, pass their IDs in `links` to connect them in the knowledge graph. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] [--link ID]... --body \"...\" (or --file / stdin)",
             json!({
                 "type": "object",
                 "properties": {
-                    "summary": { "type": "string", "description": "One-line English title stored on the solution tree." },
-                    "body": { "type": "string", "description": "Full write-up in English. Required." },
+                    "summary": { "type": "string", "description": "One-line English title for a single atomic fact. Must be written in English." },
+                    "body": { "type": "string", "description": "Full write-up for this single atomic fact. Supports non-Latin characters. Required." },
                     "parent": { "type": "string", "description": "Structural parent memory id. This relation may branch and does not affect latest." },
                     "supersedes": { "type": "string", "description": "Older revision replaced by this complete current memory. Omit for a structural child or independent memory." },
+                    "links": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Related memory IDs to link to this fact in the knowledge graph."
+                    },
                     "path": path_prop(),
                     "hash_embed": { "type": "boolean", "description": "Use the test hash embedder instead of model2vec." }
                 },
@@ -502,6 +511,35 @@ fn arg_bool(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(Value::as_bool)
 }
 
+fn arg_string_list(args: &Value, key: &str) -> Result<Vec<String>, String> {
+    let Some(value) = args.get(key) else {
+        return Ok(Vec::new());
+    };
+    match value {
+        Value::Null => Ok(Vec::new()),
+        Value::String(s) => Ok(s
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect()),
+        Value::Array(items) => {
+            let mut out = Vec::new();
+            for item in items {
+                let Some(s) = item.as_str() else {
+                    return Err(format!("{key} items must be strings"));
+                };
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    out.push(trimmed.to_string());
+                }
+            }
+            Ok(out)
+        }
+        _ => Err(format!("{key} must be an array of strings")),
+    }
+}
+
 fn arg_usize(args: &Value, key: &str) -> Option<usize> {
     let value = args.get(key)?;
     if let Some(n) = value.as_u64() {
@@ -546,16 +584,16 @@ fn prompt_defs() -> Vec<Value> {
         }),
         json!({
             "name": "remember_solution",
-            "description": "Store what was just learned as an English memory.",
+            "description": "Store what was just learned as atomic fact memories linked in a knowledge graph.",
             "arguments": [
                 {
                     "name": "summary",
-                    "description": "One-line English title.",
+                    "description": "One-line English title for a single atomic fact.",
                     "required": true
                 },
                 {
                     "name": "body",
-                    "description": "Full English write-up.",
+                    "description": "Full write-up for this single atomic fact.",
                     "required": true
                 }
             ]
@@ -587,7 +625,7 @@ fn get_prompt(params: &Value) -> Result<Value, DispatchError> {
             let summary = required_str(&args, "summary").map_err(DispatchError::InvalidParams)?;
             let body = required_str(&args, "body").map_err(DispatchError::InvalidParams)?;
             format!(
-                "Store this as a cam memory. Call cam_add with both fields in English.\n\n\
+                "Store this as a cam memory. Keep one atomic fact per memory (do not pack multiple facts into one entry). Call cam_add with an English summary (body supports non-Latin characters), and pass related memory IDs in `links` to connect related facts in the knowledge graph.\n\n\
                  summary: {summary}\n\n\
                  body:\n{body}"
             )
@@ -767,6 +805,7 @@ mod tests {
             add["inputSchema"]["properties"]["supersedes"]["type"],
             "string"
         );
+        assert_eq!(add["inputSchema"]["properties"]["links"]["type"], "array");
         let recall = defs
             .iter()
             .find(|tool| tool["name"] == "cam_recall")

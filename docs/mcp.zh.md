@@ -24,14 +24,15 @@ cam --project /path/to/project mcp
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
 `initialize` 会带上 `instructions`，说明 recall → 代码图 → add 的流程。
 
-`cam_recall.query` 必须使用英语，`cam_add.summary` 和 `cam_add.body`
-也必须使用英语。含非拉丁文字的输入会被拒绝，使 BM25 和向量两路始终在同一语言中检索。
+每次 `cam_add` 只存储一条原子事实，避免把多条事实塞进同一条记忆。
+`cam_recall.query` 必须使用英语，`cam_add.summary` 也必须使用英语（含非拉丁字符会被拒绝）；`cam_add.body` 正文支持非拉丁字符。
+`cam_add.links` 用于连接相关的多条事实以构建知识图谱（当前暂不做图召回）。
 `cam_add.parent` 表示允许分叉的结构层级，`cam_add.supersedes` 表示线性的版本替代。
 召回默认隐藏被替代的旧修订；查询历史时传 `include_superseded`。
 

@@ -186,7 +186,7 @@ cam add --summary "..." < notes.md
 1. **抽取（Extraction）** — `tree-sitter` 遍历项目，将符号定义（函数、类型）和调用边写入 `.cam/cam.db`。
 2. **按需读（Surgical Read）** — 通过虚拟路径（`ls` → `find` → `read` → `ref`）浏览代码。`read` 默认返回文件符号大纲或单个符号切片，加 `--full` 才读取整文件。
 3. **混合召回（Recall）** — `recall` 接收英文查询，同时执行向量检索与标识符感知的 BM25（自动切分 `snake_case`、`kebab-case`、`camelCase` 并提取英文词干），截断各路低分尾部后用 **RRF**（$k=60$）融合，并乘以保留率系数 $0.9 + 0.1 \times R$。命中旧修订时自动拉入最新替代版本并在 top-$k$ 前折叠旧版。
-4. **写回（Write-Back）** — 解决完问题后，`add` 写入英文摘要与正文。`--parent` 挂载结构层级，`--supersedes` 替代旧结论同时保留历史脉络。
+4. **写回（Write-Back）** — 解决完问题后，按原子事实提取记忆，每条 `add` 只存储一条事实（摘要要求英文，正文支持非拉丁字符）。多个相关事实之间通过 `--link` / `links` 建立连接构成知识图谱（可通过 `mem show` 查看，当前暂不做图召回）。`--parent` 挂载结构层级，`--supersedes` 替代旧结论同时保留历史脉络。
 
 架构与设计细节见 [DESIGN.md](DESIGN.md)。
 
@@ -199,7 +199,7 @@ cam add --summary "..." < notes.md
 1. **先 Recall** — 探索代码前先把问题转成一句英文调用 `cam_recall` / `cam recall`；若命中条目为 `latest` 且非 `needs_update`，直接复用。
 2. **确认已建图** — 若代码图工具提示 `not_indexed`，在项目根跑一次 `cam_index` / `cam index`。
 3. **按图索骥** — 未命中时，用 `find` 或 `ls` 找符号，用 `read <文件>/<符号>` 读实现，用 `ref <符号> --dir in|out` 查上下游调用。
-4. **写回记忆** — 任务完成后，用英文通过 `cam_add` / `cam add` 记录关键结论或修复方案。
+4. **写回记忆** — 任务完成后，通过 `cam_add` / `cam add` 按原子事实记录关键结论（一条记忆只存一条事实，描述/摘要需为英文，正文支持非拉丁字符），多个相关事实之间用 `links` / `--link` 建立知识图谱连接。
 
 | 角色 | 调用方式 | 典型用法 |
 | --- | --- | --- |
@@ -229,7 +229,7 @@ cam add --summary "..." < notes.md
 | 命令 | 作用 |
 | --- | --- |
 | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` | 向量 + BM25 RRF 混合召回（英文查询）。`--no-expand` 关闭新版扩展；`--include-superseded` 保留旧修订；`--snippets` 截断排名第一以外的长正文 |
-| `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT \| --file PATH]` | 写入英文记忆（支持 `--body`、`--file` 或 `stdin`）。`--parent` 挂结构树；`--supersedes` 替代旧修订 |
+| `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT \| --file PATH]` | 写入单条原子事实记忆（摘要需为英文，正文支持非拉丁字符；支持 `--body`、`--file` 或 `stdin`）。`--link` 关联相关事实构建知识图谱；`--parent` 挂结构树；`--supersedes` 替代旧修订 |
 | `cam mem tree` | 打印记忆树与修订链结构 |
 | `cam mem show <id>` | 查看单条记忆的完整内容与元数据 |
 
@@ -253,7 +253,8 @@ cam add --summary "..." < notes.md
 
 ## 记忆规则
 
-- **统一英文索引：** `recall` 查询、`add` 摘要与正文均要求使用英文（含非拉丁字符的输入会被拒绝，以保证 BM25 词干提取与向量空间一致）。
+- **原子事实与知识图谱连接：** 提取记忆时一条记忆只存储一条事实，避免单条记忆包含过多信息；多个事实之间有相关性时通过 `--link` / `links` 建立连接构成知识图谱（当前暂不做图召回）。
+- **英文摘要与多语言正文：** `recall` 查询与 `add` 摘要要求使用英文（含非拉丁字符会被拒绝，以保证检索与摘要索引一致）；记忆正文支持非拉丁字符。
 - **艾宾浩斯保留与强化：** 保留率 $R = e^{-t / S}$，最终排序分为 $\text{relevance} \times (0.9 + 0.1 \times R)$。$R < 0.3$ 标为 `needs_update`；超过 `stale_days`（默认 30 天）标为 `stale`。每次真实命中返回（`needs_update = false`）会刷新访问时间并将稳定性 $S \times 1.7$。
 - **非破坏性演化：** 记忆永不删除。`--parent` 构建允许分叉的结构树；`--supersedes` 构建线性修订链，链尾标为 `latest`，被替代的旧版本默认折叠隐藏（可用 `--include-superseded` 查看）。
 
@@ -381,6 +382,7 @@ python3 eval/coding_life/run.py --adapter grep
 python3 eval/coding_life/run.py --hash-embed                                # RRF
 python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8          # hash
 python3 eval/longmemeval/run.py --sample 100 --seed 42 --workers 8 --potion
+python3 eval/locomo/run.py --workers 4                                          # potion，证据召回
 
 git clone --depth 1 https://github.com/eyuansu62/agent-retrieval-bench \
   eval/agent_retrieval/vendor/agent-retrieval-bench

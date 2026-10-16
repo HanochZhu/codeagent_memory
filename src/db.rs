@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS solutions (
 
 CREATE INDEX IF NOT EXISTS idx_solutions_parent ON solutions(parent_id);
 
+CREATE TABLE IF NOT EXISTS solution_links (
+    source_id TEXT NOT NULL REFERENCES solutions(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES solutions(id) ON DELETE CASCADE,
+    PRIMARY KEY (source_id, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_solution_links_target ON solution_links(target_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS solutions_fts USING fts5(
     summary,
     fts_text,

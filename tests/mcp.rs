@@ -271,6 +271,49 @@ fn mcp_stdio_init_add_recall() {
 
     let nodes = call_ok(&mut mcp, 9, "cam_mem_tree", json!({ "path": root }));
     assert_eq!(nodes.as_array().unwrap().len(), 2);
+
+    let non_latin_add = call_ok(
+        &mut mcp,
+        10,
+        "cam_add",
+        json!({
+            "path": root,
+            "summary": "Non-Latin body storage",
+            "body": "支持在正文中使用非拉丁字符，例如中文。",
+            "links": [revision_id],
+            "hash_embed": true
+        }),
+    );
+    let linked_id = non_latin_add["id"].as_str().unwrap().to_string();
+    assert_eq!(non_latin_add["links"], json!([revision_id]));
+
+    let shown = call_ok(
+        &mut mcp,
+        12,
+        "cam_mem_show",
+        json!({
+            "path": root,
+            "id": revision_id
+        }),
+    );
+    assert_eq!(shown["links"], json!([linked_id]));
+
+    let non_latin_summary = call_tool(
+        &mut mcp,
+        11,
+        "cam_add",
+        json!({
+            "path": root,
+            "summary": "非英文摘要",
+            "body": "English body",
+            "hash_embed": true
+        }),
+    );
+    assert_eq!(non_latin_summary["result"]["isError"], true);
+    assert!(non_latin_summary["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("summary must be written in English"));
 }
 
 #[test]

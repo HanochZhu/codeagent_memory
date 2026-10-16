@@ -24,15 +24,16 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded]` |
-| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]` |
+| `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT | --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |
 | `cam_mem_show` | `cam mem show <id>` |
 
 `initialize` also returns `instructions` describing the recall → graph → add workflow.
 
-`cam_recall.query` must be written in English. `cam_add.summary` and
-`cam_add.body` must also be English; inputs containing non-Latin scripts are
-rejected so the BM25 and vector paths operate in one language.
+Each `cam_add` call should store a single atomic fact rather than bundling multiple facts into one memory.
+`cam_recall.query` and `cam_add.summary` must be written in English (non-Latin
+scripts in them are rejected). `cam_add.body` supports non-Latin characters.
+`cam_add.links` connects related facts in the knowledge graph (recall does not traverse graph links yet).
 `cam_add.parent` is a structural hierarchy edge and may branch.
 `cam_add.supersedes` creates a linear replacement revision; recall hides the
 older revision by default, while `include_superseded` keeps it for history.

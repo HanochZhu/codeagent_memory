@@ -30,7 +30,7 @@ Prefer the MCP tool when it is available. Do not shell out to `cam` if `cam_*` t
    - `stale` / `needs_update` / no hit → continue.
 2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` (MCP) / `cam index` (CLI) once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
 3. **Walk the graph** on a miss: `ls` → `read` (symbol path) → `ref`.
-4. **Write back** after solving: `cam_add` with an English `summary` and full English `body`. Use `parent` for structural hierarchy and `supersedes` for a complete replacement revision.
+4. **Write back** after solving: extract atomic facts and call `cam_add` so each memory stores only one fact (avoid packing excessive information into a single memory), with an English `summary` (the body supports non-Latin characters). When multiple facts are related, pass their IDs in `links` (`--link` on CLI) to build a knowledge graph. Use `parent` for structural hierarchy and `supersedes` for a complete replacement revision.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Prefer symbol reads (`src/foo.rs/bar`) over `full`, and prefer `read`/`ls` over opening whole files.
 
@@ -45,7 +45,7 @@ cam read <virt_path> [--full]                    # outline, or a symbol body
 cam ref <symbol> --dir in|out                    # one-hop callers / callees
 cam find <query> [--kind KIND] [--limit N]       # symbols whose name contains <query>
 cam recall "<query>" [--limit N] [--include-superseded]
-cam add --summary "..." [--parent ID] [--supersedes ID] [--body TEXT | --file PATH]
+cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT | --file PATH]
 cam mem tree | cam mem show <id>
 cam status                                       # resolved project, db counts, config
 cam config get | config set stale_days N | config set embedding_model <model>  # read/update ~/.cam/config.toml
@@ -56,6 +56,7 @@ Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compa
 
 ## Memory rules
 
+- Store **one atomic fact per memory** to avoid crowding multiple facts into a single entry. When facts are related, link them via `links` / `--link` to form a knowledge graph (recall does not traverse graph links yet).
 - Recall score is vector + BM25 fused with **RRF**, scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `score` about 2 means both paths matched, about 1 means only one did.
 - `R < 0.3` → `needs_update`; older than `stale_days` (default 30) → `stale`.
 - A successful returned match refreshes retention (`S *= 1.7`); expanded or filtered revisions do not.

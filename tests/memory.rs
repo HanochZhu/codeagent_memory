@@ -120,6 +120,40 @@ fn add_and_recall_tree() {
     let view: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
     assert_eq!(view["supersedes_id"], parent);
     assert_eq!(view["latest"], true);
+
+    let linked = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(dir.path())
+        .args([
+            "add",
+            "--summary",
+            "RRF uses k equals 60 for rank fusion",
+            "--link",
+            &revision_id,
+            "--body",
+            "Reciprocal rank fusion uses constant k = 60.",
+            "--hash-embed",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let linked_json: serde_json::Value = serde_json::from_slice(&linked.stdout).unwrap();
+    let linked_id = linked_json["id"].as_str().unwrap().to_string();
+    assert_eq!(linked_json["links"], serde_json::json!([revision_id]));
+
+    let show_rev = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(dir.path())
+        .args(["mem", "show", &revision_id])
+        .output()
+        .unwrap();
+    assert!(show_rev.status.success());
+    let rev_view: serde_json::Value = serde_json::from_slice(&show_rev.stdout).unwrap();
+    assert_eq!(rev_view["links"], serde_json::json!([linked_id]));
 }
 
 #[test]
@@ -136,14 +170,6 @@ fn rejects_non_english_recall_and_memory_fields() {
             "English body",
             "--hash-embed",
         ],
-        vec![
-            "add",
-            "--summary",
-            "English summary",
-            "--body",
-            "非英文正文",
-            "--hash-embed",
-        ],
     ] {
         let output = Command::new(cam_bin())
             .args(["--project"])
@@ -158,4 +184,50 @@ fn rejects_non_english_recall_and_memory_fields() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn allows_non_latin_body_with_english_summary() {
+    let dir = tempdir().unwrap();
+
+    let output = Command::new(cam_bin())
+        .args(["--project"])
+        .arg(dir.path())
+        .args([
+            "add",
+            "--summary",
+            "English summary for multilingual memory",
+            "--body",
+            "这是一段包含中文、日本語和кириллица等非拉丁字符的正文。",
+            "--hash-embed",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recall = Command::new(cam_bin())
+        .args(["--project"])
+        .arg(dir.path())
+        .args(["--json", "recall", "multilingual memory", "--hash-embed"])
+        .output()
+        .unwrap();
+    assert!(
+        recall.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&recall.stderr)
+    );
+    let hits: serde_json::Value = serde_json::from_slice(&recall.stdout).unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+    assert_eq!(
+        hits[0]["summary"],
+        "English summary for multilingual memory"
+    );
+    assert!(hits[0]["body"]
+        .as_str()
+        .unwrap()
+        .contains("这是一段包含中文、日本語和кириллица等非拉丁字符的正文。"));
 }

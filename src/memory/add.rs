@@ -18,6 +18,8 @@ pub struct AddResult {
     pub id: String,
     pub parent_id: Option<String>,
     pub supersedes_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
     pub summary: String,
 }
 
@@ -29,6 +31,26 @@ pub fn add_solution(
     parent_id: Option<&str>,
     supersedes_id: Option<&str>,
 ) -> Result<AddResult> {
+    add_solution_with_links(
+        project,
+        embedder,
+        summary,
+        body,
+        parent_id,
+        supersedes_id,
+        &[],
+    )
+}
+
+pub fn add_solution_with_links(
+    project: &Project,
+    embedder: &dyn Embedder,
+    summary: &str,
+    body: &str,
+    parent_id: Option<&str>,
+    supersedes_id: Option<&str>,
+    links: &[String],
+) -> Result<AddResult> {
     if summary.trim().is_empty() {
         bail!("summary is required");
     }
@@ -36,7 +58,6 @@ pub fn add_solution(
         bail!("body is required (stdin or --file)");
     }
     require_english("summary", summary)?;
-    require_english("body", body)?;
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
     let mut structural_parent = match parent_id {
@@ -62,6 +83,7 @@ pub fn add_solution(
             structural_parent = inherited_parent;
         }
     }
+    let normalized_links = normalize_links(&conn, links)?;
 
     let id = Uuid::new_v4().simple().to_string()[..12].to_string();
     let now = chrono::Utc::now().timestamp();
@@ -87,12 +109,36 @@ pub fn add_solution(
         ],
     )?;
 
+    for target_id in &normalized_links {
+        conn.execute(
+            "INSERT OR IGNORE INTO solution_links(source_id, target_id) VALUES (?1, ?2)",
+            rusqlite::params![id, target_id],
+        )?;
+    }
+
     Ok(AddResult {
         id,
         parent_id: structural_parent,
         supersedes_id: supersedes_id.map(str::to_string),
+        links: normalized_links,
         summary: summary.trim().to_string(),
     })
+}
+
+fn normalize_links(conn: &rusqlite::Connection, links: &[String]) -> Result<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for raw in links {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        require_memory(conn, "linked", trimmed)?;
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
 }
 
 fn require_memory(conn: &rusqlite::Connection, relation: &str, id: &str) -> Result<Option<String>> {
@@ -339,5 +385,94 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("already superseded"), "{err:#}");
+    }
+
+    #[test]
+    fn allows_non_latin_body_when_adding_solution() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let res = add_solution(
+            &project,
+            &embedder,
+            "English summary for multilingual memory",
+            "记忆正文支持非拉丁字符：中文、日本語、한국어、кириллица，以及各种符号。",
+            None,
+            None,
+        );
+        assert!(res.is_ok(), "{:?}", res.err());
+    }
+
+    #[test]
+    fn rejects_non_latin_summary_when_adding_solution() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let res = add_solution(
+            &project,
+            &embedder,
+            "非英文描述摘要",
+            "English body text.",
+            None,
+            None,
+        );
+        let err = res.unwrap_err();
+        assert!(
+            err.to_string().contains("summary must be written in English"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn links_connect_related_atomic_facts_and_validate_targets() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let fact_a = add_solution(
+            &project,
+            &embedder,
+            "SQLite stores the project graph in .cam/cam.db",
+            "The project database lives at .cam/cam.db.",
+            None,
+            None,
+        )
+        .unwrap();
+        let fact_b = add_solution_with_links(
+            &project,
+            &embedder,
+            "WAL mode is enabled on every SQLite connection",
+            "open_db enables PRAGMA journal_mode = WAL.",
+            None,
+            None,
+            &[fact_a.id.clone(), fact_a.id.clone()],
+        )
+        .unwrap();
+        assert_eq!(fact_b.links, vec![fact_a.id.clone()]);
+
+        let view_a = crate::memory::show_solution(&project, &fact_a.id).unwrap();
+        let view_b = crate::memory::show_solution(&project, &fact_b.id).unwrap();
+        assert_eq!(view_a.links, vec![fact_b.id.clone()]);
+        assert_eq!(view_b.links, vec![fact_a.id.clone()]);
+
+        let missing = add_solution_with_links(
+            &project,
+            &embedder,
+            "Orphan link test",
+            "Should fail when linked memory is missing.",
+            None,
+            None,
+            &["deadbeef1234".to_string()],
+        )
+        .unwrap_err();
+        assert!(
+            missing.to_string().contains("linked memory not found"),
+            "{missing:#}"
+        );
     }
 }
