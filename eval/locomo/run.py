@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -32,7 +31,6 @@ DATA_URL = (
     "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
 )
 DEFAULT_DATA = dataset("locomo")
-POTION_MODEL = "minishlab/potion-multilingual-128M"
 PRINT_LOCK = threading.Lock()
 CATEGORIES = {
     1: "multi-hop",
@@ -45,13 +43,7 @@ CATEGORIES = {
 
 class CamMcp:
     def __init__(self, executable: Path, project: Path, hash_embed: bool) -> None:
-        env = os.environ.copy()
-        if hash_embed:
-            env["CAM_HASH_EMBED"] = "1"
-        else:
-            env.pop("CAM_HASH_EMBED", None)
-            env["CAM_EMBED_MODEL"] = POTION_MODEL
-            env["CAM_REQUIRE_MODEL2VEC"] = "1"
+        env = embed_env(hash_embed=hash_embed)
         self.next_id = 1
         self.process = subprocess.Popen(
             [str(executable), "mcp", "--project", str(project)],

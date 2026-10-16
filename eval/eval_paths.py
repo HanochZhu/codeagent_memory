@@ -12,6 +12,25 @@ EVAL = Path(__file__).resolve().parent
 REPO = EVAL.parent
 CONFIG = EVAL / "datasets.toml"
 EXE = "cam.exe" if sys.platform == "win32" else "cam"
+POTION_MODEL = "minishlab/potion-multilingual-128M"
+
+
+def embed_env(base: dict[str, str] | None = None, *, hash_embed: bool) -> dict[str, str]:
+    """Environment for a cam child process.
+
+    Eval recall uses potion-multilingual-128M unless ``hash_embed`` is set.
+    ``CAM_REQUIRE_MODEL2VEC`` refuses a silent fallback to the hash embedder.
+    """
+    env = dict(os.environ if base is None else base)
+    if hash_embed:
+        env["CAM_HASH_EMBED"] = "1"
+        env.pop("CAM_EMBED_MODEL", None)
+        env.pop("CAM_REQUIRE_MODEL2VEC", None)
+    else:
+        env.pop("CAM_HASH_EMBED", None)
+        env["CAM_EMBED_MODEL"] = POTION_MODEL
+        env["CAM_REQUIRE_MODEL2VEC"] = "1"
+    return env
 
 
 def dataset(name: str) -> Path:
