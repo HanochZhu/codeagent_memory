@@ -38,6 +38,26 @@ pub struct IndexReport {
     pub skipped: usize,
 }
 
+/// Phase of a full index, in the order the indexer runs them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexPhase {
+    Scanning,
+    Parsing,
+    Storing,
+    Resolving,
+}
+
+/// Progress event for [`index_project_with_progress`].
+///
+/// `total == 0` means the phase does not know its length yet (`current` is a
+/// running count). Otherwise `current` advances toward `total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexProgress {
+    pub phase: IndexPhase,
+    pub current: usize,
+    pub total: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SyncReport {
     pub files_checked: usize,
@@ -57,11 +77,22 @@ struct SourceFile {
 }
 
 pub fn index_project(project: &Project) -> Result<IndexReport> {
+    index_project_with_progress(project, &mut |_| {})
+}
+
+/// Full rebuild, invoking `on_progress` as each phase advances.
+///
+/// The callback must stay cheap: it runs on the indexing thread, including
+/// inside the write transaction.
+pub fn index_project_with_progress(
+    project: &Project,
+    on_progress: &mut dyn FnMut(IndexProgress),
+) -> Result<IndexReport> {
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
     conn.execute_batch("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;")?;
     drop(conn);
-    let sync = sync_project(project)?;
+    let sync = sync_project_inner(project, on_progress)?;
     Ok(IndexReport {
         files: sync.files_added,
         nodes: sync.nodes,
@@ -71,11 +102,18 @@ pub fn index_project(project: &Project) -> Result<IndexReport> {
 }
 
 pub fn sync_project(project: &Project) -> Result<SyncReport> {
+    sync_project_inner(project, &mut |_| {})
+}
+
+fn sync_project_inner(
+    project: &Project,
+    progress: &mut dyn FnMut(IndexProgress),
+) -> Result<SyncReport> {
     let started = Instant::now();
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
 
-    let (sources, mut skipped) = scan_source_files(project)?;
+    let (sources, mut skipped) = scan_source_files(project, progress)?;
     let existing = load_file_hashes(&conn)?;
     let mut current = HashSet::new();
     let mut added = Vec::new();
@@ -112,17 +150,26 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
     let mut extracted = Vec::new();
     let mut added_ok = 0usize;
     let mut modified_ok = 0usize;
+    let parse_total = added.len() + modified.len();
+    if parse_total > 0 {
+        report(progress, IndexPhase::Parsing, 0, parse_total);
+    }
+    let mut parsed = 0usize;
     for src in &added {
         if let Some(file) = extract_or_skip(project, src, &mut skipped) {
             added_ok += 1;
             extracted.push(file);
         }
+        parsed += 1;
+        report(progress, IndexPhase::Parsing, parsed, parse_total);
     }
     for src in &modified {
         if let Some(file) = extract_or_skip(project, src, &mut skipped) {
             modified_ok += 1;
             extracted.push(file);
         }
+        parsed += 1;
+        report(progress, IndexPhase::Parsing, parsed, parse_total);
     }
     let changed_len = extracted.len();
     if changed_len == 0 && removed.is_empty() {
@@ -140,21 +187,30 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [path])?;
             tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
         }
-        for file in &extracted[..changed_len] {
+        if changed_len > 0 {
+            report(progress, IndexPhase::Storing, 0, changed_len);
+        }
+        for (i, file) in extracted[..changed_len].iter().enumerate() {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [&file.rel])?;
             insert_file_and_defs(&tx, &project.root, file)?;
+            report(progress, IndexPhase::Storing, i + 1, changed_len);
         }
         tx.execute("DELETE FROM edges", [])?;
         tx.commit()?;
     }
 
+    let resolve_total = extracted.len();
+    if resolve_total > 0 {
+        report(progress, IndexPhase::Resolving, 0, resolve_total);
+    }
     let name_index = load_name_index(&conn)?;
     {
         let tx = conn.unchecked_transaction()?;
-        for file in &extracted {
+        for (i, file) in extracted.iter().enumerate() {
             let Parsed { defs, rels, impls } = &file.parsed;
             insert_rels(&tx, &file.rel, defs, rels, &name_index)?;
             insert_impls(&tx, &file.rel, defs, impls, &name_index)?;
+            report(progress, IndexPhase::Resolving, i + 1, resolve_total);
         }
         tx.commit()?;
     }
@@ -171,9 +227,27 @@ pub fn sync_project(project: &Project) -> Result<SyncReport> {
     })
 }
 
-fn scan_source_files(project: &Project) -> Result<(Vec<SourceFile>, usize)> {
+fn report(
+    progress: &mut dyn FnMut(IndexProgress),
+    phase: IndexPhase,
+    current: usize,
+    total: usize,
+) {
+    progress(IndexProgress {
+        phase,
+        current,
+        total,
+    });
+}
+
+fn scan_source_files(
+    project: &Project,
+    progress: &mut dyn FnMut(IndexProgress),
+) -> Result<(Vec<SourceFile>, usize)> {
+    report(progress, IndexPhase::Scanning, 0, 0);
     let mut skipped = 0usize;
     let mut sources = Vec::new();
+    let mut found = 0usize;
     let walker = WalkBuilder::new(&project.root)
         .hidden(false)
         .git_ignore(true)
@@ -214,12 +288,14 @@ fn scan_source_files(project: &Project) -> Result<(Vec<SourceFile>, usize)> {
             rel,
             lang,
         });
+        found += 1;
+        report(progress, IndexPhase::Scanning, found, 0);
     }
     Ok((sources, skipped))
 }
 
 pub(crate) fn project_has_source_files(project: &Project) -> Result<bool> {
-    let (sources, _) = scan_source_files(project)?;
+    let (sources, _) = scan_source_files(project, &mut |_| {})?;
     Ok(!sources.is_empty())
 }
 

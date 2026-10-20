@@ -767,6 +767,98 @@ fn submodule_checkouts_are_skipped_but_nested_clones_stay() {
 }
 
 #[test]
+fn index_progress_visits_each_phase_in_order() {
+    use cam::code::{index_project_with_progress, IndexPhase};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    let mut events = Vec::new();
+    index_project_with_progress(&project, &mut |event| events.push(event)).unwrap();
+
+    let rank = |phase: IndexPhase| match phase {
+        IndexPhase::Scanning => 0,
+        IndexPhase::Parsing => 1,
+        IndexPhase::Storing => 2,
+        IndexPhase::Resolving => 3,
+    };
+    assert!(events.len() > 4, "{events:?}");
+    for pair in events.windows(2) {
+        assert!(rank(pair[1].phase) >= rank(pair[0].phase));
+    }
+    for phase in [
+        IndexPhase::Scanning,
+        IndexPhase::Parsing,
+        IndexPhase::Storing,
+        IndexPhase::Resolving,
+    ] {
+        assert!(
+            events.iter().any(|event| event.phase == phase),
+            "{events:?}"
+        );
+    }
+    let last_scan = events
+        .iter()
+        .rfind(|event| event.phase == IndexPhase::Scanning)
+        .unwrap();
+    assert_eq!(last_scan.total, 0);
+    assert!(last_scan.current >= 2, "{last_scan:?}");
+    for phase in [
+        IndexPhase::Parsing,
+        IndexPhase::Storing,
+        IndexPhase::Resolving,
+    ] {
+        let last = events.iter().rfind(|event| event.phase == phase).unwrap();
+        assert_eq!(last.current, last.total, "{last:?}");
+        assert!(last.total >= 2, "{last:?}");
+    }
+}
+
+#[test]
+fn index_json_and_piped_text_hide_the_progress_bar() {
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+
+    let json = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(dir.path())
+        .arg("index")
+        .output()
+        .unwrap();
+    assert!(
+        json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let json_err = String::from_utf8_lossy(&json.stderr);
+    assert!(!json_err.contains("Scanning"), "{json_err}");
+    assert!(!json_err.contains("Indexing project"), "{json_err}");
+
+    let fresh = tempdir().unwrap();
+    write_fixture(fresh.path());
+    let text = Command::new(cam_bin())
+        .args(["--project"])
+        .arg(fresh.path())
+        .arg("index")
+        .output()
+        .unwrap();
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    assert!(
+        text.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(stdout.contains("indexed "), "{stdout}");
+    assert!(!stdout.contains("Scanning"), "{stdout}");
+}
+
+#[test]
 fn empty_repo_without_sources_does_not_ask_to_index() {
     use cam::code::ls;
     use cam::project::Project;

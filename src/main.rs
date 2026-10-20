@@ -4,9 +4,11 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use cam::code::{
-    clamp_debounce_ms, find, index_project, ls, read, refs, sync_project, watch_project, Ambiguous,
-    ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
+    clamp_debounce_ms, find, index_project, index_project_with_progress, ls, read, refs,
+    sync_project, watch_project, Ambiguous, ReadOutcome, RefDir, RefOutcome, SymbolHints,
+    DEFAULT_DEBOUNCE_MS,
 };
+
 use cam::memory::{
     add_solution_with_links, format_tree, show_solution, solution_tree, RecallOptions,
 };
@@ -17,6 +19,8 @@ use cam::Config;
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
+
+mod cli_progress;
 
 #[derive(Parser)]
 #[command(
@@ -250,7 +254,16 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         }
         Command::Index => {
             let project = resolve_project(project_arg)?;
-            let report = index_project(&project)?;
+            let show_progress = !json && io::stderr().is_terminal();
+            let mut progress = show_progress.then(cli_progress::ShimmerProgress::start);
+            let report = if let Some(bar) = progress.as_mut() {
+                index_project_with_progress(&project, &mut |event| bar.on_progress(event))?
+            } else {
+                index_project(&project)?
+            };
+            if let Some(bar) = progress.take() {
+                bar.finish();
+            }
             if json {
                 emit_json(&report, pretty)?;
             } else {
@@ -258,6 +271,9 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
                     "indexed {} files, {} nodes, {} edges ({} skipped)",
                     report.files, report.nodes, report.edges, report.skipped
                 ));
+            }
+            if show_progress {
+                cli_progress::outro();
             }
         }
         Command::Sync => {
