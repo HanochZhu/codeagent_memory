@@ -4,7 +4,7 @@
 
 # cam
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md)
+[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md) · [🌐 ウェブサイト](https://hanochzhu.github.io/cam-web/)
 
 ### コーディングエージェント向けに特化したローカル・マルチターン会話メモリシステム
 
@@ -12,6 +12,7 @@
 
 **Rust 製カーネル**
 
+[![Website](https://img.shields.io/badge/website-オンライン-brightgreen.svg)](https://hanochzhu.github.io/cam-web/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange.svg)](https://www.rust-lang.org/)
 [![Install](https://img.shields.io/badge/install-cargo--git-blue.svg)](#クイックスタート)
@@ -47,7 +48,7 @@
 - [対応プラットフォーム](#対応プラットフォーム)
 - [ライセンス](#ライセンス)
 
-ガイド: [メインエージェントとサブエージェント](docs/agents.md) · [IDE別 MCP 設定](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+ガイド: [インタラクティブ紹介サイト](https://hanochzhu.github.io/cam-web/) · [メインエージェントとサブエージェント](docs/agents.md) · [IDE別 MCP 設定](docs/mcp.md) · [中文说明](docs/agents.zh.md)
 
 ---
 

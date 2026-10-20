@@ -4,7 +4,7 @@
 
 # cam
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md)
+[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md) · [🌐 Website](https://hanochzhu.github.io/cam-web/)
 
 ### A local multi-turn conversational memory system purpose-built for coding agents
 
@@ -12,6 +12,7 @@
 
 **Kernel written in Rust**
 
+[![Website](https://img.shields.io/badge/website-live-brightgreen.svg)](https://hanochzhu.github.io/cam-web/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange.svg)](https://www.rust-lang.org/)
 [![Install](https://img.shields.io/badge/install-cargo--git-blue.svg)](#get-started)
@@ -47,7 +48,7 @@
 - [Supported Platforms](#supported-platforms)
 - [License](#license)
 
-Guides: [Main Agent vs Subagent](docs/agents.md) · [MCP Configs by IDE](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+Guides: [Interactive Showcase (Website)](https://hanochzhu.github.io/cam-web/) · [Main Agent vs Subagent](docs/agents.md) · [MCP Configs by IDE](docs/mcp.md) · [中文说明](docs/agents.zh.md)
 
 ---
 

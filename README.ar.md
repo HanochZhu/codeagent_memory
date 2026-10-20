@@ -4,7 +4,7 @@
 
 # cam
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md)
+[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md) · [🌐 الموقع](https://hanochzhu.github.io/cam-web/)
 
 ### نظام ذاكرة حوارية محلي متعدد الجولات مخصص لوكلاء البرمجة الذكية (Coding Agents)
 
@@ -12,6 +12,7 @@
 
 **النواة مكتوبة بلغة Rust**
 
+[![Website](https://img.shields.io/badge/website-مباشر-brightgreen.svg)](https://hanochzhu.github.io/cam-web/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange.svg)](https://www.rust-lang.org/)
 [![Install](https://img.shields.io/badge/install-cargo--git-blue.svg)](#البدء)
@@ -47,7 +48,7 @@
 - [المنصات المدعومة](#المنصات-المدعومة)
 - [الترخيص](#الترخيص)
 
-الأدلة الإرشادية: [الوكيل الرئيسي مقابل الوكلاء الفرعيين](docs/agents.md) · [تكوينات MCP حسب بيئة التطوير](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+الأدلة الإرشادية: [الموقع التفاعلي](https://hanochzhu.github.io/cam-web/) · [الوكيل الرئيسي مقابل الوكلاء الفرعيين](docs/agents.md) · [تكوينات MCP حسب بيئة التطوير](docs/mcp.md) · [中文说明](docs/agents.zh.md)
 
 ---
 

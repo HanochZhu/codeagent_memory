@@ -4,7 +4,7 @@
 
 # cam
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md)
+[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md) · [🌐 官方网页](https://hanochzhu.github.io/cam-web/)
 
 ### 专为 AI 编程 Agent 打造的本地多轮对话记忆系统
 
@@ -12,6 +12,7 @@
 
 **内核用 Rust 写成**
 
+[![Website](https://img.shields.io/badge/website-在线演示-brightgreen.svg)](https://hanochzhu.github.io/cam-web/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange.svg)](https://www.rust-lang.org/)
 [![Install](https://img.shields.io/badge/install-cargo--git-blue.svg)](#开始)
@@ -47,7 +48,7 @@
 - [支持的平台](#支持的平台)
 - [许可证](#许可证)
 
-详细用法：[主 Agent 与 Subagent](docs/agents.zh.md) · [各 IDE 的 MCP 配置](docs/mcp.zh.md) · [English](docs/agents.md)
+详细用法：[在线介绍与交互演示](https://hanochzhu.github.io/cam-web/) · [主 Agent 与 Subagent](docs/agents.zh.md) · [各 IDE 的 MCP 配置](docs/mcp.zh.md) · [English](docs/agents.md)
 
 ---
 
