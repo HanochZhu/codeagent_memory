@@ -10,7 +10,12 @@ fn cam_bin() -> PathBuf {
 }
 
 fn output(home: &Path, args: &[&str]) -> Output {
+    output_in(home, home, args)
+}
+
+fn output_in(cwd: &Path, home: &Path, args: &[&str]) -> Output {
     Command::new(cam_bin())
+        .current_dir(cwd)
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("CAM_HASH_EMBED", "1")
@@ -254,4 +259,39 @@ fn first_command_auto_inits() {
     );
     assert!(root.path().join(".cam/cam.db").is_file());
     assert!(json(&indexed)["files"].as_i64().unwrap() >= 1);
+}
+
+#[test]
+fn index_refuses_implicit_home_and_finds_nested_git_root() {
+    let home = tempdir().unwrap();
+
+    // 1. Running in home directory without explicit --project must fail safely
+    let refused = output_in(home.path(), home.path(), &["--json", "index"]);
+    assert_eq!(refused.status.code(), Some(1));
+    let val = json(&refused);
+    assert_eq!(val["error"]["code"], "error");
+    assert!(
+        val["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Refusing to automatically use"),
+        "{val}"
+    );
+    assert!(!home.path().join(".cam/cam.db").exists());
+
+    // 2. Running inside a nested folder of a git repo resolves to the git repo root
+    let repo = home.path().join("work/repo");
+    let nested = repo.join("nested/src");
+    fs::create_dir_all(&nested).unwrap();
+    fs::create_dir(repo.join(".git")).unwrap();
+    write_fixture(&repo);
+
+    let indexed = output_in(&nested, home.path(), &["--json", "index"]);
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    assert!(repo.join(".cam/cam.db").is_file());
+    assert!(!home.path().join(".cam/cam.db").exists());
 }
