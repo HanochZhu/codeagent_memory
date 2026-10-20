@@ -3,7 +3,7 @@
   "name": "io.github.HanochZhu/codeagent-memory",
   "title": "codeagent-memory",
   "description": "Local code graph and solution memory for coding agents via CLI and MCP.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "websiteUrl": "https://github.com/HanochZhu/codeagent_memory",
   "repository": {
     "url": "https://github.com/HanochZhu/codeagent_memory",
@@ -13,7 +13,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/hanochzhu/codeagent-memory:0.1.4",
+      "identifier": "ghcr.io/hanochzhu/codeagent-memory:0.1.5",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"

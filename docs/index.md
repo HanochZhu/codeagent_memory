@@ -14,6 +14,7 @@
 |---|---|---|
 | eval | [2026-09-15-multi-turn-token-benchmark.md](explore/eval/2026-09-15-multi-turn-token-benchmark.md) | 记忆面 / 代码图可用的 benchmark，以及 DeepSeek 多轮问答 + token 对比 |
 | eval | [2026-09-16-memory-comparison.md](explore/eval/2026-09-16-memory-comparison.md) | cam 与 grep / agentmemory / codegraph 的同语料对照，以及 README 折线图 |
+| eval | [2026-10-08-edit2ripple-optimization.md](explore/eval/2026-10-08-edit2ripple-optimization.md) | edit2ripple 调研：ARB / RepoMap / RepoGraph / LocAgent / ROSE / TCTracer，缺口在种子和单一信号；实测一跳只够到 34% gold，融合后 MRR 0.44 |
 | memory | [2026-10-08-fact-code-link.md](explore/memory/2026-10-08-fact-code-link.md) | 事实与代码无外键；记忆间早期为树+修订链，后增 `solution_links` 知识图谱边 |
 
 ## 设计 / 架构
@@ -25,4 +26,6 @@
 
 ## 任务 / 计划
 
-（无）
+| 文档 | 一句话 |
+|---|---|
+| [2026-10-08-edit2ripple-optimization.md](tasks/2026-10-08-edit2ripple-optimization.md) | edit2ripple：诊断 → 事后 RRF → 种子 → PageRank → 测试 / 词法通道 → 交叉验证融合 |

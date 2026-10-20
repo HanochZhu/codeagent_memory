@@ -422,7 +422,8 @@ mod tests {
         );
         let err = res.unwrap_err();
         assert!(
-            err.to_string().contains("summary must be written in English"),
+            err.to_string()
+                .contains("summary must be written in English"),
             "{err:#}"
         );
     }
