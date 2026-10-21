@@ -4,7 +4,7 @@
 
 # cam
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md) · [🌐 웹사이트](https://hanochzhu.github.io/cam-web/)
+[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [العربية](README.ar.md) · [🌐 웹사이트](https://hanochzhu.github.io/cam-web/?lang=ko)
 
 ### 코딩 에이전트를 위해 특화된 로컬 멀티턴 대화형 메모리 시스템
 
@@ -12,7 +12,7 @@
 
 **Rust로 작성된 코어**
 
-[![Website](https://img.shields.io/badge/website-라이브-brightgreen.svg)](https://hanochzhu.github.io/cam-web/)
+[![Website](https://img.shields.io/badge/website-라이브-brightgreen.svg)](https://hanochzhu.github.io/cam-web/?lang=ko)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange.svg)](https://www.rust-lang.org/)
 [![Install](https://img.shields.io/badge/install-cargo--git-blue.svg)](#시작하기)
@@ -48,7 +48,7 @@
 - [지원하는 플랫폼](#지원하는-플랫폼)
 - [라이선스](#라이선스)
 
-가이드: [인터랙티브 웹사이트](https://hanochzhu.github.io/cam-web/) · [메인 에이전트 vs 서브에이전트](docs/agents.md) · [IDE별 MCP 설정](docs/mcp.md) · [中文说明](docs/agents.zh.md)
+가이드: [인터랙티브 웹사이트](https://hanochzhu.github.io/cam-web/?lang=ko) · [메인 에이전트 vs 서브에이전트](docs/agents.md) · [IDE별 MCP 설정](docs/mcp.md) · [中文说明](docs/agents.zh.md)
 
 ---
 
