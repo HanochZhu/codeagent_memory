@@ -373,6 +373,30 @@ stale_days = 30
 
 ![DeepSeek 多轮 prompt token](eval/charts/multiturn-tokens.svg)
 
+### 6. 记忆写入 — 由谁决定一条记忆的边界
+
+上面的评测都是由测试框架写好正文，再调用 `cam add`。没有一个让模型自己决定一条记忆写到哪里为止。`eval/write_memory` 补的就是这一段：模型拿到一篇排查笔记，通过 `cam mcp` 自己调用 `cam_add`，写进一个临时项目。
+
+两种写法看同一批笔记：
+
+| 写法 | 指令 |
+| --- | --- |
+| `legacy` | 只存一条记忆，正文是整篇调查。 |
+| `split` | 一条记忆是一条事实，或一个问题的解决路径（现象、原因、改法、如何验证）。两段内容能分别被问到，或者会分别过时，就分开存。同一次解决得到的多条放进一次 `cam_add` 的 `memories`，用 `#0`、`#1` 在 `links` 里互指。 |
+
+四篇笔记是手工标注的。`tool-truncation` 有七条应该拆开的事实（预算、尾部文件、实验开关、媒体上限、已删除的批量上限、shell、Unity）。`lsp-toast` 是一个 bug 的完整解决路径，应该留在一条里。`recall-and-forgetting` 是两套机制。`read-and-delete` 是两条互不相关的策略。
+
+记分不另请一个模型。一条金标事实被覆盖，是指有一条记忆包含它要求的全部短语。它算独占，是指这条记忆里没有另一条金标事实。要求的链接算命中，是指这两条记忆之间有边，或者两条事实落在同一条记忆里。短语用的是标识符（`buildOversizedToolResultOutputs`、`S * 1.7`），模型换一种说法就算漏。这会低估流畅改写，但能看出一条正文是不是塞进了好几条事实。
+
+`deepseek-flash`，2026-10-21：
+
+| 写法 | 平均条数 | 最长正文 | 覆盖率 | 独占率 |
+| --- | ---: | ---: | ---: | ---: |
+| `legacy` | 1.0 | 845 字 | 0.88 | 0.38 |
+| `split` | 3.5 | 370 字 | 0.62 | **0.62** |
+
+split 把截断那篇拆成 8 条，LSP 修复仍是 1 条。该连的 4 组边一条都没连上。覆盖率下降，是因为有的金标短语被拆到不同记忆里，或者被换了说法。两边都漏掉了「记忆不删除」这条策略。这条规则能拆开长正文，还没能让模型把拆开的事实连起来。
+
 <details>
 <summary><b>复现全部评测脚本</b></summary>
 
@@ -393,6 +417,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion；需要 DEEPSEEK_API_KEY
+python3 eval/write_memory/test_score.py          # 只测记分，不调用 API
+python3 eval/write_memory/run.py                 # 模型自己写记忆；需要 DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

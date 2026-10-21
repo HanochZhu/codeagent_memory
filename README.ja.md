@@ -373,6 +373,16 @@ stale_days = 30
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. 記憶の書き込み — 1件の境界を誰が決めるか
+
+これまでのベンチマークはハーネスが本文を書き、`cam add` を呼ぶ。モデル自身が「1件の記憶はどこまでか」を決める評価はない。`eval/write_memory` は調査メモをモデルに渡し、`cam mcp` 経由で `cam_add` を呼ばせる。
+
+`legacy` は調査全体を1件の本文にする。`split` は現行ルールで、1件は1つの事実、または1つの問題の解決経路（症状、原因、変更、確認方法）である。別々に尋ねられる、または別々に古くなる内容は分ける。同じ解決から出た複数件は1回の `cam_add` の `memories` に入れ、`#0` や `#1` で `links` を張る。
+
+4つのメモを手でラベルする。`tool-truncation` は分けるべき7事実、`lsp-toast` は1本の解決経路、`recall-and-forgetting` は2つの仕組み、`read-and-delete` は無関係な2方針。採点は別モデルを使わない。金の事実が持つ必須句をすべて含む記憶があり、その記憶が他の金の事実を含まなければ exclusive。必要なリンクは、記憶の間に辺があるか、同じ記憶に入っていれば命中。句は識別子なので、言い換えて落とすとミスになる。
+
+`deepseek-flash`、2026-10-21：legacy は平均 1.0 件、最長 845 字、coverage 0.88、exclusive 0.38。split は 3.5 件、最長 370 字、coverage 0.62、exclusive 0.62。切り詰めメモは 8 件になり、LSP 修正は 1 件のまま。期待した 4 本のリンクは張られなかった。
+
 <details>
 <summary><b>すべてのベンチマークを再現する手順</b></summary>
 
@@ -393,6 +403,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; DEEPSEEK_API_KEY が必要
+python3 eval/write_memory/test_score.py          # 採点のみ。API 不要
+python3 eval/write_memory/run.py                 # モデルが記憶を書く。DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

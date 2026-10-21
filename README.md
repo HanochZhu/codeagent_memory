@@ -373,6 +373,30 @@ Full context dump vs. per-turn `cam` retrieval (`deepseek-flash`, hash embedder,
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. Memory writing — who decides what one memory is
+
+The benchmarks above call `cam add` with text the harness already wrote. None of them ask a model to decide where one memory ends. `eval/write_memory` does. A model receives an investigation note and calls `cam_add` itself, through `cam mcp`, into a throwaway project.
+
+Two arms see the same notes:
+
+| Arm | Instruction |
+| --- | --- |
+| `legacy` | Store one memory. The body is the full write-up. |
+| `split` | One memory is one fact, or the solution path for one problem (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them apart. Several memories from the same solution go in one `cam_add` as `memories`, using `#0`, `#1`, ... for `links`. |
+
+The four notes are labeled by hand. `tool-truncation` is seven facts that should split (budget, tail file, experimental flag, media caps, the removed batch bar, shell, Unity). `lsp-toast` is one bug's solution path and should stay one memory. `recall-and-forgetting` is two mechanisms. `read-and-delete` is two unrelated policies.
+
+Scoring is lexical, not another model. A gold fact is covered when one stored memory contains every required phrase. It is exclusive when that memory contains no other gold fact. A required link counts when those memories share an edge, or both facts landed in the same memory. Phrases are identifiers (`buildOversizedToolResultOutputs`, `S * 1.7`), so a paraphrase that drops them counts as a miss. That under-counts a fluent rewrite and still shows whether one body is holding several facts.
+
+`deepseek-flash`, 2026-10-21:
+
+| Arm | Memories | Longest body | Coverage | Exclusive |
+| --- | ---: | ---: | ---: | ---: |
+| `legacy` | 1.0 | 845 chars | 0.88 | 0.38 |
+| `split` | 3.5 | 370 chars | 0.62 | **0.62** |
+
+The split arm turned the truncation note into 8 memories and left the LSP fix as one memory. It added none of the 4 expected links on that note. Coverage fell because some gold phrases were split across memories or reworded. Both arms dropped the "memories are never deleted" policy. The rule splits long bodies; it does not yet make the model connect the pieces.
+
 <details>
 <summary><b>Reproduce all benchmarks</b></summary>
 
@@ -393,6 +417,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; requires DEEPSEEK_API_KEY
+python3 eval/write_memory/test_score.py          # scorer only, no API
+python3 eval/write_memory/run.py                 # model writes memories; DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

@@ -373,6 +373,16 @@ stale_days = 30
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. 기억 쓰기 — 한 항목의 경계를 누가 정하는가
+
+지금까지의 벤치마크는 하네스가 본문을 쓰고 `cam add`를 호출한다. 모델이 스스로 기억 한 건의 끝을 정하는 평가는 없다. `eval/write_memory`는 조사 노트를 모델에게 주고, `cam mcp`로 `cam_add`를 호출하게 한다.
+
+`legacy`는 조사 전체를 본문 하나에 넣는다. `split`은 현재 규칙이다. 한 건은 사실 하나이거나, 한 문제의 해결 경로(증상, 원인, 수정, 확인 방법)이다. 따로 물을 수 있거나 따로 낡을 수 있는 내용은 나눈다. 같은 해결에서 나온 여러 건은 한 번의 `cam_add` `memories`에 넣고 `#0`, `#1`로 `links`를 건다.
+
+노트 네 편을 손으로 표시한다. `tool-truncation`은 나눠야 할 사실 일곱 개, `lsp-toast`는 하나의 해결 경로, `recall-and-forgetting`은 두 메커니즘, `read-and-delete`는 서로 무관한 두 정책이다. 채점은 다른 모델을 쓰지 않는다. 정답 사실의 필수 구절이 한 기억에 모두 있고 그 기억에 다른 정답 사실이 없으면 exclusive다. 필요한 링크는 두 기억 사이에 변이 있거나 같은 기억에 들어가면 맞춘 것이다. 구절은 식별자라서, 풀어 쓰다 빠뜨리면 오답이다.
+
+`deepseek-flash`, 2026-10-21: legacy는 평균 1.0건, 최장 845자, coverage 0.88, exclusive 0.38. split은 3.5건, 최장 370자, coverage 0.62, exclusive 0.62. 절단 노트는 8건이 되었고 LSP 수정은 1건으로 남았다. 기대했던 링크 4개는 생기지 않았다.
+
 <details>
 <summary><b>모든 벤치마크 재현 방법</b></summary>
 
@@ -393,6 +403,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; DEEPSEEK_API_KEY 필요
+python3 eval/write_memory/test_score.py          # 채점만. API 불필요
+python3 eval/write_memory/run.py                 # 모델이 직접 기억을 기록. DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

@@ -1,0 +1,45 @@
+[
+  {
+    "id": "tool-truncation",
+    "expect": "split",
+    "note": "Investigation of default tool-result truncation in codely-cli.\n\nAfter a successful tool call, CoreToolScheduler and nonInteractiveToolExecutor call ToolResultSizeManager.assessToolResultSize. Text tokens are characters divided by 2. sessionTokenLimit defaults to -1, so the session budget is the model limit times 0.7. Regular tools may use max(5000, floor(session * 0.55 * 0.6)), about 33 percent. SubagentToolWrapper gets 90 percent. A calculation failure falls back to 25000 tokens, or 500000 for agents.\n\nWhen the verdict is text-too-large and canReduceToolSource is true, buildOversizedToolResultOutputs writes the full payload under tool-outputs and returns a tail of at most 16000 characters and 1000 lines. A failed write keeps the full payload.\n\ncanReduceToolSource(undefined) is true. With CODELY_COMPACT_EXPERIMENTAL off the source stays undefined, so the tail path is the default. With the flag on, reduction is blocked unless captureStatus is complete_source.\n\nImages and videos use a 5 MB base64 cap and a 20 MB raw cap, and are replaced by a not-sent description.\n\napplyAggregateFunctionResponseBudget no longer enforces the old 200000-character batch bar.\n\nThe shell tool truncates earlier, inside formatLargeTextForModel, at DEFAULT_SHELL_OUTPUT_TAIL_LINES of 1000.\n\nUnity maybeCompressUnityToolOutput is a separate client-side fold and is not this shared gate.",
+    "facts": [
+      {"id": "budget", "must": ["0.55", "25000"], "links": ["tail"]},
+      {"id": "tail", "must": ["buildOversizedToolResultOutputs"], "links": ["budget"]},
+      {"id": "flag", "must": ["CODELY_COMPACT_EXPERIMENTAL", "complete_source"], "links": ["tail"]},
+      {"id": "media", "must": ["5 MB", "20 MB"]},
+      {"id": "batch-bar", "must": ["200000-character"]},
+      {"id": "shell", "must": ["formatLargeTextForModel", "DEFAULT_SHELL_OUTPUT_TAIL_LINES"], "links": ["tail"]},
+      {"id": "unity", "must": ["maybeCompressUnityToolOutput"], "links": ["tail"]}
+    ]
+  },
+  {
+    "id": "lsp-toast",
+    "expect": "keep",
+    "note": "Bug: Cowork shows a C# LSP install-failure toast even when the server binary is bundled with the app.\n\nCause: Hub restore never loads the LSP manager, then the UI looks up codely-unity-lsp-server on PATH and reports it missing.\n\nFix: load the LSP manager while restoring the newest workspace, and skip the PATH check when the binary is bundled.\n\nCheck: open a workspace that vendors the LSP and confirm the install-failure toast does not appear.",
+    "facts": [
+      {
+        "id": "toast-fix",
+        "must": ["LSP manager", "PATH check", "install-failure toast"]
+      }
+    ]
+  },
+  {
+    "id": "recall-and-forgetting",
+    "expect": "split",
+    "note": "cam recall fuses BM25 and vectors with reciprocal rank fusion. The constant k is 60, and the fused score is scaled by k+1 so a document that is first on both lists scores 2.\n\nA separate mechanism forgets. Ebbinghaus stability S starts at 7 days. A successful recall sets S to S * 1.7. needs_update becomes true when retention falls below 0.3.",
+    "facts": [
+      {"id": "rrf", "must": ["k is 60", "k+1"], "links": ["forgetting"]},
+      {"id": "forgetting", "must": ["S * 1.7", "0.3"], "links": ["rrf"]}
+    ]
+  },
+  {
+    "id": "read-and-delete",
+    "expect": "split",
+    "note": "cam read returns an outline for a file path and the symbol body for a symbol path. The full flag reads the whole file only when the argument is a file path, not a symbol path.\n\nUnrelated policy: memories are never deleted. Replacing one uses cam add --supersedes with the old id. parent only places the memory in the structural tree.",
+    "facts": [
+      {"id": "read", "must": ["outline", "symbol body", "full flag"]},
+      {"id": "delete", "must": ["never deleted", "--supersedes"]}
+    ]
+  }
+]
