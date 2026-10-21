@@ -373,6 +373,10 @@ stale_days = 30
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. كتابة الذاكرة
+
+الملاحظات في مستودع مستقل: [cam-write-memory-eval](https://github.com/HanochZhu/cam-write-memory-eval). هذا المستودع يحتفظ بسكربت التشغيل. أول تشغيل لـ `eval/write_memory/run.py` ينزّل `cases.json` إلى `eval/write_memory/data/`. هذا نفس فصل LongMemEval وLoCoMo.
+
 <details>
 <summary><b>إعادة إنتاج جميع الاختبارات</b></summary>
 
@@ -393,6 +397,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; يتطلب DEEPSEEK_API_KEY
+python3 eval/write_memory/test_score.py          # ينزّل مجموعة الحالات أول مرة، دون استدعاء نموذج
+python3 eval/write_memory/run.py                 # ينزّل مجموعة الحالات أول مرة؛ يتطلب DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

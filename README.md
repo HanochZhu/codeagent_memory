@@ -373,6 +373,12 @@ Full context dump vs. per-turn `cam` retrieval (`deepseek-flash`, hash embedder,
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. Memory writing — who decides what one memory is
+
+The notes are a separate case set, [cam-write-memory-eval](https://github.com/HanochZhu/cam-write-memory-eval). This repo keeps the runner. The first `eval/write_memory/run.py` downloads `cases.json` to `eval/write_memory/data/` (override with `CAM_EVAL_WRITE_MEMORY`). That is the same split as LongMemEval and LoCoMo: the corpus stays outside, and the script here fetches it when you run the benchmark.
+
+A model receives one note and calls `cam_add`. `legacy` asks for one full write-up. `split` asks for one fact, or one problem's solution path, and links pieces from the same solution with `#0`. A fact counts as exclusive when one stored memory contains every required phrase and no other gold fact. On 2026-10-21, `deepseek-flash` moved the mean exclusive rate from 0.38 to 0.62. Coverage fell from 0.88 to 0.62, and the expected links were not written. The case-set README has the note labels and the full table.
+
 <details>
 <summary><b>Reproduce all benchmarks</b></summary>
 
@@ -393,6 +399,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; requires DEEPSEEK_API_KEY
+python3 eval/write_memory/test_score.py          # downloads the case set; no model call
+python3 eval/write_memory/run.py                 # downloads the case set; DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```
