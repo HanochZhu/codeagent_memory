@@ -109,6 +109,13 @@ fn initialize(mcp: &mut McpChild) {
     ));
     assert_eq!(resp["result"]["protocolVersion"], "2025-03-26");
     assert_eq!(resp["result"]["serverInfo"]["name"], "cam");
+    let version = resp["result"]["serverInfo"]["version"].as_str().unwrap();
+    let (crate_version, hash) = version.split_once('+').expect(version);
+    assert!(crate_version.split('.').count() >= 3, "{version}");
+    assert!(
+        hash == "unknown" || (hash.len() >= 12 && hash.chars().all(|c| c.is_ascii_hexdigit())),
+        "{version}"
+    );
     mcp.notify(&json!({
         "jsonrpc": "2.0",
         "method": "notifications/initialized"
@@ -314,6 +321,58 @@ fn mcp_stdio_init_add_recall() {
         .as_str()
         .unwrap()
         .contains("summary must be written in English"));
+
+    let batch = call_ok(
+        &mut mcp,
+        13,
+        "cam_add",
+        json!({
+            "path": root,
+            "hash_embed": true,
+            "memories": [
+                {
+                    "summary": "The shell tool truncates output at 1000 lines",
+                    "body": "formatLargeTextForModel keeps the last 1000 lines."
+                },
+                {
+                    "summary": "Images use a separate size cap",
+                    "body": "Images over 5 MB base64 are replaced with a not-sent note.",
+                    "parent": "#0",
+                    "links": ["#0"]
+                }
+            ]
+        }),
+    );
+    let stored = batch["memories"].as_array().unwrap();
+    assert_eq!(stored.len(), 2);
+    let first = stored[0]["id"].as_str().unwrap();
+    let second = stored[1]["id"].as_str().unwrap();
+    assert_eq!(stored[1]["parent_id"].as_str(), Some(first));
+    assert_eq!(stored[1]["links"], json!([first]));
+    let shown = call_ok(
+        &mut mcp,
+        14,
+        "cam_mem_show",
+        json!({ "path": root, "id": first }),
+    );
+    assert_eq!(shown["links"], json!([second]));
+
+    let rejected = call_tool(
+        &mut mcp,
+        15,
+        "cam_add",
+        json!({
+            "path": root,
+            "hash_embed": true,
+            "summary": "Should not mix with memories",
+            "body": "Detail.",
+            "memories": [{
+                "summary": "Another fact",
+                "body": "Detail of that fact."
+            }]
+        }),
+    );
+    assert_eq!(rejected["result"]["isError"], true);
 }
 
 #[test]

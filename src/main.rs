@@ -119,9 +119,9 @@ enum Command {
         #[arg(long, hide = true)]
         hash_embed: bool,
     },
-    /// Add a memory (one atomic fact per memory; body from --body, --file, or stdin)
+    /// Add one memory: one fact, or one problem's solution path (body from --body, --file, or stdin)
     Add {
-        /// One-line English description/summary of the atomic fact
+        /// One-line English title of this fact or solution path
         #[arg(long)]
         summary: String,
         /// Structural parent in the memory tree
@@ -141,7 +141,7 @@ enum Command {
         /// Read the body from a file
         #[arg(long, conflicts_with = "body")]
         file: Option<PathBuf>,
-        /// Pass the body inline (supports non-Latin characters)
+        /// Detail this one fact or solution path needs (supports non-Latin characters)
         #[arg(long, conflicts_with = "file")]
         body: Option<String>,
         #[arg(long, hide = true)]

@@ -32,7 +32,7 @@ Prefer the MCP tool when it is available. Do not shell out to `cam` if `cam_*` t
    - `stale` / `needs_update` / no hit → continue.
 2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` (MCP) / `cam index` (CLI) once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
 3. **Walk the graph** on a miss: `ls` → `read` (symbol path) → `ref`.
-4. **Write back** after solving: extract atomic facts and call `cam_add` so each memory stores only one fact (avoid packing excessive information into a single memory), with an English `summary` (the body supports non-Latin characters). When multiple facts are related, pass their IDs in `links` (`--link` on CLI) to build a knowledge graph. Use `parent` for structural hierarchy and `supersedes` for a complete replacement revision.
+4. **Write back** after solving. One memory is one fact, or the solution path for one problem (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them separately; the body holds only the detail that one memory needs. Call `cam_add` with an English `summary` (the body supports non-Latin characters). Several memories from the same solution go in one call as `memories`, using `#0`, `#1`, ... in `links`, `parent`, and `supersedes`. On the CLI, call `cam add` once per memory and pass `--link`. Use `parent` for structural hierarchy and `supersedes` for a complete replacement revision.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Prefer symbol reads (`src/foo.rs/bar`) over `full`, and prefer `read`/`ls` over opening whole files.
 
@@ -58,7 +58,7 @@ Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compa
 
 ## Memory rules
 
-- Store **one atomic fact per memory** to avoid crowding multiple facts into a single entry. When facts are related, link them via `links` / `--link` to form a knowledge graph (recall does not traverse graph links yet).
+- Store **one fact, or one problem's solution path, per memory**. If two pieces can be asked about separately, or can become outdated separately, store them separately. Related memories use `links` / `--link`, or `#0`, `#1`, ... inside one `cam_add` `memories` array (recall does not traverse graph links yet).
 - Recall score is vector + BM25 fused with **RRF**, scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `score` about 2 means both paths matched, about 1 means only one did.
 - `R < 0.3` → `needs_update`; older than `stale_days` (default 30) → `stale`.
 - A successful returned match refreshes retention (`S *= 1.7`); expanded or filtered revisions do not.

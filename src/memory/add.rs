@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use anyhow::{bail, Result};
@@ -21,6 +21,22 @@ pub struct AddResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<String>,
     pub summary: String,
+}
+
+/// One memory to store. `parent`, `supersedes`, and `links` take an existing
+/// memory id, or `#0`, `#1`, ... for another item in the same `add_memories` call.
+#[derive(Debug, Clone)]
+pub struct NewMemory {
+    pub summary: String,
+    pub body: String,
+    pub parent: Option<String>,
+    pub supersedes: Option<String>,
+    pub links: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AddBatchResult {
+    pub memories: Vec<AddResult>,
 }
 
 pub fn add_solution(
@@ -51,94 +67,386 @@ pub fn add_solution_with_links(
     supersedes_id: Option<&str>,
     links: &[String],
 ) -> Result<AddResult> {
-    if summary.trim().is_empty() {
-        bail!("summary is required");
+    let batch = insert_memories(
+        project,
+        embedder,
+        &[NewMemory {
+            summary: summary.to_string(),
+            body: body.to_string(),
+            parent: parent_id.map(str::to_string),
+            supersedes: supersedes_id.map(str::to_string),
+            links: links.to_vec(),
+        }],
+        ErrorStyle::Single,
+    )?;
+    Ok(batch
+        .memories
+        .into_iter()
+        .next()
+        .expect("single memory insert returns one row"))
+}
+
+/// Store every memory in one transaction. A `#N` reference points at the item
+/// at that index in `memories`. Nothing is written if any item fails.
+pub fn add_memories(
+    project: &Project,
+    embedder: &dyn Embedder,
+    memories: &[NewMemory],
+) -> Result<AddBatchResult> {
+    if memories.is_empty() {
+        bail!("memories must contain at least one memory");
     }
-    if body.trim().is_empty() {
-        bail!("body is required (stdin or --file)");
-    }
-    require_english("summary", summary)?;
+    insert_memories(project, embedder, memories, ErrorStyle::Batch)
+}
+
+enum ErrorStyle {
+    Single,
+    Batch,
+}
+
+enum MemoryRef {
+    Index(usize),
+    Id(String),
+}
+
+struct Draft {
+    id: String,
+    summary: String,
+    body: String,
+    parent: Option<MemoryRef>,
+    supersedes: Option<MemoryRef>,
+    links: Vec<MemoryRef>,
+}
+
+fn insert_memories(
+    project: &Project,
+    embedder: &dyn Embedder,
+    memories: &[NewMemory],
+    style: ErrorStyle,
+) -> Result<AddBatchResult> {
+    let drafts = prepare_drafts(memories, &style)?;
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
-    let mut structural_parent = match parent_id {
-        Some(parent) => {
-            require_memory(&conn, "parent", parent)?;
-            Some(parent.to_string())
-        }
-        None => None,
-    };
-    if let Some(superseded) = supersedes_id {
-        let inherited_parent = require_memory(&conn, "superseded", superseded)?;
-        let successor: Option<String> = conn
-            .query_row(
-                "SELECT id FROM solutions WHERE supersedes_id = ?1",
-                [superseded],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(successor) = successor {
-            bail!("memory {superseded} is already superseded by {successor}");
-        }
-        if structural_parent.is_none() {
-            structural_parent = inherited_parent;
-        }
-    }
-    let normalized_links = normalize_links(&conn, links)?;
-
-    let id = Uuid::new_v4().simple().to_string()[..12].to_string();
+    let prepared = resolve_drafts(&conn, &drafts, &style)?;
+    let embeddings = embed_drafts(embedder, &prepared)?;
+    let model = embedder.model_id();
     let now = chrono::Utc::now().timestamp();
-    let fts_text = tokenize_for_fts(summary, body);
-    let embedding = encode_f32(&embedder.embed(&format!("{summary}\n{body}"))?);
 
-    conn.execute(
-        "INSERT INTO solutions(id, parent_id, supersedes_id, summary, body, created_at, updated_at, recalled_at, stability, embedding, embedding_model, fts_text)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        rusqlite::params![
-            id,
-            structural_parent,
-            supersedes_id,
-            summary.trim(),
-            body,
-            now,
-            now,
-            now,
-            INITIAL_STABILITY_DAYS,
-            embedding,
-            embedder.model_id(),
-            fts_text
-        ],
-    )?;
-
-    for target_id in &normalized_links {
-        conn.execute(
-            "INSERT OR IGNORE INTO solution_links(source_id, target_id) VALUES (?1, ?2)",
-            rusqlite::params![id, target_id],
+    let tx = conn.unchecked_transaction()?;
+    for (draft, embedding) in prepared.iter().zip(&embeddings) {
+        let fts_text = tokenize_for_fts(&draft.summary, &draft.body);
+        tx.execute(
+            "INSERT INTO solutions(id, parent_id, supersedes_id, summary, body, created_at, updated_at, recalled_at, stability, embedding, embedding_model, fts_text)
+             VALUES (?1, NULL, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                draft.id,
+                draft.summary,
+                draft.body,
+                now,
+                now,
+                now,
+                INITIAL_STABILITY_DAYS,
+                embedding,
+                model,
+                fts_text
+            ],
         )?;
     }
+    for draft in &prepared {
+        if draft.parent_id.is_some() || draft.supersedes_id.is_some() {
+            tx.execute(
+                "UPDATE solutions SET parent_id = ?1, supersedes_id = ?2 WHERE id = ?3",
+                rusqlite::params![draft.parent_id, draft.supersedes_id, draft.id],
+            )?;
+        }
+    }
+    for draft in &prepared {
+        for target_id in &draft.links {
+            tx.execute(
+                "INSERT OR IGNORE INTO solution_links(source_id, target_id) VALUES (?1, ?2)",
+                rusqlite::params![draft.id, target_id],
+            )?;
+        }
+    }
+    tx.commit()?;
 
-    Ok(AddResult {
-        id,
-        parent_id: structural_parent,
-        supersedes_id: supersedes_id.map(str::to_string),
-        links: normalized_links,
-        summary: summary.trim().to_string(),
+    Ok(AddBatchResult {
+        memories: prepared
+            .into_iter()
+            .map(|draft| AddResult {
+                id: draft.id,
+                parent_id: draft.parent_id,
+                supersedes_id: draft.supersedes_id,
+                links: draft.links,
+                summary: draft.summary,
+            })
+            .collect(),
     })
 }
 
-fn normalize_links(conn: &rusqlite::Connection, links: &[String]) -> Result<Vec<String>> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for raw in links {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
+struct ResolvedDraft {
+    id: String,
+    summary: String,
+    body: String,
+    parent_id: Option<String>,
+    supersedes_id: Option<String>,
+    links: Vec<String>,
+}
+
+fn prepare_drafts(memories: &[NewMemory], style: &ErrorStyle) -> Result<Vec<Draft>> {
+    let count = memories.len();
+    let mut drafts = Vec::with_capacity(count);
+    for (index, memory) in memories.iter().enumerate() {
+        let summary = memory.summary.trim();
+        if summary.is_empty() {
+            bail!("{}", missing_summary(style, index));
         }
-        require_memory(conn, "linked", trimmed)?;
-        if seen.insert(trimmed.to_string()) {
-            out.push(trimmed.to_string());
+        if memory.body.trim().is_empty() {
+            bail!("{}", missing_body(style, index));
+        }
+        require_english(&summary_field(style, index), summary)?;
+        let at = |field: &str| field_at(style, index, field);
+        drafts.push(Draft {
+            id: new_id(),
+            summary: summary.to_string(),
+            body: memory.body.clone(),
+            parent: optional_ref(memory.parent.as_deref(), count, &at("parent"))?,
+            supersedes: optional_ref(memory.supersedes.as_deref(), count, &at("supersedes"))?,
+            links: memory
+                .links
+                .iter()
+                .filter(|link| !link.trim().is_empty())
+                .map(|link| parse_ref(link, count, &at("links")))
+                .collect::<Result<_>>()?,
+        });
+    }
+    Ok(drafts)
+}
+
+fn resolve_drafts(
+    conn: &rusqlite::Connection,
+    drafts: &[Draft],
+    style: &ErrorStyle,
+) -> Result<Vec<ResolvedDraft>> {
+    let mut explicit_parent = Vec::with_capacity(drafts.len());
+    let mut supersedes_of = Vec::with_capacity(drafts.len());
+    let mut existing_parent: HashMap<String, Option<String>> = HashMap::new();
+
+    for (index, draft) in drafts.iter().enumerate() {
+        explicit_parent.push(match &draft.parent {
+            Some(target) => Some(resolve_target(
+                drafts, draft, target, index, "parent", style,
+            )?),
+            None => None,
+        });
+        if let Some(target) = &draft.parent {
+            if let MemoryRef::Id(id) = target {
+                require_memory(conn, "parent", id)?;
+            }
+        }
+        supersedes_of.push(match &draft.supersedes {
+            Some(target) => {
+                let id = resolve_target(drafts, draft, target, index, "supersedes", style)?;
+                if let MemoryRef::Id(existing) = target {
+                    let parent = require_memory(conn, "superseded", existing)?;
+                    let successor: Option<String> = conn
+                        .query_row(
+                            "SELECT id FROM solutions WHERE supersedes_id = ?1",
+                            [existing],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if let Some(successor) = successor {
+                        bail!("memory {existing} is already superseded by {successor}");
+                    }
+                    existing_parent.insert(existing.clone(), parent);
+                }
+                Some(id)
+            }
+            None => None,
+        });
+    }
+
+    ensure_no_supersedes_cycle(drafts)?;
+
+    let mut seen_supersedes = HashSet::new();
+    for (index, target) in supersedes_of.iter().enumerate() {
+        if let Some(target) = target {
+            if !seen_supersedes.insert(target.clone()) {
+                bail!(
+                    "{} supersedes {target}, which is already superseded in this call",
+                    field_at(style, index, "supersedes")
+                );
+            }
         }
     }
-    Ok(out)
+
+    let mut parents = Vec::with_capacity(drafts.len());
+    for index in 0..drafts.len() {
+        parents.push(inherited_parent(
+            index,
+            drafts,
+            &explicit_parent,
+            &existing_parent,
+            &mut Vec::new(),
+        )?);
+    }
+
+    let mut resolved = Vec::with_capacity(drafts.len());
+    for (index, draft) in drafts.iter().enumerate() {
+        let mut links = Vec::new();
+        let mut seen = HashSet::new();
+        for target in &draft.links {
+            let id = resolve_target(drafts, draft, target, index, "links", style)?;
+            if let MemoryRef::Id(existing) = target {
+                require_memory(conn, "linked", existing)?;
+            }
+            if seen.insert(id.clone()) {
+                links.push(id);
+            }
+        }
+        resolved.push(ResolvedDraft {
+            id: draft.id.clone(),
+            summary: draft.summary.clone(),
+            body: draft.body.clone(),
+            parent_id: parents[index].clone(),
+            supersedes_id: supersedes_of[index].clone(),
+            links,
+        });
+    }
+    Ok(resolved)
+}
+
+fn ensure_no_supersedes_cycle(drafts: &[Draft]) -> Result<()> {
+    for start in 0..drafts.len() {
+        let mut seen = HashSet::new();
+        let mut current = start;
+        loop {
+            if !seen.insert(current) {
+                bail!("memories[{start}] supersedes a memory that supersedes it");
+            }
+            match &drafts[current].supersedes {
+                Some(MemoryRef::Index(next)) => current = *next,
+                _ => break,
+            }
+        }
+    }
+    Ok(())
+}
+
+fn inherited_parent(
+    index: usize,
+    drafts: &[Draft],
+    explicit_parent: &[Option<String>],
+    existing_parent: &HashMap<String, Option<String>>,
+    stack: &mut Vec<usize>,
+) -> Result<Option<String>> {
+    if let Some(parent) = &explicit_parent[index] {
+        return Ok(Some(parent.clone()));
+    }
+    let Some(supersedes) = &drafts[index].supersedes else {
+        return Ok(None);
+    };
+    if stack.contains(&index) {
+        bail!("memories[{index}] supersedes a memory whose parent depends on itself");
+    }
+    stack.push(index);
+    let parent = match supersedes {
+        MemoryRef::Id(id) => existing_parent.get(id).cloned().flatten(),
+        MemoryRef::Index(other) => {
+            inherited_parent(*other, drafts, explicit_parent, existing_parent, stack)?
+        }
+    };
+    stack.pop();
+    Ok(parent)
+}
+
+fn resolve_target(
+    drafts: &[Draft],
+    draft: &Draft,
+    target: &MemoryRef,
+    index: usize,
+    field: &str,
+    style: &ErrorStyle,
+) -> Result<String> {
+    let id = match target {
+        MemoryRef::Index(other) => drafts[*other].id.clone(),
+        MemoryRef::Id(id) => id.clone(),
+    };
+    if id == draft.id {
+        bail!("{} cannot refer to itself", field_at(style, index, field));
+    }
+    Ok(id)
+}
+
+fn embed_drafts(embedder: &dyn Embedder, drafts: &[ResolvedDraft]) -> Result<Vec<Vec<u8>>> {
+    drafts
+        .iter()
+        .map(|draft| {
+            Ok(encode_f32(
+                &embedder.embed(&format!("{}\n{}", draft.summary, draft.body))?,
+            ))
+        })
+        .collect()
+}
+
+fn optional_ref(raw: Option<&str>, count: usize, at: &str) -> Result<Option<MemoryRef>> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Ok(Some(parse_ref(value, count, at)?)),
+        None => Ok(None),
+    }
+}
+
+fn parse_ref(raw: &str, count: usize, at: &str) -> Result<MemoryRef> {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix('#') {
+        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            let index: usize = match rest.parse() {
+                Ok(index) => index,
+                Err(_) => bail!("{at} index #{rest} is too large"),
+            };
+            if index >= count {
+                bail!("{at} index #{index} is out of range; this call has {count} memories");
+            }
+            return Ok(MemoryRef::Index(index));
+        }
+    }
+    if raw.is_empty() {
+        bail!("{at} memory id is empty");
+    }
+    Ok(MemoryRef::Id(raw.to_string()))
+}
+
+fn new_id() -> String {
+    Uuid::new_v4().simple().to_string()[..12].to_string()
+}
+
+fn missing_summary(style: &ErrorStyle, index: usize) -> String {
+    match style {
+        ErrorStyle::Single => "summary is required".to_string(),
+        ErrorStyle::Batch => format!("memories[{index}].summary is required"),
+    }
+}
+
+fn missing_body(style: &ErrorStyle, index: usize) -> String {
+    match style {
+        ErrorStyle::Single => "body is required (stdin or --file)".to_string(),
+        ErrorStyle::Batch => format!("memories[{index}].body is required"),
+    }
+}
+
+fn summary_field(style: &ErrorStyle, index: usize) -> String {
+    match style {
+        ErrorStyle::Single => "summary".to_string(),
+        ErrorStyle::Batch => format!("memories[{index}].summary"),
+    }
+}
+
+fn field_at(style: &ErrorStyle, index: usize, field: &str) -> String {
+    match style {
+        ErrorStyle::Single => field.to_string(),
+        ErrorStyle::Batch => format!("memories[{index}].{field}"),
+    }
 }
 
 fn require_memory(conn: &rusqlite::Connection, relation: &str, id: &str) -> Result<Option<String>> {
@@ -475,5 +783,126 @@ mod tests {
             missing.to_string().contains("linked memory not found"),
             "{missing:#}"
         );
+    }
+
+    fn memory_count(project: &Project) -> i64 {
+        let conn = project.connect().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM solutions", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn memory(summary: &str, body: &str) -> NewMemory {
+        NewMemory {
+            summary: summary.to_string(),
+            body: body.to_string(),
+            parent: None,
+            supersedes: None,
+            links: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn batch_resolves_index_refs_and_inherits_parent() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let topic = add_solution(
+            &project,
+            &embedder,
+            "Tool result size topic",
+            "How tool results are sized.",
+            None,
+            None,
+        )
+        .unwrap();
+        let mut shell = memory(
+            "The shell tool truncates output at 1000 lines",
+            "formatLargeTextForModel keeps the last 1000 lines.",
+        );
+        shell.parent = Some(topic.id.clone());
+        let mut images = memory(
+            "Images use a separate byte cap",
+            "Images over 5 MB are replaced with a note.",
+        );
+        images.parent = Some("#0".to_string());
+        images.links = vec!["#0".to_string(), "#0".to_string()];
+        let mut revision = memory("The image cap is 4 MB", "The image cap is now 4 MB.");
+        revision.supersedes = Some("#1".to_string());
+
+        let batch = add_memories(&project, &embedder, &[shell, images, revision]).unwrap();
+        assert_eq!(
+            batch.memories[0].parent_id.as_deref(),
+            Some(topic.id.as_str())
+        );
+        assert_eq!(
+            batch.memories[1].parent_id.as_deref(),
+            Some(batch.memories[0].id.as_str())
+        );
+        assert_eq!(batch.memories[1].links, vec![batch.memories[0].id.clone()]);
+        assert_eq!(
+            batch.memories[2].supersedes_id.as_deref(),
+            Some(batch.memories[1].id.as_str())
+        );
+        assert_eq!(
+            batch.memories[2].parent_id.as_deref(),
+            Some(batch.memories[0].id.as_str())
+        );
+
+        let shown = crate::memory::show_solution(&project, &batch.memories[0].id).unwrap();
+        assert_eq!(shown.links, vec![batch.memories[1].id.clone()]);
+        let replaced = crate::memory::show_solution(&project, &batch.memories[1].id).unwrap();
+        assert!(!replaced.latest);
+    }
+
+    #[test]
+    fn batch_failure_writes_nothing() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let mut broken = memory(
+            "Images use a separate byte cap",
+            "Images over 5 MB are dropped.",
+        );
+        broken.summary = "图片上限".to_string();
+        broken.links = vec!["#0".to_string()];
+        let err = add_memories(
+            &project,
+            &embedder,
+            &[
+                memory(
+                    "The shell tool truncates output at 1000 lines",
+                    "formatLargeTextForModel keeps the last 1000 lines.",
+                ),
+                broken,
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("memories[1].summary must be written in English"),
+            "{err:#}"
+        );
+        assert_eq!(memory_count(&project), 0);
+
+        let mut out_of_range = memory("A second fact", "Detail.");
+        out_of_range.links = vec!["#4".to_string()];
+        let err = add_memories(
+            &project,
+            &embedder,
+            &[
+                memory(
+                    "The shell tool truncates output at 1000 lines",
+                    "Tail of 1000 lines.",
+                ),
+                out_of_range,
+            ],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("out of range"), "{err:#}");
+        assert_eq!(memory_count(&project), 0);
     }
 }
