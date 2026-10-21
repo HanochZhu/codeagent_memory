@@ -377,7 +377,7 @@ stale_days = 30
 
 笔记本身不在这个仓库里，而在单独的测评集 [cam-write-memory-eval](https://github.com/HanochZhu/cam-write-memory-eval)。本仓库只保留运行脚本。第一次执行 `eval/write_memory/run.py` 时，会把 `cases.json` 下载到 `eval/write_memory/data/`（路径写在 `eval/datasets.toml`，可用 `CAM_EVAL_WRITE_MEMORY` 覆盖）。这和 LongMemEval、LoCoMo 一样：语料在外面，跑测评时再下载。
 
-模型拿到一篇笔记，自己调用 `cam_add`。`legacy` 要求整篇写成一条。`split` 要求一条记忆是一条事实，或一个问题的解决路径，同一次解决的多条用 `#0` 互连。一条事实算独占，是指有一条记忆包含它要求的全部短语，且没有另一条金标事实。2026-10-21，`deepseek-flash` 把平均独占率从 0.38 提高到 0.62，覆盖率从 0.88 降到 0.62，该连的边没有连上。四篇笔记的标注和完整结果表在测评集仓库的 README 里。
+模型拿到一篇笔记，自己调用 `cam_add`。`legacy` 要求整篇写成一条。`split` 要求一条记忆是一条事实，或一个问题的解决路径，同一次解决的多条用 `#0` 互连。一条事实算独占，是指有一条记忆包含它要求的全部短语，且没有另一条金标事实。四篇笔记都是本仓库已经公开的行为：召回融合、可执行文件更新后的重启提示、遗忘曲线，以及 `cam read` 和记忆不删除。标注和源文件在测评集仓库的 README 里。
 
 <details>
 <summary><b>复现全部评测脚本</b></summary>

@@ -13,7 +13,7 @@ land in the same memory.
 Usage (DEEPSEEK_API_KEY in .deepseek.env or .env):
   python3 eval/write_memory/test_score.py
   python3 eval/write_memory/run.py
-  python3 eval/write_memory/run.py --arm split --case tool-truncation
+  python3 eval/write_memory/run.py --arm split --case recall-pipeline
 """
 
 from __future__ import annotations
