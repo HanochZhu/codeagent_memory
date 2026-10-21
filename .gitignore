@@ -17,5 +17,4 @@ eval/agent_retrieval/data/
 eval/agent_retrieval/vendor/
 eval/agent_retrieval/results/
 eval/recall_payload/results/
-eval/write_memory/results/
 .deepseek.env

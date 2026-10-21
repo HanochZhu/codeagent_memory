@@ -373,16 +373,6 @@ stale_days = 30
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
-### 6. كتابة الذاكرة — من يقرر حدّ الذكرى الواحدة
-
-المقاييس السابقة تجعل منصة الاختبار تكتب النص ثم تستدعي `cam add`. لا يقرر النموذج أين تنتهي الذكرى الواحدة. `eval/write_memory` يعطي النموذج ملاحظة تحقيق ويدعه يستدعي `cam_add` عبر `cam mcp` في مشروع مؤقت.
-
-`legacy` يخزّن التحقيق كله في متن واحد. `split` هو القاعدة الحالية: الذكرى الواحدة حقيقة واحدة، أو مسار حل لمشكلة واحدة (العَرَض والسبب والتغيير وطريقة التحقق). ما يمكن السؤال عنه على حدة، أو ما يمكن أن يَقادَم على حدة، يُخزَّن منفصلًا. عدة ذكريات من الحل نفسه تذهب في استدعاء `cam_add` واحد عبر `memories`، مع `#0` و`#1` في `links`.
-
-أربع ملاحظات موسومة يدويًا. `tool-truncation` سبع حقائق يجب فصلها. `lsp-toast` مسار حل واحد يجب أن يبقى ذكرى واحدة. `recall-and-forgetting` آليتان. `read-and-delete` سياستان غير مرتبطتين. التسجيل معجمي لا عبر نموذج آخر. الحقيقة الذهبية مغطاة إذا حوت ذكرى كل عباراتها المطلوبة، وهي حصرية إذا لم تحتوِ تلك الذكرى حقيقة ذهبية أخرى. الرابط المطلوب يُحتسب إذا وُجدت حافة بين الذكريتين أو وقعت الحقيقتان في الذكرى نفسها. العبارات معرفات، فإعادة الصياغة التي تسقطها تُعدّ خطأ.
-
-`deepseek-flash` في 2026-10-21: legacy بمتوسط 1.0 ذكرى وأطول متن 845 حرفًا وتغطية 0.88 وحصرية 0.38. split بمتوسط 3.5 وأطول متن 370 وتغطية 0.62 وحصرية 0.62. أصبحت ملاحظة الاقتطاع 8 ذكريات وبقي إصلاح LSP ذكرى واحدة. الروابط الأربعة المتوقعة لم تُنشأ.
-
 <details>
 <summary><b>إعادة إنتاج جميع الاختبارات</b></summary>
 
@@ -403,8 +393,6 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; يتطلب DEEPSEEK_API_KEY
-python3 eval/write_memory/test_score.py          # تسجيل النقاط فقط، دون API
-python3 eval/write_memory/run.py                 # النموذج يكتب الذاكرة بنفسه؛ يتطلب DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```
