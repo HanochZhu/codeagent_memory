@@ -30,3 +30,7 @@ agent_retrieval_corpus = "eval/agent_retrieval/data/corpus/v2_edit2ripple"
 # downloads cases.json from https://github.com/HanochZhu/cam-write-memory-eval
 # on first use. CAM_EVAL_WRITE_MEMORY overrides the local path.
 write_memory = "eval/write_memory/data/cases.json"
+
+# HaluMem-Medium (one JSON object per user). eval/halumem/run.py downloads it
+# on first use. CAM_EVAL_HALUMEM overrides the local path.
+halumem = "eval/halumem/data/HaluMem-Medium.jsonl"

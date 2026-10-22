@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Evaluate cam retrieval on the cleaned LongMemEval-S dataset."""
+"""Evaluate cam retrieval on the cleaned LongMemEval-S dataset.
+
+--granularity turn stores one memory per dialogue turn. --types filters the
+seeded sample, so --sample 100 --seed 42 --types multi-session,knowledge-update
+is the same 41 questions as the published 100-question run.
+"""
 
 from __future__ import annotations
 
@@ -159,6 +164,42 @@ def without_non_latin_letters(text: str) -> str:
     return "".join(kept)
 
 
+def turn_memories(session_id: str, date: str, turns: list[dict]) -> list[dict]:
+    """One memory per dialogue turn. The body keeps the session id for scoring."""
+    memories = []
+    for index, turn in enumerate(turns):
+        role = str(turn.get("role") or "unknown")
+        content = str(turn.get("content") or "")
+        memories.append(
+            {
+                "summary": f"Session {session_id} turn {index} {role}",
+                "body": (
+                    f"SESSION_ID: {session_id}\nDATE: {date}\nTURN: {index}\n"
+                    f"{role.upper()}: {content}"
+                ),
+            }
+        )
+    return memories
+
+
+def add_memories(cam: CamMcp, memories: list[dict], hash_embed: bool) -> None:
+    """Store memories in batches. A rejected body is retried with non-Latin letters removed."""
+    for start in range(0, len(memories), 16):
+        chunk = memories[start : start + 16]
+        try:
+            cam.call("cam_add", {"memories": chunk, "hash_embed": hash_embed})
+        except RuntimeError as exc:
+            if "must be written in English" not in str(exc):
+                raise
+            for item in chunk:
+                payload = {
+                    "summary": item["summary"],
+                    "body": without_non_latin_letters(item["body"]),
+                    "hash_embed": hash_embed,
+                }
+                cam.call("cam_add", payload)
+
+
 def session_body(session_id: str, date: str, turns: list[dict]) -> str:
     lines = [f"SESSION_ID: {session_id}", f"DATE: {date}"]
     lines.extend(
@@ -190,16 +231,21 @@ def evaluate_instance(
     total: int,
     k: int,
     hash_embed: bool,
+    granularity: str,
 ) -> dict:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="cam-longmemeval-") as tmp:
         with CamMcp(executable, Path(tmp), hash_embed) as cam:
+            pending: list[dict] = []
             for session_id, date, turns in zip(
                 instance["haystack_session_ids"],
                 instance["haystack_dates"],
                 instance["haystack_sessions"],
                 strict=True,
             ):
+                if granularity == "turn":
+                    pending.extend(turn_memories(session_id, date, turns))
+                    continue
                 body = session_body(session_id, date, turns)
                 payload = {
                     "summary": f"Session {session_id} at {date}",
@@ -213,6 +259,8 @@ def evaluate_instance(
                         raise
                     payload["body"] = without_non_latin_letters(body)
                     cam.call("cam_add", payload)
+            if pending:
+                add_memories(cam, pending, hash_embed)
             ingestion_ms = (time.perf_counter() - started) * 1000
             recall_started = time.perf_counter()
             hits = cam.call(
@@ -266,7 +314,14 @@ def aggregate(rows: list[dict], args: argparse.Namespace, data_sha256: str) -> d
         "k": args.k,
         "adapter": "cam",
         "embedder": "hash" if args.hash_embed else POTION_MODEL,
-        "ingestion": "one session per memory; non-Latin letters and marks replaced with spaces",
+        "ingestion": (
+            "one dialogue turn per memory"
+            if args.granularity == "turn"
+            else "one session per memory"
+        )
+        + "; non-Latin letters and marks replaced with spaces",
+        "granularity": args.granularity,
+        "types": args.types,
         "MRR": statistics.mean(
             1 / row["gold_rank"] if row["gold_rank"] else 0 for row in rows
         ),
@@ -304,6 +359,23 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="keep only the first N questions after sampling and type filtering",
+    )
+    parser.add_argument(
+        "--granularity",
+        choices=("session", "turn"),
+        default="session",
+        help="store one memory per session, or one memory per dialogue turn",
+    )
+    parser.add_argument(
+        "--types",
+        default="",
+        help="comma-separated question types kept after the seeded sample",
+    )
     add_hash_embed_argument(parser)
     args = parser.parse_args()
 
@@ -319,6 +391,13 @@ def main() -> int:
     if args.sample > len(eligible):
         parser.error(f"--sample must be <= {len(eligible)}")
     selected = random.Random(args.seed).sample(eligible, args.sample)
+    if args.types:
+        wanted = {item.strip() for item in args.types.split(",") if item.strip()}
+        selected = [instance for instance in selected if instance["question_type"] in wanted]
+        if not selected:
+            parser.error(f"no sampled questions with types {sorted(wanted)}")
+    if args.limit:
+        selected = selected[: args.limit]
     executable = cam_bin()
 
     rows = []
@@ -332,6 +411,7 @@ def main() -> int:
                 len(selected),
                 args.k,
                 args.hash_embed,
+                args.granularity,
             ): index
             for index, instance in enumerate(selected, 1)
         }
@@ -345,6 +425,8 @@ def main() -> int:
     output_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     tag = "hash" if args.hash_embed else "potion"
+    if args.granularity != "session":
+        tag += f"-{args.granularity}"
     output_path = output_dir / f"cam-longmemeval-s-{tag}-{stamp}.json"
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
