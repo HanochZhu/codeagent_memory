@@ -1,69 +1,40 @@
 ---
 name: codeagent-memory
-description: Use when a repo has a `.cam/` directory, or the user asks whether a problem was solved before, wants to navigate symbols / callers / callees without reading whole files, or asks to run `cam`. Guides agents to reuse cam solution memory and query the code graph instead of grep/glob/Read.
+description: "Query a local code graph and project memory with the cam CLI. Use when the user asks whether a problem was solved before, wants callers or callees, wants to read a symbol without opening the whole file, mentions .cam/ or cam, or asks to save a project fact for later."
 ---
 
-# cam — code graph + solution memory
+# codeagent-memory
 
-`cam` is a local (SQLite, no API keys) memory for coding agents. It has two halves:
+`cam` keeps a code graph and solution memory in `.cam/cam.db` inside the project. It is local SQLite. This skill does not download software, read credentials, or send project data anywhere.
 
-- **Code graph** — every indexed file and symbol as a virtual filesystem, plus one-hop callers / callees.
-- **Solution tree** — past write-ups, recalled with vector + BM25 so you do not re-solve the same problem.
+## Prerequisite
 
-Check for a `.cam/` directory at the project root. If the graph is not built yet, run `cam index` once; `.cam/` is created automatically.
+`cam` must already be on PATH. Check with `cam --help`.
 
-The `cam` binary must already be on PATH (`cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`). This plugin does not ship the binary.
+If that fails, stop and ask the user to install it. Do not install packages, change PATH, or fetch an installer. Install notes are in [references/install.md](references/install.md).
 
-## Who calls what
+## Steps
 
-| Caller | Interface |
-| --- | --- |
-| **Main agent** (this session) | MCP tools `cam_index`, `cam_ls`, `cam_read`, `cam_ref`, `cam_find`, `cam_recall`, `cam_add`, `cam_mem_tree`, `cam_mem_show` |
-| **Subagent** (Task / explore / delegated) | `cam --json …` in a shell — subagents usually do not get MCP |
-| No MCP wired | Fall back to `cam --json …` |
-
-Prefer the MCP tool when it is available. Do not shell out to `cam` if `cam_*` tools exist.
-
-## Workflow
-
-1. **Recall first.** Translate the question to English, then use `cam_recall` (MCP) / `cam recall "<one sentence>"` (CLI).
+1. Recall first. Turn the question into one English sentence, then `cam recall "<sentence>"` (or MCP `cam_recall`).
    - Reuse a hit only when it is `latest` and not `needs_update`.
-   - Hits carry full bodies. Only with `snippets` / `--snippets` do long lower-ranked bodies come back clipped with `body_truncated`; read one with `cam_mem_show` / `cam mem show <id>` before relying on details.
-   - `stale` / `needs_update` / no hit → continue.
-2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` (MCP) / `cam index` (CLI) once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
-3. **Walk the graph** on a miss: `ls` → `read` (symbol path) → `ref`.
-4. **Write back** after solving: extract atomic facts and call `cam_add` so each memory stores only one fact (avoid packing excessive information into a single memory), with an English `summary` (the body supports non-Latin characters). When multiple facts are related, pass their IDs in `links` (`--link` on CLI) to build a knowledge graph. Use `parent` for structural hierarchy and `supersedes` for a complete replacement revision.
+   - If `body_truncated` is set, run `cam mem show <id>` before using the details.
+   - On `stale`, `needs_update`, or no hit, continue.
+2. Index once if `ls`, `find`, `read`, or `ref` says the graph is not indexed: `cam index`. Later file edits use `cam sync`, not another full index.
+3. Walk the graph: `cam find <part of a name>` or `cam ls <dir>`, then `cam read <file>/<symbol>`, then `cam ref <symbol> --dir in|out`.
+   - `src/main.rs` is a file. `src/main.rs/main` is a symbol in that file.
+   - On `status: ambiguous`, retry with a candidate `id`, or narrow with `--file`, `--kind`, or `--scope`.
+4. After a new fact is settled, store one fact per memory: `cam add --summary "<one English line>" --body "<write-up>"`. Related facts use `--link <id>`. `--parent` is hierarchy. `--supersedes` only when this memory fully replaces an older one.
 
-Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file. Prefer symbol reads (`src/foo.rs/bar`) over `full`, and prefer `read`/`ls` over opening whole files.
+Prefer MCP tools when they exist: `cam_recall`, `cam_index`, `cam_ls`, `cam_find`, `cam_read`, `cam_ref`, `cam_add`, `cam_mem_tree`, `cam_mem_show`. A subagent with only a shell uses `cam --json`.
 
-## Commands
+Details: [references/commands.md](references/commands.md), [references/memory-rules.md](references/memory-rules.md), [references/mcp.md](references/mcp.md). A full pass is in [examples/session.md](examples/session.md).
 
-```text
-cam index                                        # tree-sitter → .cam/cam.db (creates .cam/ if needed)
-cam sync                                         # incremental update for changed files
-cam watch [--debounce-ms N]                      # auto-sync on file changes
-cam ls [virt_path]                               # dirs / files / symbols
-cam read <virt_path> [--full]                    # outline, or a symbol body
-cam ref <symbol> --dir in|out                    # one-hop callers / callees
-cam find <query> [--kind KIND] [--limit N]       # symbols whose name contains <query>
-cam recall "<query>" [--limit N] [--include-superseded]
-cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT | --file PATH]
-cam mem tree | cam mem show <id>
-cam status                                       # resolved project, db counts, config
-cam config get | config set stale_days N | config set embedding_model <model>  # read/update ~/.cam/config.toml
-cam mcp                                          # stdio MCP server (main agent)
-```
+## Output
 
-Global flags: `--project <dir>` when the cwd is not the repo; `--json` for compact structured output; `--pretty` to indent JSON. In `--json` mode a failure prints `{"error":{"code":…,"message":…}}` to stdout and exits non-zero. Project root resolution: `--project` → env `CAM_PROJECT` → walk up for `.cam` / `.git`.
+Report in this order:
 
-## Memory rules
+1. Memory: hit id and whether it was reused, or `no usable memory`.
+2. Code: virtual paths read, and whether each `ref` was callers (`in`) or callees (`out`).
+3. Write-back: new memory id, or `nothing new to store`.
 
-- Store **one atomic fact per memory** to avoid crowding multiple facts into a single entry. When facts are related, link them via `links` / `--link` to form a knowledge graph (recall does not traverse graph links yet).
-- Recall score is vector + BM25 fused with **RRF**, scaled by `0.9 + 0.1 × R` for Ebbinghaus retention `R = exp(-t / S)`. `score` about 2 means both paths matched, about 1 means only one did.
-- `R < 0.3` → `needs_update`; older than `stale_days` (default 30) → `stale`.
-- A successful returned match refreshes retention (`S *= 1.7`); expanded or filtered revisions do not.
-- Memories are never deleted. `parent` may branch; `supersedes` is a linear revision chain whose tail is `latest`.
-
-## Wiring MCP
-
-This plugin registers a stdio server: command `cam`, args `["mcp"]`. Logs go to stderr; stdout is JSON-RPC only. If `cam` is not on PATH, install it before enabling the plugin.
+Quote the symbol body `cam` returned. Do not paste whole files.
