@@ -248,7 +248,7 @@ Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 - `--project <dir>` (or `CAM_PROJECT` env var) overrides automatic upward `.cam` / `.git` root detection.
 - `--json` emits compact JSON (`--pretty` for indented JSON). Errors on `--json` print `{"error":{"code":…,"message":…}}` to `stdout` and exit non-zero.
 - **Ambiguous symbols:** When `read` or `ref` matches multiple definitions, `cam` returns `status: "ambiguous"` with candidate node IDs (e.g. `src/main.rs:function:main:12`) that can be passed directly back to `read` or `ref`.
-- **Ignore rules & multi-repo directories:** Honors `.gitignore` and `.camignore` at any depth. Skips git submodules and linked worktrees; indexes nested standalone clones as `kind: "project"` (passable to `--scope`).
+- **Ignore rules & multi-repo directories:** Honors `.gitignore` and `.camignore` at any depth. A nested directory with its own `.git` (standalone clone, submodule, or linked worktree) is indexed into that directory's `.cam/cam.db`. The parent database keeps a catalog of those graphs and queries fan out into them, so opening the nested directory reuses the graph. `cam ls` lists them as `kind: "project"` (passable to `--scope`).
 
 ---
 

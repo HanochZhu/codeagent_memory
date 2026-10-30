@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_camignore_matches_and_linked_checkouts() {
+    fn ignores_camignore_matches_but_watches_nested_checkouts() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::write(root.join(".camignore"), "gen/\n*.generated.ts\n").unwrap();
@@ -128,7 +128,7 @@ mod tests {
 
         assert!(!path_should_sync(root, &root.join("gen/a.rs")));
         assert!(!path_should_sync(root, &root.join("src/api.generated.ts")));
-        assert!(!path_should_sync(root, &root.join("sub/lib.rs")));
+        assert!(path_should_sync(root, &root.join("sub/lib.rs")));
         assert!(path_should_sync(root, &root.join("src/lib.rs")));
     }
 

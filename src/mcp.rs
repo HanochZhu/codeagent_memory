@@ -5,7 +5,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::code::{find, index_project, ls, read, refs, RefDir, SymbolHints};
+use crate::code::{find, graph_counts, index_project, ls, read, refs, RefDir, SymbolHints};
 use crate::memory::{
     add_solution_with_links, show_solution, solution_tree, Embedder, RecallOptions,
 };
@@ -31,7 +31,7 @@ Subagents usually have no MCP. Instruct them to run the equivalent CLI with --js
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
 Ambiguity: when a bare name matches several definitions, cam_ref / cam_read return status `ambiguous` with `candidates` (not an error). Re-call with a candidate `id`, or pass `file` / `kind` / `scope` hints to cam_ref. In a folder holding several repos, cam_ls lists each nested repo with kind `project`; use that path as `scope`.
-Ignore rules: `.gitignore` and `.camignore` (same syntax) at any depth; submodules and linked worktrees (a `.git` file) are skipped.
+Ignore rules: `.gitignore` and `.camignore` (same syntax) at any depth. A nested directory with its own `.git` (clone, submodule, or linked worktree) is indexed into that directory's `.cam/cam.db`; the parent database stores the catalog and queries fan out, so opening the nested directory reuses its graph.
 Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd, else the server cwd. `.cam/` and the database are created automatically on the first tool call."#;
 
 #[derive(Debug, Clone, Default)]
@@ -318,7 +318,7 @@ fn tool_defs() -> Vec<Value> {
     vec![
         tool(
             "cam_index",
-            "Parse the project with tree-sitter into .cam/cam.db. Equivalent CLI: cam index",
+            "Parse the project with tree-sitter into .cam/cam.db. Nested directories with their own .git are indexed into that directory's .cam/cam.db; this database keeps a catalog of them. Equivalent CLI: cam index",
             json!({
                 "type": "object",
                 "properties": { "path": path_prop() },
@@ -711,14 +711,15 @@ fn project_status(project: &Project) -> Result<Value, String> {
             "memories": 0
         }));
     }
+    let (files, symbols, _) = graph_counts(project).map_err(err_str)?;
     let conn =
         rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(err_str)?;
     Ok(json!({
         "indexed": true,
         "db": db.display().to_string(),
-        "files": sql_count(&conn, "SELECT COUNT(*) FROM files")?,
-        "symbols": sql_count(&conn, "SELECT COUNT(*) FROM nodes")?,
+        "files": files,
+        "symbols": symbols,
         "memories": sql_count(&conn, "SELECT COUNT(*) FROM solutions")?
     }))
 }

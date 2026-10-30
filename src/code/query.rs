@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use clap::ValueEnum;
@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::index::{normalize_virt, virt_parts};
 use crate::db;
-use crate::project::Project;
+use crate::project::{Project, CAM_DIR, DB_NAME};
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -149,9 +149,201 @@ pub struct FindResult {
     pub hits: Vec<FindHit>,
 }
 
-pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
+/// One code graph visible from the project that was opened. `prefix` is empty
+/// for that project and a relative path for a nested checkout catalogued in
+/// `code_projects`.
+struct Shard {
+    conn: Connection,
+    root: PathBuf,
+    prefix: String,
+}
+
+pub fn graph_counts(project: &Project) -> Result<(i64, i64, i64)> {
+    let shards = open_shards(project)?;
+    let mut files = 0i64;
+    let mut nodes = 0i64;
+    let mut edges = 0i64;
+    for shard in &shards {
+        files += db::table_count(&shard.conn, "files")?;
+        nodes += db::table_count(&shard.conn, "nodes")?;
+        edges += db::table_count(&shard.conn, "edges")?;
+    }
+    Ok((files, nodes, edges))
+}
+
+fn open_shards(project: &Project) -> Result<Vec<Shard>> {
+    let mut shards = Vec::new();
+    push_shard(&mut shards, project.root.clone(), String::new())?;
+    Ok(shards)
+}
+
+fn push_shard(shards: &mut Vec<Shard>, root: PathBuf, prefix: String) -> Result<()> {
+    let project = Project { root: root.clone() };
     let conn = project.connect()?;
-    ensure_graph(project, &conn)?;
+    let rels = code_project_rels(&conn)?;
+    shards.push(Shard {
+        conn,
+        root: root.clone(),
+        prefix: prefix.clone(),
+    });
+    for rel in rels {
+        let child_root = root.join(&rel);
+        if !child_root.join(CAM_DIR).join(DB_NAME).is_file() {
+            continue;
+        }
+        let child_prefix = if prefix.is_empty() {
+            rel
+        } else {
+            format!("{prefix}/{rel}")
+        };
+        push_shard(shards, child_root, child_prefix)?;
+    }
+    Ok(())
+}
+
+fn code_project_rels(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT rel_path FROM code_projects ORDER BY rel_path")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn present_path(prefix: &str, rel: &str) -> String {
+    if prefix.is_empty() {
+        rel.to_string()
+    } else if rel.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}/{rel}")
+    }
+}
+
+fn present_id(prefix: &str, id: &str) -> String {
+    if prefix.is_empty() {
+        id.to_string()
+    } else {
+        format!("{prefix}/{id}")
+    }
+}
+
+fn present_node(prefix: &str, mut node: NodeRow) -> NodeRow {
+    node.id = present_id(prefix, &node.id);
+    node.file_path = present_path(prefix, &node.file_path);
+    node
+}
+
+/// Longest catalog prefix wins. Paths that sit in no nested checkout stay on
+/// the opened project (the first shard).
+fn route<'a>(shards: &'a [Shard], virt: &str) -> (&'a Shard, String) {
+    let mut best = &shards[0];
+    let mut rest = virt.to_string();
+    for shard in shards {
+        if shard.prefix.is_empty() {
+            continue;
+        }
+        let stripped = if virt == shard.prefix {
+            Some("")
+        } else {
+            virt.strip_prefix(&format!("{}/", shard.prefix))
+        };
+        if let Some(stripped) = stripped {
+            if shard.prefix.len() > best.prefix.len() {
+                best = shard;
+                rest = stripped.to_string();
+            }
+        }
+    }
+    (best, rest)
+}
+
+/// Bare names are resolved in every shard. A path or node id is resolved in
+/// the checkout it points at, and also tried unchanged against the opened project.
+fn symbol_for_shard(prefix: &str, symbol: &str) -> Option<String> {
+    if prefix.is_empty() {
+        return Some(symbol.to_string());
+    }
+    if let Some(rest) = symbol.strip_prefix(&format!("{prefix}/")) {
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(rest.to_string());
+    }
+    if symbol == prefix || symbol.contains('/') {
+        return None;
+    }
+    Some(symbol.to_string())
+}
+
+fn relocate(entries: Vec<LsEntry>, prefix: &str) -> Vec<LsEntry> {
+    if prefix.is_empty() {
+        return entries;
+    }
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(path) = entry.path.as_mut() {
+                *path = present_path(prefix, path);
+            }
+            entry
+        })
+        .collect()
+}
+
+fn parent_prefix(prefix: &str) -> Option<String> {
+    if prefix.is_empty() {
+        return None;
+    }
+    match prefix.rfind('/') {
+        Some(index) => Some(prefix[..index].to_string()),
+        None => Some(String::new()),
+    }
+}
+
+fn add_nested_projects(entries: &mut Vec<LsEntry>, shards: &[Shard], dir_prefix: &str) {
+    for shard in shards {
+        let Some(parent) = parent_prefix(&shard.prefix) else {
+            continue;
+        };
+        if parent != dir_prefix {
+            continue;
+        }
+        let name = shard
+            .prefix
+            .rsplit('/')
+            .next()
+            .unwrap_or(shard.prefix.as_str())
+            .to_string();
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|entry| entry.name == name && (entry.kind == "dir" || entry.kind == "project"))
+        {
+            existing.kind = "project".into();
+            existing.path = Some(shard.prefix.clone());
+        } else if !entries.iter().any(|entry| entry.name == name) {
+            entries.push(LsEntry {
+                name,
+                kind: "project".into(),
+                path: Some(shard.prefix.clone()),
+                start_line: None,
+                end_line: None,
+            });
+        }
+    }
+}
+
+fn refresh_dir_kinds(entries: &mut [LsEntry], query_root: &Path) {
+    for entry in entries {
+        if entry.start_line.is_some() || entry.kind == "file" {
+            continue;
+        }
+        if let Some(path) = &entry.path {
+            entry.kind = dir_kind(query_root, path).into();
+        }
+    }
+}
+
+pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
+    let shards = open_shards(project)?;
+    ensure_visible_graph(project, &shards)?;
     let virt = normalize_virt(virt_path);
     let (file, symbol) = virt_parts(&virt);
 
@@ -159,33 +351,33 @@ pub fn ls(project: &Project, virt_path: Option<&str>) -> Result<Vec<LsEntry>> {
         bail!("`cam ls` does not list inside a symbol; use `cam read {virt}`");
     }
 
-    if let Some(file) = file {
-        if looks_indexed_file(&conn, file)? {
-            return list_symbols(&conn, file);
-        }
-        return list_prefix(&conn, &project.root, file);
+    let dir = file.unwrap_or("");
+    let (shard, rest) = route(&shards, dir);
+    if !rest.is_empty() && looks_indexed_file(&shard.conn, &rest)? {
+        return Ok(relocate(list_symbols(&shard.conn, &rest)?, &shard.prefix));
     }
-    list_prefix(&conn, &project.root, "")
+    let mut entries = relocate(list_prefix(&shard.conn, &shard.root, &rest)?, &shard.prefix);
+    let dir_prefix = if rest.is_empty() {
+        shard.prefix.clone()
+    } else if shard.prefix.is_empty() {
+        rest
+    } else {
+        format!("{}/{}", shard.prefix, rest)
+    };
+    add_nested_projects(&mut entries, &shards, &dir_prefix);
+    refresh_dir_kinds(&mut entries, &project.root);
+    Ok(entries)
 }
 
 pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadOutcome> {
-    let conn = project.connect()?;
+    let shards = open_shards(project)?;
     let virt = normalize_virt(Some(virt_path));
 
     // A node id from a previous ambiguous answer is the zero-ambiguity form.
-    if let Some(node) = node_by_id(&conn, &virt)? {
-        let source = slice_file(
-            &project.root.join(&node.file_path),
-            node.start_line,
-            node.end_line,
-        )?;
-        return Ok(ReadOutcome::Ok(ReadResult {
-            kind: node.kind,
-            path: format!("{}/{}", node.file_path, node.name),
-            start_line: Some(node.start_line),
-            end_line: Some(node.end_line),
-            source,
-        }));
+    if virt.contains(':') {
+        if let Some(outcome) = read_by_id(&shards, &virt)? {
+            return Ok(outcome);
+        }
     }
 
     let (file, symbol) = virt_parts(&virt);
@@ -193,11 +385,13 @@ pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadOutcom
         bail!("specify a file or symbol path, e.g. src/main.rs or src/main.rs/main");
     };
     if !full || symbol.is_some() {
-        ensure_graph(project, &conn)?;
+        ensure_visible_graph(project, &shards)?;
     }
 
     if let Some(symbol) = symbol {
-        return read_symbol(&conn, &project.root, file, symbol);
+        let (shard, rest) = route(&shards, file);
+        let outcome = read_symbol(&shard.conn, &shard.root, &rest, symbol)?;
+        return Ok(prefix_read(outcome, &shard.prefix));
     }
     if full {
         let abs = project.root.join(file);
@@ -210,13 +404,60 @@ pub fn read(project: &Project, virt_path: &str, full: bool) -> Result<ReadOutcom
             source,
         }));
     }
+    let (shard, rest) = route(&shards, file);
     Ok(ReadOutcome::Ok(ReadResult {
         kind: "outline".into(),
-        path: file.to_string(),
+        path: present_path(&shard.prefix, &rest),
         start_line: None,
         end_line: None,
-        source: outline_text(&conn, file)?,
+        source: outline_text(&shard.conn, &rest, &present_path(&shard.prefix, &rest))?,
     }))
+}
+
+fn read_by_id(shards: &[Shard], virt: &str) -> Result<Option<ReadOutcome>> {
+    let mut order: Vec<&Shard> = shards.iter().collect();
+    order.sort_by_key(|shard| std::cmp::Reverse(shard.prefix.len()));
+    for shard in order {
+        let Some(stored) = symbol_for_shard(&shard.prefix, virt) else {
+            continue;
+        };
+        let Some(node) = node_by_id(&shard.conn, &stored)? else {
+            continue;
+        };
+        let source = slice_file(
+            &shard.root.join(&node.file_path),
+            node.start_line,
+            node.end_line,
+        )?;
+        let node = present_node(&shard.prefix, node);
+        return Ok(Some(ReadOutcome::Ok(ReadResult {
+            kind: node.kind,
+            path: format!("{}/{}", node.file_path, node.name),
+            start_line: Some(node.start_line),
+            end_line: Some(node.end_line),
+            source,
+        })));
+    }
+    Ok(None)
+}
+
+fn prefix_read(outcome: ReadOutcome, prefix: &str) -> ReadOutcome {
+    if prefix.is_empty() {
+        return outcome;
+    }
+    match outcome {
+        ReadOutcome::Ok(mut result) => {
+            result.path = present_path(prefix, &result.path);
+            ReadOutcome::Ok(result)
+        }
+        ReadOutcome::Ambiguous(mut ambiguous) => {
+            for candidate in &mut ambiguous.candidates {
+                candidate.id = present_id(prefix, &candidate.id);
+                candidate.file_path = present_path(prefix, &candidate.file_path);
+            }
+            ReadOutcome::Ambiguous(ambiguous)
+        }
+    }
 }
 
 pub fn refs(
@@ -225,17 +466,31 @@ pub fn refs(
     dir: RefDir,
     hints: SymbolHints<'_>,
 ) -> Result<RefOutcome> {
-    let conn = project.connect()?;
-    ensure_graph(project, &conn)?;
-    let nodes = resolve_symbols(&conn, symbol)?;
-    if nodes.is_empty() {
+    let shards = open_shards(project)?;
+    ensure_visible_graph(project, &shards)?;
+    let mut located = Vec::new();
+    for (index, shard) in shards.iter().enumerate() {
+        let Some(stored_symbol) = symbol_for_shard(&shard.prefix, symbol) else {
+            continue;
+        };
+        for stored in resolve_symbols(&shard.conn, &stored_symbol)? {
+            let stored_id = stored.id.clone();
+            located.push((index, stored_id, present_node(&shard.prefix, stored)));
+        }
+    }
+    if located.is_empty() {
         bail!("symbol not found: {symbol}");
     }
+    let nodes = located.iter().map(|(_, _, node)| node.clone()).collect();
     let node = match pick_candidate(symbol, nodes, hints) {
         Resolution::One(node) => node,
         Resolution::Ambiguous(ambiguous) => return Ok(RefOutcome::Ambiguous(ambiguous)),
     };
-    let id = &node.id;
+    let (shard_index, stored_id, _) = located
+        .iter()
+        .find(|(_, _, candidate)| candidate.id == node.id)
+        .ok_or_else(|| anyhow::anyhow!("resolved symbol missing from catalog"))?;
+    let shard = &shards[*shard_index];
     let sql = match dir {
         RefDir::In => {
             "SELECT n.id, n.name, n.file_path, n.start_line, n.kind, e.line
@@ -248,9 +503,9 @@ pub fn refs(
              WHERE e.source = ?1 AND e.kind IN ('calls', 'references', 'implements')"
         }
     };
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = shard.conn.prepare(sql)?;
     let mut refs = stmt
-        .query_map([id], |row| {
+        .query_map([stored_id], |row| {
             Ok(RefHit {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -261,6 +516,10 @@ pub fn refs(
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    for hit in &mut refs {
+        hit.id = present_id(&shard.prefix, &hit.id);
+        hit.file_path = present_path(&shard.prefix, &hit.file_path);
+    }
     if let Some(prefix) = hints.scope.map(normalize_prefix).filter(|p| !p.is_empty()) {
         refs.retain(|hit| path_in_project(&hit.file_path, &prefix));
     }
@@ -291,21 +550,23 @@ pub fn find(
     if needle.is_empty() {
         bail!("query is required");
     }
-    let conn = project.connect()?;
-    ensure_graph(project, &conn)?;
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {NODE_COLUMNS} FROM nodes
-         WHERE kind != 'file' AND instr(lower(name), lower(?1)) > 0"
-    ))?;
-    let rows = stmt
-        .query_map([needle], node_from_row)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
+    let shards = open_shards(project)?;
+    ensure_visible_graph(project, &shards)?;
     let lower = needle.to_lowercase();
-    let mut ranked: Vec<(u8, NodeRow)> = rows
-        .into_iter()
-        .filter(|node| score_candidate(node, hints).1)
-        .map(|node| {
+    let mut ranked: Vec<(u8, NodeRow)> = Vec::new();
+    for shard in &shards {
+        let mut stmt = shard.conn.prepare(&format!(
+            "SELECT {NODE_COLUMNS} FROM nodes
+             WHERE kind != 'file' AND instr(lower(name), lower(?1)) > 0"
+        ))?;
+        let rows = stmt
+            .query_map([needle], node_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for stored in rows {
+            let node = present_node(&shard.prefix, stored);
+            if !score_candidate(&node, hints).1 {
+                continue;
+            }
             let name = node.name.to_lowercase();
             let tier = if node.name == needle {
                 0
@@ -316,9 +577,9 @@ pub fn find(
             } else {
                 3
             };
-            (tier, node)
-        })
-        .collect();
+            ranked.push((tier, node));
+        }
+    }
     ranked.sort_by(|(ta, a), (tb, b)| {
         ta.cmp(tb)
             .then_with(|| kind_priority(&b.kind).total_cmp(&kind_priority(&a.kind)))
@@ -492,9 +753,11 @@ fn path_in_project(file_path: &str, prefix: &str) -> bool {
     file_path == prefix || file_path.starts_with(&format!("{prefix}/"))
 }
 
-fn ensure_graph(project: &Project, conn: &Connection) -> Result<()> {
-    if db::table_count(conn, "files")? > 0 {
-        return Ok(());
+fn ensure_visible_graph(project: &Project, shards: &[Shard]) -> Result<()> {
+    for shard in shards {
+        if db::table_count(&shard.conn, "files")? > 0 {
+            return Ok(());
+        }
     }
     if !super::index::project_has_source_files(project)? {
         return Ok(());
@@ -606,12 +869,12 @@ fn list_prefix(conn: &Connection, root: &Path, prefix: &str) -> Result<Vec<LsEnt
     Ok(entries)
 }
 
-fn outline_text(conn: &Connection, file: &str) -> Result<String> {
+fn outline_text(conn: &Connection, file: &str, display: &str) -> Result<String> {
     let entries = list_symbols(conn, file)?;
     if entries.is_empty() {
-        return Ok(format!("{file}: no symbols"));
+        return Ok(format!("{display}: no symbols"));
     }
-    let mut lines = vec![file.to_string()];
+    let mut lines = vec![display.to_string()];
     for e in entries {
         let span = match (e.start_line, e.end_line) {
             (Some(s), Some(t)) => format!("{s}-{t}"),

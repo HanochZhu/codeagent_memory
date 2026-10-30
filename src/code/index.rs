@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -76,6 +77,18 @@ struct SourceFile {
     lang: Lang,
 }
 
+/// A git checkout below the project being indexed. Its symbols live in that
+/// directory's own `.cam/cam.db`; this project only stores `rel`.
+#[derive(Clone)]
+struct NestedProject {
+    rel: String,
+}
+
+struct OwnSync {
+    report: SyncReport,
+    children: Vec<String>,
+}
+
 pub fn index_project(project: &Project) -> Result<IndexReport> {
     index_project_with_progress(project, &mut |_| {})
 }
@@ -84,6 +97,10 @@ pub fn index_project(project: &Project) -> Result<IndexReport> {
 ///
 /// The callback must stay cheap: it runs on the indexing thread, including
 /// inside the write transaction.
+///
+/// Nested directories with their own `.git` are rebuilt into that directory's
+/// database. This project's database keeps those checkouts in `code_projects`
+/// and stores symbols only for files whose nearest `.git` is this root.
 pub fn index_project_with_progress(
     project: &Project,
     on_progress: &mut dyn FnMut(IndexProgress),
@@ -92,28 +109,65 @@ pub fn index_project_with_progress(
     let conn = db::open_db(&project.db_path())?;
     conn.execute_batch("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;")?;
     drop(conn);
-    let sync = sync_project_inner(project, on_progress)?;
-    Ok(IndexReport {
-        files: sync.files_added,
-        nodes: sync.nodes,
-        edges: sync.edges,
-        skipped: sync.skipped,
-    })
+    let own = sync_own(project, on_progress)?;
+    let mut report = IndexReport {
+        files: own.report.files_added,
+        nodes: own.report.nodes,
+        edges: own.report.edges,
+        skipped: own.report.skipped,
+    };
+    for rel in &own.children {
+        let child = Project {
+            root: project.root.join(rel),
+        };
+        let child_report = index_project_with_progress(&child, on_progress)
+            .with_context(|| format!("index nested project {}", child.root.display()))?;
+        report.files += child_report.files;
+        report.nodes += child_report.nodes;
+        report.edges += child_report.edges;
+        report.skipped += child_report.skipped;
+    }
+    Ok(report)
 }
 
 pub fn sync_project(project: &Project) -> Result<SyncReport> {
-    sync_project_inner(project, &mut |_| {})
+    let started = Instant::now();
+    let mut report = sync_tree(project)?;
+    report.duration_ms = started.elapsed().as_millis() as u64;
+    Ok(report)
 }
 
-fn sync_project_inner(
-    project: &Project,
-    progress: &mut dyn FnMut(IndexProgress),
-) -> Result<SyncReport> {
+fn sync_tree(project: &Project) -> Result<SyncReport> {
+    let mut own = sync_own(project, &mut |_| {})?;
+    for rel in own.children {
+        let child = Project {
+            root: project.root.join(&rel),
+        };
+        let child_report = sync_tree(&child)
+            .with_context(|| format!("sync nested project {}", child.root.display()))?;
+        merge_sync(&mut own.report, child_report);
+    }
+    Ok(own.report)
+}
+
+fn merge_sync(parent: &mut SyncReport, child: SyncReport) {
+    parent.files_checked += child.files_checked;
+    parent.files_added += child.files_added;
+    parent.files_modified += child.files_modified;
+    parent.files_removed += child.files_removed;
+    parent.nodes += child.nodes;
+    parent.edges += child.edges;
+    parent.skipped += child.skipped;
+}
+
+fn sync_own(project: &Project, progress: &mut dyn FnMut(IndexProgress)) -> Result<OwnSync> {
     let started = Instant::now();
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
 
-    let (sources, mut skipped) = scan_source_files(project, progress)?;
+    let (sources, children, mut skipped) = scan_source_files(project, progress)?;
+    let child_rels: Vec<String> = children.into_iter().map(|child| child.rel).collect();
+    write_code_projects(&conn, &child_rels)?;
     let existing = load_file_hashes(&conn)?;
     let mut current = HashSet::new();
     let mut added = Vec::new();
@@ -144,7 +198,10 @@ fn sync_project_inner(
 
     let files_checked = added.len() + modified.len() + unchanged.len();
     if added.is_empty() && modified.is_empty() && removed.is_empty() {
-        return unchanged_sync_report(&conn, files_checked, skipped, started);
+        return Ok(OwnSync {
+            report: unchanged_sync_report(&conn, files_checked, skipped, started)?,
+            children: child_rels,
+        });
     }
 
     let mut extracted = Vec::new();
@@ -173,7 +230,10 @@ fn sync_project_inner(
     }
     let changed_len = extracted.len();
     if changed_len == 0 && removed.is_empty() {
-        return unchanged_sync_report(&conn, files_checked, skipped, started);
+        return Ok(OwnSync {
+            report: unchanged_sync_report(&conn, files_checked, skipped, started)?,
+            children: child_rels,
+        });
     }
     for src in &unchanged {
         if let Some(file) = extract_or_skip(project, src, &mut skipped) {
@@ -215,16 +275,29 @@ fn sync_project_inner(
         tx.commit()?;
     }
 
-    Ok(SyncReport {
-        files_checked,
-        files_added: added_ok,
-        files_modified: modified_ok,
-        files_removed: removed.len(),
-        nodes: db::table_count(&conn, "nodes")? as usize,
-        edges: db::table_count(&conn, "edges")? as usize,
-        skipped,
-        duration_ms: started.elapsed().as_millis() as u64,
+    Ok(OwnSync {
+        report: SyncReport {
+            files_checked,
+            files_added: added_ok,
+            files_modified: modified_ok,
+            files_removed: removed.len(),
+            nodes: db::table_count(&conn, "nodes")? as usize,
+            edges: db::table_count(&conn, "edges")? as usize,
+            skipped,
+            duration_ms: started.elapsed().as_millis() as u64,
+        },
+        children: child_rels,
     })
+}
+
+fn write_code_projects(conn: &Connection, rels: &[String]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM code_projects", [])?;
+    for rel in rels {
+        tx.execute("INSERT INTO code_projects(rel_path) VALUES (?1)", [rel])?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn report(
@@ -243,11 +316,14 @@ fn report(
 fn scan_source_files(
     project: &Project,
     progress: &mut dyn FnMut(IndexProgress),
-) -> Result<(Vec<SourceFile>, usize)> {
+) -> Result<(Vec<SourceFile>, Vec<NestedProject>, usize)> {
     report(progress, IndexPhase::Scanning, 0, 0);
     let mut skipped = 0usize;
     let mut sources = Vec::new();
     let mut found = 0usize;
+    let nested = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&nested);
+    let scan_root = project.root.clone();
     let walker = WalkBuilder::new(&project.root)
         .hidden(false)
         .git_ignore(true)
@@ -256,14 +332,23 @@ fn scan_source_files(
         // itself; still honor .gitignore / .camignore found there.
         .require_git(false)
         .add_custom_ignore_filename(CAM_IGNORE_FILE)
-        .filter_entry(|entry| {
+        .filter_entry(move |entry| {
             let name = entry.file_name().to_string_lossy();
             if skip_dir_name(&name) {
                 return false;
             }
-            // Nested git checkouts (submodules, vendored clones) are separate
-            // projects; do not fold their symbols into this graph.
-            entry.depth() == 0 || !is_linked_git_checkout(entry.path())
+            // A nested checkout keeps its own graph. Stop this walk at the
+            // boundary so its symbols are not folded into the parent.
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            if entry.depth() > 0 && is_dir && is_git_project(entry.path()) {
+                if let Ok(rel) = rel_path(&scan_root, entry.path()) {
+                    if !rel.is_empty() {
+                        record.lock().unwrap().push(NestedProject { rel });
+                    }
+                }
+                return false;
+            }
+            true
         })
         .build();
 
@@ -291,12 +376,31 @@ fn scan_source_files(
         found += 1;
         report(progress, IndexPhase::Scanning, found, 0);
     }
-    Ok((sources, skipped))
+    let mut children = match Arc::try_unwrap(nested) {
+        Ok(mutex) => mutex
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        Err(shared) => shared.lock().unwrap().clone(),
+    };
+    children.sort_by(|a, b| a.rel.cmp(&b.rel));
+    children.dedup_by(|a, b| a.rel == b.rel);
+    Ok((sources, children, skipped))
 }
 
 pub(crate) fn project_has_source_files(project: &Project) -> Result<bool> {
-    let (sources, _) = scan_source_files(project, &mut |_| {})?;
-    Ok(!sources.is_empty())
+    let (sources, children, _) = scan_source_files(project, &mut |_| {})?;
+    if !sources.is_empty() {
+        return Ok(true);
+    }
+    for child in children {
+        let nested = Project {
+            root: project.root.join(child.rel),
+        };
+        if project_has_source_files(&nested)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn load_file_hashes(conn: &rusqlite::Connection) -> Result<HashMap<String, String>> {
@@ -319,16 +423,16 @@ pub(crate) fn skip_dir_name(name: &str) -> bool {
     SKIP_DIR_NAMES.contains(&name)
 }
 
-/// A directory whose `.git` is a file (gitlink) is a submodule or a linked
-/// worktree: a second checkout of some other repository, not part of this one.
-/// Standalone nested clones (`.git` directory) are still indexed, so an
-/// umbrella folder holding several repos keeps working.
-pub(crate) fn is_linked_git_checkout(dir: &Path) -> bool {
-    dir.join(".git").is_file()
+/// A directory with its own `.git` entry is a separate checkout. A directory
+/// is a clone; a file is a submodule or linked worktree (gitlink).
+fn is_git_project(dir: &Path) -> bool {
+    let git = dir.join(".git");
+    git.is_dir() || git.is_file()
 }
 
-/// Cheap pre-filter used by the watcher: built-in skip dirs, the root
-/// `.camignore`, and linked git checkouts between root and `path`.
+/// Cheap pre-filter used by the watcher: built-in skip dirs and the root
+/// `.camignore`. Nested git checkouts stay visible so sync can update the
+/// graph stored in that checkout.
 /// `scan_source_files` remains the source of truth (it also honors nested
 /// `.gitignore` / `.camignore` files), so a false negative here only costs a
 /// no-op sync.
@@ -342,17 +446,6 @@ pub(crate) fn path_is_skipped(root: &Path, path: &Path) -> bool {
         .any(|c| c.as_os_str().to_str().is_some_and(skip_dir_name))
     {
         return true;
-    }
-    let mut cursor = root.to_path_buf();
-    let mut parents = rel.components().peekable();
-    while let Some(component) = parents.next() {
-        if parents.peek().is_none() {
-            break;
-        }
-        cursor.push(component);
-        if is_linked_git_checkout(&cursor) {
-            return true;
-        }
     }
     let ignore_file = root.join(CAM_IGNORE_FILE);
     if ignore_file.is_file() {

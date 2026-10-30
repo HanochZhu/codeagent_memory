@@ -743,17 +743,33 @@ fn camignore_and_root_gitignore_apply_without_git_repo() {
     assert!(!names.contains(&"gen".to_string()), "{names:?}");
 }
 
+fn sqlite_strings(db: &std::path::Path, sql: &str) -> Vec<String> {
+    let conn = rusqlite::Connection::open(db).unwrap();
+    let mut stmt = conn.prepare(sql).unwrap();
+    stmt.query_map([], |row| row.get(0))
+        .unwrap()
+        .map(|row| row.unwrap())
+        .collect()
+}
+
 #[test]
-fn submodule_checkouts_are_skipped_but_nested_clones_stay() {
-    use cam::code::index_project;
+fn nested_git_projects_keep_their_own_graph() {
+    use cam::code::{index_project, ls, read, ReadOutcome};
     use cam::project::Project;
 
     let dir = tempdir().unwrap();
     write_fixture(dir.path());
-    // Standalone clone: .git is a directory -> indexed.
+    // Standalone clone: .git is a directory.
     fs::create_dir_all(dir.path().join("clone/.git")).unwrap();
     fs::write(dir.path().join("clone/lib.rs"), "pub fn from_clone() {}\n").unwrap();
-    // Submodule / linked worktree: .git is a file -> skipped.
+    // Checkout nested inside that clone.
+    fs::create_dir_all(dir.path().join("clone/inner/.git")).unwrap();
+    fs::write(
+        dir.path().join("clone/inner/lib.rs"),
+        "pub fn from_inner() {}\n",
+    )
+    .unwrap();
+    // Submodule / linked worktree: .git is a file.
     fs::create_dir_all(dir.path().join("sub")).unwrap();
     fs::write(dir.path().join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
     fs::write(dir.path().join("sub/lib.rs"), "pub fn from_sub() {}\n").unwrap();
@@ -763,7 +779,229 @@ fn submodule_checkouts_are_skipped_but_nested_clones_stay() {
 
     let names = ls_root_names(&project);
     assert!(names.contains(&"clone".to_string()), "{names:?}");
-    assert!(!names.contains(&"sub".to_string()), "{names:?}");
+    assert!(names.contains(&"sub".to_string()), "{names:?}");
+    assert!(names.contains(&"src".to_string()), "{names:?}");
+
+    let root_files = sqlite_strings(&dir.path().join(".cam/cam.db"), "SELECT path FROM files");
+    assert!(
+        root_files
+            .iter()
+            .all(|path| !path.starts_with("clone/") && !path.starts_with("sub/")),
+        "{root_files:?}"
+    );
+    let catalog = sqlite_strings(
+        &dir.path().join(".cam/cam.db"),
+        "SELECT rel_path FROM code_projects ORDER BY rel_path",
+    );
+    assert_eq!(catalog, vec!["clone".to_string(), "sub".to_string()]);
+
+    let clone_files = sqlite_strings(
+        &dir.path().join("clone/.cam/cam.db"),
+        "SELECT path FROM files ORDER BY path",
+    );
+    assert_eq!(clone_files, vec!["lib.rs".to_string()]);
+    let clone_catalog = sqlite_strings(
+        &dir.path().join("clone/.cam/cam.db"),
+        "SELECT rel_path FROM code_projects",
+    );
+    assert_eq!(clone_catalog, vec!["inner".to_string()]);
+    assert!(dir.path().join("sub/.cam/cam.db").is_file());
+    assert!(dir.path().join("clone/inner/.cam/cam.db").is_file());
+
+    let inside = ls(&project, Some("clone")).unwrap();
+    assert!(
+        inside.iter().any(|entry| entry.name == "lib.rs"),
+        "{inside:?}"
+    );
+    let inner = inside.iter().find(|entry| entry.name == "inner").unwrap();
+    assert_eq!(inner.kind, "project");
+
+    match read(&project, "clone/lib.rs/from_clone", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_clone"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+    match read(&project, "clone/inner/lib.rs/from_inner", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_inner"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+
+    // Opening the nested checkout reuses the graph written by the parent index.
+    let child = Project::init(Some(&dir.path().join("clone"))).unwrap();
+    match read(&child, "lib.rs/from_clone", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_clone"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+    match read(&child, "inner/lib.rs/from_inner", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_inner"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+    let grandchild = Project::init(Some(&dir.path().join("clone/inner"))).unwrap();
+    match read(&grandchild, "lib.rs/from_inner", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_inner"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let to = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &to);
+        } else {
+            fs::copy(entry.path(), &to).unwrap();
+        }
+    }
+}
+
+/// `tests/fixtures/umbrella` has no `.git` of its own. The test stamps the
+/// checkout boundaries so the fixture can live inside this repository.
+fn stage_umbrella(dst: &std::path::Path) {
+    let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/umbrella");
+    copy_dir(&src, dst);
+    fs::create_dir_all(dst.join("app/.git")).unwrap();
+    fs::create_dir_all(dst.join("app/inner/.git")).unwrap();
+    fs::create_dir_all(dst.join("mirror/.git")).unwrap();
+    fs::write(dst.join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+}
+
+#[test]
+fn umbrella_fixture_matches_nested_graph_expectations() {
+    use cam::code::{index_project, ls, read, refs, ReadOutcome, RefDir, RefOutcome, SymbolHints};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    stage_umbrella(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    index_project(&project).unwrap();
+
+    let root_files = sqlite_strings(
+        &dir.path().join(".cam/cam.db"),
+        "SELECT path FROM files ORDER BY path",
+    );
+    assert_eq!(
+        root_files,
+        vec!["src/main.rs".to_string(), "tools/gen.py".to_string()],
+        "parent graph keeps only files whose nearest .git is the umbrella"
+    );
+    let catalog = sqlite_strings(
+        &dir.path().join(".cam/cam.db"),
+        "SELECT rel_path FROM code_projects ORDER BY rel_path",
+    );
+    assert_eq!(
+        catalog,
+        vec!["app".to_string(), "mirror".to_string(), "sub".to_string()]
+    );
+    assert_eq!(
+        sqlite_strings(
+            &dir.path().join("app/.cam/cam.db"),
+            "SELECT path FROM files ORDER BY path",
+        ),
+        vec!["src/config.rs".to_string()]
+    );
+    assert_eq!(
+        sqlite_strings(
+            &dir.path().join("app/.cam/cam.db"),
+            "SELECT rel_path FROM code_projects ORDER BY rel_path",
+        ),
+        vec!["inner".to_string()]
+    );
+    assert_eq!(
+        sqlite_strings(
+            &dir.path().join("app/inner/.cam/cam.db"),
+            "SELECT path FROM files",
+        ),
+        vec!["src/lib.rs".to_string()]
+    );
+    assert_eq!(
+        sqlite_strings(
+            &dir.path().join("mirror/.cam/cam.db"),
+            "SELECT path FROM files",
+        ),
+        vec!["src/config.rs".to_string()]
+    );
+    assert_eq!(
+        sqlite_strings(
+            &dir.path().join("sub/.cam/cam.db"),
+            "SELECT path FROM files"
+        ),
+        vec!["lib.rs".to_string()]
+    );
+
+    let listed = ls(&project, None).unwrap();
+    let kind_of = |name: &str| {
+        listed
+            .iter()
+            .find(|entry| entry.name == name)
+            .map(|entry| entry.kind.as_str())
+            .unwrap_or("missing")
+    };
+    assert_eq!(kind_of("app"), "project", "{listed:?}");
+    assert_eq!(kind_of("mirror"), "project", "{listed:?}");
+    assert_eq!(kind_of("sub"), "project", "{listed:?}");
+    assert_eq!(kind_of("tools"), "dir", "{listed:?}");
+    assert_eq!(kind_of("src"), "dir", "{listed:?}");
+
+    let bare = refs(
+        &project,
+        "refresh_tools",
+        RefDir::In,
+        SymbolHints::default(),
+    )
+    .unwrap();
+    match bare {
+        RefOutcome::Ambiguous(ambiguous) => {
+            assert_eq!(ambiguous.total_candidates, 3, "{ambiguous:?}");
+        }
+        other => panic!("expected ambiguous, got {other:?}"),
+    }
+    let scoped = refs(
+        &project,
+        "refresh_tools",
+        RefDir::In,
+        SymbolHints {
+            scope: Some("app"),
+            ..SymbolHints::default()
+        },
+    )
+    .unwrap();
+    match scoped {
+        RefOutcome::Ok(result) => {
+            assert_eq!(result.resolved.file_path, "app/src/config.rs");
+            assert_eq!(result.refs.len(), 1, "{result:?}");
+            assert_eq!(result.refs[0].name, "boot");
+            assert_eq!(result.refs[0].file_path, "app/src/config.rs");
+        }
+        other => panic!("expected ok, got {other:?}"),
+    }
+    match read(&project, "app/inner/src/lib.rs/from_inner", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_inner"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+    match read(&project, "src/main.rs/root_only", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("root_only"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
+
+    let app = Project::init(Some(&dir.path().join("app"))).unwrap();
+    let in_app = refs(&app, "refresh_tools", RefDir::In, SymbolHints::default()).unwrap();
+    match in_app {
+        RefOutcome::Ok(result) => {
+            assert_eq!(result.resolved.file_path, "src/config.rs");
+            assert_eq!(result.refs.len(), 1, "{result:?}");
+            assert_eq!(result.refs[0].file_path, "src/config.rs");
+        }
+        other => panic!("expected the child graph to resolve one definition, got {other:?}"),
+    }
+    assert!(
+        refs(&app, "root_only", RefDir::In, SymbolHints::default()).is_err(),
+        "a child checkout must not see symbols that belong to the parent"
+    );
+    match read(&app, "inner/src/lib.rs/from_inner", false).unwrap() {
+        ReadOutcome::Ok(got) => assert!(got.source.contains("from_inner"), "{got:?}"),
+        other => panic!("expected ok, got {other:?}"),
+    }
 }
 
 #[test]

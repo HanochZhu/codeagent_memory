@@ -45,6 +45,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_identity
 CREATE INDEX IF NOT EXISTS idx_edges_source_kind ON edges(source, kind);
 CREATE INDEX IF NOT EXISTS idx_edges_target_kind ON edges(target, kind);
 
+-- Nested git checkouts indexed into their own .cam/cam.db. rel_path is
+-- relative to this database's project root.
+CREATE TABLE IF NOT EXISTS code_projects (
+    rel_path TEXT PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS solutions (
     id TEXT PRIMARY KEY,
     parent_id TEXT,

@@ -248,7 +248,7 @@ cam add --summary "..." < notes.md
 - `--project <dir>` (또는 환경변수 `CAM_PROJECT`)으로 상위 디렉토리 `.cam` / `.git` 자동 탐색을 재정의.
 - `--json`은 압축된 JSON 출력 (`--pretty`로 들여쓰기). `--json` 모드에서 에러 발생 시 `stdout`으로 `{"error":{"code":…,"message":…}}`를 출력하고 0이 아닌 코드로 종료.
 - **동명 심볼 모호성 해결:** `read`나 `ref`가 여러 정의와 일치하면 `status: "ambiguous"`와 후보 노드 ID(예: `src/main.rs:function:main:12`)를 반환하며, 이 ID를 그대로 다시 전달 가능.
-- **무시 규칙 및 멀티 리포지토리:** 모든 깊이에서 `.gitignore`와 `.camignore`를 준수. git 서브모듈과 링크된 워크트리는 건너뛰며, 중첩된 독립 클론은 `kind: "project"`로 인덱싱됨 (`--scope`에 전달 가능).
+- **무시 규칙 및 멀티 리포지토리:** 모든 깊이에서 `.gitignore`와 `.camignore`를 준수. 자체 `.git`이 있는 하위 디렉터리(독립 클론, 서브모듈, linked worktree)는 그 디렉터리의 `.cam/cam.db`에 인덱싱됨. 부모 데이터베이스는 하위 그래프 목록만 보관하고 조회 시 펼치므로, 하위 디렉터리를 따로 열어도 같은 그래프를 재사용함. `cam ls`에서는 `kind: "project"`로 표시되며 `--scope`에 전달 가능.
 
 ---
 

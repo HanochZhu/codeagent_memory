@@ -248,7 +248,7 @@ cam add --summary "..." < notes.md
 - `--project <dir>`（または環境変数 `CAM_PROJECT`）で、上位ディレクトリへの `.cam` / `.git` 自動探索を上書き。
 - `--json` はコンパクトな JSON を出力（`--pretty` でインデント付き）。`--json` でのエラー時は `stdout` に `{"error":{"code":…,"message":…}}` を出力し非ゼロで終了。
 - **同名シンボルの解消:** `read` や `ref` で複数の同名定義に一致した場合、`status: "ambiguous"` と候補ノード ID（例: `src/main.rs:function:main:12`）を返し、その ID をそのまま `read` や `ref` に再入力可能。
-- **無視ルールとマルチリポジトリ:** 任意の階層で `.gitignore` および `.camignore` に従います。git submodule や linked worktree はスキップされ、ネストされた独立クローンは `kind: "project"` としてインデックスされます（`--scope` に指定可能）。
+- **無視ルールとマルチリポジトリ:** 任意の階層で `.gitignore` と `.camignore` に従います。独自の `.git` を持つ子ディレクトリ（独立クローン、submodule、linked worktree）はそのディレクトリの `.cam/cam.db` に索引されます。親データベースは子グラフの目録を保持し、検索時に子グラフへ展開するため、子ディレクトリを直接開いても同じグラフを再利用できます。`cam ls` では `kind: "project"` と表示され、`--scope` に渡せます。
 
 ---
 

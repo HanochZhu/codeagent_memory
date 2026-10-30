@@ -248,7 +248,7 @@ cam add --summary "..." < notes.md
 - `--project <dir>`（或环境变量 `CAM_PROJECT`）显式指定项目根；未指定时自动向上查找 `.cam` 或 `.git`。
 - `--json` 输出紧凑 JSON（`--pretty` 输出缩进 JSON）。`--json` 模式下报错会在 `stdout` 输出 `{"error":{"code":…,"message":…}}` 并以非零状态码退出。
 - **同名符号消歧：** 当 `read` 或 `ref` 匹配到多个同名定义时，返回 `status: "ambiguous"` 与候选节点 ID（如 `src/main.rs:function:main:12`），可将该 ID 直接传回 `read` 或 `ref`。
-- **忽略规则与多仓库目录：** 任意层级均遵循 `.gitignore` 与 `.camignore`。自动跳过 git submodule 与 linked worktree；嵌套的独立 git 仓库会正常索引并在 `cam ls` 中标为 `project`（可传给 `--scope` 收窄范围）。
+- **忽略规则与多仓库目录：** 任意层级均遵循 `.gitignore` 与 `.camignore`。带独立 `.git` 的子目录（独立克隆、submodule 或 linked worktree）会写入该目录自己的 `.cam/cam.db`。父库只保存这些子图的目录，查询时再扇出，因此单独打开子目录可以复用已有图。`cam ls` 将其标为 `project`（可传给 `--scope`）。
 
 ---
 

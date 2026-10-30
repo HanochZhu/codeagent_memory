@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use cam::code::{
-    clamp_debounce_ms, find, index_project, index_project_with_progress, ls, read, refs,
-    sync_project, watch_project, Ambiguous, ReadOutcome, RefDir, RefOutcome, SymbolHints,
+    clamp_debounce_ms, find, graph_counts, index_project, index_project_with_progress, ls, read,
+    refs, sync_project, watch_project, Ambiguous, ReadOutcome, RefDir, RefOutcome, SymbolHints,
     DEFAULT_DEBOUNCE_MS,
 };
 
@@ -690,11 +690,12 @@ fn collect_status(project: &Project) -> Result<StatusOut> {
     let db_exists = db.is_file();
     let cfg = Config::load()?;
     let (files, nodes, edges, solutions) = if db_exists {
+        let (files, nodes, edges) = graph_counts(project)?;
         let conn = cam::open_db(&db)?;
         (
-            cam::db::table_count(&conn, "files")?,
-            cam::db::table_count(&conn, "nodes")?,
-            cam::db::table_count(&conn, "edges")?,
+            files,
+            nodes,
+            edges,
             cam::db::table_count(&conn, "solutions")?,
         )
     } else {
