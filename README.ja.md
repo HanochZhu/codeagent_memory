@@ -117,8 +117,8 @@ cargo install --path . --locked
 **Docker（Rust ツールチェーン不要）:**
 
 ```bash
-docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.5
-docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.5
+docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.6
+docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.6
 ```
 
 またはローカルでビルド: `docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
@@ -438,7 +438,7 @@ python3 eval/charts/generate.py
 
 ## 対応プラットフォーム
 
-`cam` は **macOS**、**Linux**、**Windows** 上で `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked` によりネイティブにコンパイル・インストール可能で、Docker イメージ（`ghcr.io/hanochzhu/codeagent-memory:0.1.5`）を介してどこでも実行できます。[クイックスタート](#クイックスタート) を参照してください。
+`cam` は **macOS**、**Linux**、**Windows** 上で `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked` によりネイティブにコンパイル・インストール可能で、Docker イメージ（`ghcr.io/hanochzhu/codeagent-memory:0.1.6`）を介してどこでも実行できます。[クイックスタート](#クイックスタート) を参照してください。
 
 ---
 

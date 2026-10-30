@@ -1,6 +1,6 @@
 [package]
 name = "cam"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "CodeAgent memory: code graph + memory (CLI + MCP)"
 license = "MIT"

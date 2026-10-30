@@ -117,8 +117,8 @@ cargo install --path . --locked
 **Docker (لا يتطلب تثبيت Rust على الجهاز):**
 
 ```bash
-docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.5
-docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.5
+docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.6
+docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.6
 ```
 
 أو البناء محلياً: `docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
@@ -438,7 +438,7 @@ python3 eval/charts/generate.py
 
 ## المنصات المدعومة
 
-يتم تجميع وتثبيت `cam` بشكل أصلي على **macOS** و **Linux** و **Windows** عبر الأمر `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`، أو تشغيله في أي مكان عبر حاوية Docker الرسمية (`ghcr.io/hanochzhu/codeagent-memory:0.1.5`). انظر قسم [البدء](#البدء).
+يتم تجميع وتثبيت `cam` بشكل أصلي على **macOS** و **Linux** و **Windows** عبر الأمر `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`، أو تشغيله في أي مكان عبر حاوية Docker الرسمية (`ghcr.io/hanochzhu/codeagent-memory:0.1.6`). انظر قسم [البدء](#البدء).
 
 ---
 

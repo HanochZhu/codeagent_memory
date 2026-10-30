@@ -306,7 +306,7 @@ If the host requires `type`, set `"type": "stdio"`.
 
 ```bash
 cam --help          # must list `mcp`
-cam mcp             # stderr: `cam mcp 0.1.5 ready (stdio)`
+cam mcp             # stderr: `cam mcp 0.1.6 ready (stdio)`
 ```
 
 Then open the host's MCP panel and confirm tools `cam_recall`, `cam_ls`, `cam_read`, `cam_ref`, `cam_add` are listed.

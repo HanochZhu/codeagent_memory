@@ -304,7 +304,7 @@ Settings → Tools → AI Assistant → Model Context Protocol（不同版本名
 
 ```bash
 cam --help          # 应列出 mcp
-cam mcp             # stderr：`cam mcp 0.1.5 ready (stdio)`
+cam mcp             # stderr：`cam mcp 0.1.6 ready (stdio)`
 ```
 
 再打开宿主的 MCP 面板，确认能看到 `cam_recall`、`cam_ls`、`cam_read`、`cam_ref`、`cam_add`。

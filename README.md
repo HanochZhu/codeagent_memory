@@ -117,8 +117,8 @@ cargo install --path . --locked
 **Docker (no Rust toolchain required):**
 
 ```bash
-docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.5
-docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.5
+docker pull ghcr.io/hanochzhu/codeagent-memory:0.1.6
+docker run -i --rm -v "$PWD:/work" -w /work ghcr.io/hanochzhu/codeagent-memory:0.1.6
 ```
 
 Or build locally: `docker build -t cam https://github.com/HanochZhu/codeagent_memory.git`
@@ -438,7 +438,7 @@ Copy-paste configs: [docs/mcp.md](docs/mcp.md) · System prompts: [docs/agents.m
 
 ## Supported Platforms
 
-`cam` compiles natively on **macOS**, **Linux**, and **Windows** via `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, or runs anywhere via Docker (`ghcr.io/hanochzhu/codeagent-memory:0.1.5`). See [Get Started](#get-started).
+`cam` compiles natively on **macOS**, **Linux**, and **Windows** via `cargo install --git https://github.com/HanochZhu/codeagent_memory --locked`, or runs anywhere via Docker (`ghcr.io/hanochzhu/codeagent-memory:0.1.6`). See [Get Started](#get-started).
 
 ---
 
