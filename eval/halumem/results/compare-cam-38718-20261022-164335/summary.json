@@ -1,0 +1,130 @@
+{
+  "dataset": "HaluMem-Medium",
+  "users": 2,
+  "user_ids": [
+    "2f1f897e-d67f-dbc5-6a7b-b7634a9e294f",
+    "8ece194a-885c-8e0c-359e-93a97220252c"
+  ],
+  "sessions_per_user": "all",
+  "model": "deepseek-flash",
+  "judge": "HaluMem integrity, accuracy, update, and question prompts",
+  "reader": "one shared DeepSeek prompt for every frame",
+  "not_run": {
+    "memos": "MemOS needs Neo4j and Qdrant. Docker is not available and no MemOS key is set.",
+    "memobase": "Memobase needs its server and database. No project token is set.",
+    "zep": "No Zep API key. Graphiti 0.31 on Kuzu raises before add because KuzuDriver has no _database, and search requires a full-text index the driver never creates. Neo4j is not installed."
+  },
+  "frames": {
+    "cam": {
+      "frame": "cam",
+      "note": "cam one-fact cam_add; recall uses potion-multilingual-128M",
+      "errors": [],
+      "score": {
+        "recall": 0.5258166491043204,
+        "weighted_recall": 0.7265542676501581,
+        "target_accuracy": 0.9976213130352045,
+        "f1": 0.6886606595499566,
+        "resistance": 0.5220588235294118,
+        "update_correct": 0.5427631578947368,
+        "update_hallucination": 0.05263157894736842,
+        "update_omission": 0.3848684210526316,
+        "qa_correct": 0.45738636363636365,
+        "qa_hallucination": 0.13920454545454544,
+        "qa_omission": 0.39488636363636365,
+        "counts": {
+          "integrity": 949,
+          "integrity_valid": 934,
+          "integrity_weight": 711.75,
+          "integrity_weight_valid": 700.5,
+          "interference": 272,
+          "interference_valid": 262,
+          "resisted": 142,
+          "accuracy": 1812,
+          "accuracy_valid": 1776,
+          "target_accuracy_num": 1051,
+          "target_accuracy_valid": 1051,
+          "updates": 304,
+          "updates_valid": 301,
+          "update_correct": 165,
+          "questions": 352,
+          "questions_valid": 349,
+          "qa_correct": 161
+        }
+      },
+      "rows": [
+        {
+          "uuid": "2f1f897e-d67f-dbc5-6a7b-b7634a9e294f",
+          "sessions": 65,
+          "score": {
+            "recall": 0.541019955654102,
+            "weighted_recall": 0.7305986696230599,
+            "target_accuracy": 1.0,
+            "f1": 0.702158273381295,
+            "resistance": 0.52,
+            "update_correct": 0.5633802816901409,
+            "update_hallucination": 0.02112676056338028,
+            "update_omission": 0.3732394366197183,
+            "qa_correct": 0.42073170731707316,
+            "qa_hallucination": 0.17073170731707318,
+            "qa_omission": 0.3902439024390244,
+            "counts": {
+              "integrity": 451,
+              "integrity_valid": 436,
+              "integrity_weight": 338.25,
+              "integrity_weight_valid": 327.0,
+              "interference": 125,
+              "interference_valid": 115,
+              "resisted": 65,
+              "accuracy": 828,
+              "accuracy_valid": 792,
+              "target_accuracy_num": 489,
+              "target_accuracy_valid": 489,
+              "updates": 142,
+              "updates_valid": 139,
+              "update_correct": 80,
+              "questions": 164,
+              "questions_valid": 161,
+              "qa_correct": 69
+            }
+          }
+        },
+        {
+          "uuid": "8ece194a-885c-8e0c-359e-93a97220252c",
+          "sessions": 77,
+          "score": {
+            "recall": 0.5120481927710844,
+            "weighted_recall": 0.7228915662650602,
+            "target_accuracy": 0.9955516014234875,
+            "f1": 0.6762675350345192,
+            "resistance": 0.5238095238095238,
+            "update_correct": 0.5246913580246914,
+            "update_hallucination": 0.08024691358024691,
+            "update_omission": 0.3950617283950617,
+            "qa_correct": 0.48936170212765956,
+            "qa_hallucination": 0.11170212765957446,
+            "qa_omission": 0.39893617021276595,
+            "counts": {
+              "integrity": 498,
+              "integrity_valid": 498,
+              "integrity_weight": 373.5,
+              "integrity_weight_valid": 373.5,
+              "interference": 147,
+              "interference_valid": 147,
+              "resisted": 77,
+              "accuracy": 984,
+              "accuracy_valid": 984,
+              "target_accuracy_num": 562,
+              "target_accuracy_valid": 562,
+              "updates": 162,
+              "updates_valid": 162,
+              "update_correct": 85,
+              "questions": 188,
+              "questions_valid": 188,
+              "qa_correct": 92
+            }
+          }
+        }
+      ]
+    }
+  }
+}

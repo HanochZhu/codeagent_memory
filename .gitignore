@@ -18,4 +18,8 @@ eval/agent_retrieval/data/
 eval/agent_retrieval/vendor/
 eval/agent_retrieval/results/
 eval/recall_payload/results/
+eval/write_memory/data/
+eval/write_memory/results/
+eval/halumem/data/
+eval/halumem/results/
 .deepseek.env

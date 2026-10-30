@@ -30,9 +30,10 @@ cam --project /path/to/project mcp
 
 `initialize` 会带上 `instructions`，说明 recall → 代码图 → add 的流程。
 
-每次 `cam_add` 只存储一条原子事实，避免把多条事实塞进同一条记忆。
-`cam_recall.query` 必须使用英语，`cam_add.summary` 也必须使用英语（含非拉丁字符会被拒绝）；`cam_add.body` 正文支持非拉丁字符。
+一条记忆是一条事实，或一个问题的解决路径（现象、原因、改法、如何验证）。两段内容能分别被问到，或者会分别过时，就分成两条。一次 `cam_add` 可以用 `summary` 和 `body` 写一条，也可以用 `memories` 写多条；数组里的 `parent`、`supersedes`、`links` 用 `#0`、`#1` 互指。
+`cam_recall.query` 必须使用英语，`cam_add.summary` 也必须使用英语（含非拉丁字符会被拒绝）；`cam_add.body` 正文支持非拉丁字符，并且只写这一条需要的细节。
 `cam_add.links` 用于连接相关的多条事实以构建知识图谱（当前暂不做图召回）。
+`serverInfo.version` 的格式是 `<crate 版本>+<git 提交号>`。磁盘上的 `cam` 二进制发生变化后，工具返回会附上 `cam 已更新，请重启 MCP 服务`，直到 MCP 进程重启。
 `cam_add.parent` 表示允许分叉的结构层级，`cam_add.supersedes` 表示线性的版本替代。
 召回默认隐藏被替代的旧修订；查询历史时传 `include_superseded`。
 

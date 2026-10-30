@@ -1,0 +1,20 @@
+---
+description: Use cam code graph and solution memory before grepping or reading whole files
+alwaysApply: true
+---
+
+# cam
+
+本仓库使用 cam（代码图 + 解法记忆）。项目根是本仓库，不要用家目录的 `~/.cam`。
+
+主 Agent：调用 MCP 工具 `cam_recall` / `cam_ls` / `cam_read` / `cam_ref` / `cam_add` / `cam_mem_tree` / `cam_mem_show`。MCP 可用时不要跑 cam CLI。
+
+流程：先把问题翻译成英语，再 `cam_recall`。读代码前若提示未建图，对项目根 `/Users/dizhu/code/AI/memory/codeagent_memory` 跑一次 `cam_index`。未命中或 `needs_update` 时用 `cam_ls` → `cam_read`（符号路径）→ `cam_ref`。解完用 `cam_add` 提取记忆：一条记忆只存一条事实，或一个问题的解决路径（现象、原因、改法、如何验证）。两段内容能分别被问到，或者会分别过时，就分成两条。摘要用英语，正文支持非拉丁字符，且只写这一条需要的细节。同一次解决得到的多条用 `memories` 一次写入，数组内用 `#0`、`#1` 在 `links` 里互指（CLI 则一条条 `add`，用 `--link`）；当前暂不做图召回。`parent` 表示结构层级，`supersedes` 表示替代旧修订。
+
+Subagent 通常没有 MCP。委派时让它们执行：
+
+```bash
+cam --json --project /Users/dizhu/code/AI/memory/codeagent_memory <command>
+```
+
+虚拟路径：文件是 `src/main.rs`，符号是 `src/main.rs/main`。

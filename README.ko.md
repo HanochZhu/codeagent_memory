@@ -373,6 +373,10 @@ stale_days = 30
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. 기억 쓰기
+
+노트는 별도 저장소 [cam-write-memory-eval](https://github.com/HanochZhu/cam-write-memory-eval)에 있다. 이 저장소에는 실행 스크립트만 둔다. 첫 `eval/write_memory/run.py`가 `cases.json`을 `eval/write_memory/data/`로 받는다. LongMemEval, LoCoMo와 같은 구분이다.
+
 <details>
 <summary><b>모든 벤치마크 재현 방법</b></summary>
 
@@ -393,6 +397,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; DEEPSEEK_API_KEY 필요
+python3 eval/write_memory/test_score.py          # 처음에 케이스 셋을 받는다. 모델 호출 없음
+python3 eval/write_memory/run.py                 # 처음에 케이스 셋을 받는다. DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

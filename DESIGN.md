@@ -25,7 +25,7 @@ cam 有两面：
 
 # 记忆
 
-树状与知识图谱结合存储，多路召回。一条记忆可以是习惯、事实、设计或解法，schema 相同；类型写在摘要和正文里。提取记忆时，**一条记忆只存储一条原子事实**，避免单条记忆塞入过多信息；若多个事实之间有相关性，写入时用 `--link` / `links` 建立连接，构成知识图谱（当前暂不做图召回，召回仍只走向量 + BM25 + RRF 及线性修订链扩展）。探索项目前先 `recall`；没有命中再搜代码；需要长期留下的结论再拆成单条事实 `add`。
+树状与知识图谱结合存储，多路召回。一条记忆可以是习惯、事实、设计或解法，schema 相同；类型写在摘要和正文里。提取记忆时，**一条记忆只存储一条事实，或一个问题的解决路径**（现象、原因、改法、如何验证）。两段内容能分别被问到，或者会分别过时，就分成两条，正文只保留这一条需要的细节。相关的几条用 `--link` / `links` 连成知识图谱（当前暂不做图召回，召回仍只走向量 + BM25 + RRF 及线性修订链扩展）。MCP 的 `cam_add` 可以用 `memories` 一次写入多条，数组里用 `#0`、`#1` 在 `parent`、`supersedes`、`links` 里互指。探索项目前先 `recall`；没有命中再搜代码；需要长期留下的结论再拆成单条 `add`。
 
 - `cam recall "<一句话>" [--no-expand]`：向量 + BM25，以 **RRF**（k=60；分数乘以 k+1，使单路第一名=1、双路第一名=2）融合
 - 融合前每路先过门槛：向量分不到本路第一名的 80%、BM25 分不到本路第一名的 30% 的，不算在该路命中。RRF 只看名次，不设门槛时库里每条记忆都会进向量名单，只共享一个 `ts` 这类近零 IDF 词的文档也会进 BM25 名单
@@ -34,7 +34,7 @@ cam 有两面：
 - 截断默认关闭，因为 LongMemEval 上的 DeepSeek 问答（`eval/recall_payload/llm_qa.py`，86 题）里：截断省 47% token，但准确率从 57% 掉到 45%，丢分的题大多是金标会话被截成片段、Agent 没打开；提示 Agent 必须打开片段后准确率追平，节省只剩 3.7%（每轮工具调用都要重发整个上下文）
 - MCP 工具结果是紧凑 JSON（不缩进）。`eval/recall_payload` 量 recall 结果的 token：短正文语料（coding-agent-life）−37%，LongMemEval 长会话 −3.4%；开 `--snippets` 时 k=3 −57%（算上为截断的金标会话补一次 `mem show` 仍 −35%）。排序不变
 - BM25 查询去掉中英文虚词（是否、由、或、the、how…）；驼峰标识符入库时整词和拆开的词都存，`bundledToolSchemas` 也能被 `bundled tool schemas` 命中。分词规则变了会用 `PRAGMA user_version` 触发一次 `fts_text` 重建
-- `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]...`：必须提供全文（stdin / `--file` / `--body`）和摘要；一条记忆只存一条事实；多个事实相关时用 `--link` 建立知识图谱边（`mem show` 可查看双向关联 `links`，召回暂不遍历 `links`）；`parent` 是可分叉的结构层级，`supersedes` 是线性版本替代
+- `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]...`：CLI 一次写一条，正文只写这一条事实或解决路径需要的细节；多个事实相关时用 `--link` 建立知识图谱边（`mem show` 可查看双向关联 `links`，召回暂不遍历 `links`）；`parent` 是可分叉的结构层级，`supersedes` 是线性版本替代。MCP `cam_add` 的 `memories` 可以一次写入多条，并用 `#0`、`#1` 互指
 - 每条记忆带时间。超过 `~/.cam/config.toml` 的 `stale_days`（默认 30）会标 `stale`，考虑是否更新
 
 向量默认 `model2vec` + `potion-multilingual-128M`（首次需下载）。`~/.cam/config.toml` 的 `embedding_model`（或环境变量 `CAM_EMBED_MODEL`）可换成 `hash`、另一个 Hugging Face 上的 model2vec 仓库，或本地 model2vec 目录。未显式指定时，默认模型不可用会回退到 hash embedder；显式指定的模型加载失败则直接报错。每条记忆记下产生向量的模型名。换模型后的第一次 `recall` 会用当前模型重算对不上的向量，再参加当次打分，且不改 `updated_at`。查询与记忆摘要要求使用英语，正文支持非拉丁字符；BM25 拆分英语标识符，并同时索引原词和英语词干。

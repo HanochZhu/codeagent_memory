@@ -373,6 +373,10 @@ stale_days = 30
 
 ![DeepSeek multi-turn prompt tokens](eval/charts/multiturn-tokens.svg)
 
+### 6. 記憶の書き込み
+
+ノートは別リポジトリ [cam-write-memory-eval](https://github.com/HanochZhu/cam-write-memory-eval) にある。このリポジトリには実行スクリプトだけがある。最初の `eval/write_memory/run.py` が `cases.json` を `eval/write_memory/data/` にダウンロードする。LongMemEval や LoCoMo と同じ分け方である。
+
 <details>
 <summary><b>すべてのベンチマークを再現する手順</b></summary>
 
@@ -393,6 +397,8 @@ arb download-benchmark --version v2_edit2ripple --local-dir eval/agent_retrieval
 python3 eval/agent_retrieval/run.py --workers 8
 
 python3 eval/llm_multiturn/run.py --track both   # potion; DEEPSEEK_API_KEY が必要
+python3 eval/write_memory/test_score.py          # 初回にケース集をダウンロード。モデル呼び出しなし
+python3 eval/write_memory/run.py                 # 初回にケース集をダウンロード。DEEPSEEK_API_KEY
 python3 eval/longmemcode/run.py --corpus clap
 python3 eval/charts/generate.py
 ```

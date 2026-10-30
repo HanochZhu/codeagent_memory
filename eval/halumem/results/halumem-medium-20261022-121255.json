@@ -1,0 +1,53 @@
+{
+  "dataset": "HaluMem-Medium",
+  "users": 2,
+  "sessions_per_user": "all",
+  "model": "deepseek-flash",
+  "embedder": "minishlab/potion-multilingual-128M",
+  "matcher": "content-word coverage >= 0.55",
+  "recall": 0.3527505237876233,
+  "precision": 0.21838661720980895,
+  "f1": 0.2696303430683238,
+  "update_rate": 0.0,
+  "resistance": 0.8759727891156462,
+  "rows": [
+    {
+      "uuid": "2f1f897e-d67f-dbc5-6a7b-b7634a9e294f",
+      "sessions": 65,
+      "errors": [],
+      "score": {
+        "memories": 804,
+        "target_points": 593,
+        "covered": 218,
+        "recall": 0.3676222596964587,
+        "precision": 0.23756218905472637,
+        "f1": 0.2886166322976415,
+        "interference": 125,
+        "resisted": 111,
+        "resistance": 0.888,
+        "update_hits": 0,
+        "update_total": 142,
+        "update_rate": 0.0
+      }
+    },
+    {
+      "uuid": "8ece194a-885c-8e0c-359e-93a97220252c",
+      "sessions": 77,
+      "errors": [],
+      "score": {
+        "memories": 1014,
+        "target_points": 660,
+        "covered": 223,
+        "recall": 0.3378787878787879,
+        "precision": 0.1992110453648915,
+        "f1": 0.250644053839006,
+        "interference": 147,
+        "resisted": 127,
+        "resistance": 0.8639455782312925,
+        "update_hits": 0,
+        "update_total": 162,
+        "update_rate": 0.0
+      }
+    }
+  ]
+}

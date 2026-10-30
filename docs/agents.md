@@ -18,7 +18,7 @@ Same order for both entry points:
 1. **Recall first.** By default recall expands a matched revision to its latest replacement and hides the superseded revision. Reuse a hit that is `latest` and not `needs_update`; set `include_superseded` / `--include-superseded` only for history or comparison.
 2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` / `cam index` once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
 3. **On miss / stale / needs_update**, walk the code graph: `ls` → `read` (symbol path) → `ref`.
-4. **After you solve it**, extract atomic facts and `add` one fact per memory (avoid packing multiple facts into a single entry). When multiple facts are related, link them via `links` / `--link` to build a knowledge graph (recall does not traverse graph links yet). Use `parent` only for structural hierarchy; use `supersedes` when the new complete memory replaces an older revision.
+4. **After you solve it**, store one memory per fact or per problem solution path (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them separately. Several memories from the same solution go in one `cam_add` as `memories`, using `#0`, `#1`, ... in `links` (recall does not traverse graph links yet). On the CLI, `cam add` stores one memory per invocation and `--link` connects it. Use `parent` only for structural hierarchy; use `supersedes` when the new memory replaces an older revision.
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol.
 
@@ -37,7 +37,7 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_read` | File outline, or a symbol body. Prefer `src/foo.rs/bar` over `full=true`. |
 | `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). On `status: ambiguous`, re-call with a candidate `id` or add `file` / `kind` / `scope`. |
 | `cam_find` | Symbols whose name contains `query` (case-insensitive; names only, not body text). Exact names first, then prefixes. Each hit has a virtual `path` and `id` for cam_read / cam_ref. |
-| `cam_add` | Persist one atomic fact per memory. English `summary` (body supports non-Latin characters). Connect related facts with `links`, set `parent` for hierarchy, or `supersedes` for a replacement revision. |
+| `cam_add` | Persist one fact or one problem's solution path per memory. English `summary`. One call may pass `memories` and refer to other items with `#0`, `#1`, .... `links` connects related memories, `parent` sets hierarchy, `supersedes` replaces a revision. |
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
 
@@ -50,7 +50,7 @@ This repo uses cam (code graph + solution memory).
 
 Main agent: call MCP tools cam_recall / cam_find / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show. Do not run the cam CLI unless MCP is unavailable.
 
-Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, locate symbols with cam_find (part of a name) or cam_ls, then cam_read (symbol paths) → cam_ref. After solving, extract atomic facts and call cam_add with one fact per memory and an English summary (body supports non-Latin text; link related facts with links, parent for hierarchy, supersedes to replace an older revision).
+Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, locate symbols with cam_find (part of a name) or cam_ls, then cam_read (symbol paths) → cam_ref. After solving, call cam_add with one fact or one problem's solution path per memory (English summary; body supports non-Latin text). Several memories from the same solution go in one call as memories, using #0 and #1 in links. parent sets hierarchy; supersedes replaces an older revision.
 
 Subagents have no MCP. When you delegate, tell them to run `cam --json` in the project directory (see docs/agents.md).
 ```
@@ -91,7 +91,7 @@ cam --json --project <PROJECT> add --summary "<one atomic fact>" [--link <id>] -
 cam --json --project <PROJECT> mem tree
 cam --json --project <PROJECT> mem show <id>
 
-Translate the question to English and recall first. Before reading code, run `cam index` once if the graph is not built. On miss, ls → read symbol paths → ref. After solving, store one atomic fact per memory with an English summary (body supports non-Latin text) and link related facts with `--link`. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
+Translate the question to English and recall first. Before reading code, run `cam index` once if the graph is not built. On miss, ls → read symbol paths → ref. After solving, store one fact or one problem's solution path per memory with an English summary (body supports non-Latin text) and link related memories with `--link`. Virtual path: file is src/main.rs; symbol is src/main.rs/main.
 ```
 
 ### Mapping

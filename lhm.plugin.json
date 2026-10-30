@@ -29,16 +29,16 @@
     },
     {
       "name": "remember_solution",
-      "description": "Store what was just learned as atomic fact memories linked in a knowledge graph.",
+      "description": "Store what was just learned as one memory per fact or problem solution path.",
       "arguments": [
         {
           "name": "summary",
-          "description": "One-line English title for a single atomic fact.",
+          "description": "One-line English title for one fact or solution path. Split the text first if it contains more than one.",
           "required": true
         },
         {
           "name": "body",
-          "description": "Full write-up for this single atomic fact.",
+          "description": "Detail for one fact or solution path. If it contains several, split them into a cam_add memories array.",
           "required": true
         }
       ]
@@ -237,12 +237,12 @@
     },
     {
       "name": "cam_add",
-      "description": "Store one atomic fact as a memory with its summary written in English (avoid packing multiple facts into a single memory). Non-Latin scripts in summary are rejected; the body supports non-Latin characters. When multiple facts are related, pass their IDs in `links` to connect them in the knowledge graph. Use parent for structural hierarchy and supersedes only when this complete memory replaces an older revision. Equivalent CLI: cam add --summary \"...\" [--parent ID] [--supersedes ID] [--link ID]... --body \"...\" (or --file / stdin)",
+      "description": "Store one memory, or several memories from the same solution. Each memory is one fact, or the solution path for one problem (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them as separate memories; a body holds only the detail one memory needs. Pass one memory as summary and body. Pass several as memories, and use #0, #1, ... inside that array for parent, supersedes, and links. Summary must be English; the body supports non-Latin characters. links connects related memories (recall does not walk them). parent is structural hierarchy. supersedes replaces an older revision. Equivalent CLI, one memory per invocation: cam add --summary \"...\" [--parent ID] [--supersedes ID] [--link ID]... --body \"...\" (or --file / stdin)",
       "inputSchema": {
         "type": "object",
         "properties": {
           "body": {
-            "description": "Full write-up for this single atomic fact. Supports non-Latin characters. Required.",
+            "description": "Detail this one fact or solution path needs, and nothing else. Supports non-Latin characters.",
             "type": "string"
           },
           "hash_embed": {
@@ -250,14 +250,48 @@
             "type": "boolean"
           },
           "links": {
-            "description": "Related memory IDs to link to this fact in the knowledge graph.",
+            "description": "Related memory ids. Inside memories, #0, #1, ... refer to other items in that array.",
             "items": {
               "type": "string"
             },
             "type": "array"
           },
+          "memories": {
+            "description": "Several memories from the same solution, stored in one call. Each item is one fact or one solution path. parent, supersedes, and links on an item may use #0, #1, ... to refer to other items in this array. Do not also pass top-level summary or body.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "description": "One-line English title for this one fact or solution path.",
+                  "type": "string"
+                },
+                "body": {
+                  "description": "Detail this one fact or solution path needs, and nothing else. Supports non-Latin characters.",
+                  "type": "string"
+                },
+                "parent": {
+                  "description": "Structural parent: an existing memory id, or #0, #1, ... in this array.",
+                  "type": "string"
+                },
+                "supersedes": {
+                  "description": "Older revision this memory replaces: an existing id, or #0, #1, ... in this array.",
+                  "type": "string"
+                },
+                "links": {
+                  "description": "Related memory ids, or #0, #1, ... in this array.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": ["summary", "body"],
+              "additionalProperties": false
+            }
+          },
           "parent": {
-            "description": "Structural parent memory id. This relation may branch and does not affect latest.",
+            "description": "Structural parent memory id, or #0, #1, ... when this item is inside memories. This relation may branch and does not affect latest.",
             "type": "string"
           },
           "path": {
@@ -265,17 +299,17 @@
             "type": "string"
           },
           "summary": {
-            "description": "One-line English title for a single atomic fact. Must be written in English.",
+            "description": "One-line English title for this one fact or solution path. Must be written in English.",
             "type": "string"
           },
           "supersedes": {
-            "description": "Older revision replaced by this complete current memory. Omit for a structural child or independent memory.",
+            "description": "Older revision replaced by this memory. An existing id, or #0, #1, ... inside memories. Omit for a structural child or independent memory.",
             "type": "string"
           }
         },
-        "required": [
-          "summary",
-          "body"
+        "oneOf": [
+          { "required": ["summary", "body"] },
+          { "required": ["memories"] }
         ],
         "additionalProperties": false
       },
