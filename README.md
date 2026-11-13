@@ -141,7 +141,7 @@ cam recall "how does hybrid recall fuse BM25 and vectors"
 cam add --summary "..." < notes.md
 ```
 
-<sub>`cam` auto-initializes `.cam/` on first use. Run `cam watch` in the background if you want live incremental graph updates as files change.</sub>
+<sub>`cam` auto-initializes `.cam/` on first use. `cam mcp` incrementally watches that project. A nested checkout with its own MCP is skipped; otherwise the parent writes the checkout's `.cam/cam.db`. `cam watch` uses the same lock.</sub>
 
 #### 3. Connect MCP for the main agent
 
@@ -170,7 +170,7 @@ See [docs/mcp.md](docs/mcp.md) for host-specific config paths and [docs/agents.m
 | --- | --- |
 | **SQLite Code Graph** | Tree-sitter parses functions, types, and call edges into `.cam/cam.db` for instant symbol-level navigation |
 | **Virtual Paths** | `src/main.rs` addresses a file outline; `src/main.rs/main` addresses the symbol body directly |
-| **Live Incremental Sync** | `cam sync` hashes file contents; `cam watch` keeps the graph updated on save |
+| **Live Incremental Sync** | `cam mcp` and `cam watch` share `.cam/incremental.lock` and hash file contents on save. A nested checkout with its own MCP is skipped; otherwise the parent writes that checkout's `.cam/cam.db` |
 | **Hybrid Recall (RRF)** | Combines local dense embeddings (`model2vec`) + identifier-aware BM25 via Reciprocal Rank Fusion ($k=60$) |
 | **Revision Chains & Tree** | `--parent` builds branching topic hierarchies; `--supersedes` links linear revisions and folds older entries automatically |
 | **Ebbinghaus Retention** | Retention $R = e^{-t / S}$ gently weights ranking ($\le 10\%$) and flags `stale` / `needs_update` memories without deleting history |
@@ -217,7 +217,7 @@ Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 
 | Command | Description |
 | --- | --- |
-| `cam index` | Parse the project with tree-sitter into `.cam/cam.db` (creates `.cam/` if needed) |
+| `cam index` | Build `.cam/cam.db` on the first run, then apply only the incremental diff; add `--force` to rebuild every file |
 | `cam sync` | Incrementally update the graph for modified files using content hashes |
 | `cam watch [--debounce-ms N]` | Watch source files and auto-sync (`--json` streams one JSON report per sync) |
 | `cam ls [virt_path]` | List directories, files, or symbols inside a file |
@@ -238,7 +238,7 @@ Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 
 | Command | Description |
 | --- | --- |
-| `cam mcp` | Start the stdio MCP server for the main agent (see [docs/mcp.md](docs/mcp.md)) |
+| `cam mcp` | Start the stdio MCP server and incrementally watch its project (see [docs/mcp.md](docs/mcp.md)) |
 | `cam status` | Show resolved project root, database path, node/edge/memory counts, and active config |
 | `cam config get` | Print current `~/.cam/config.toml` settings |
 | `cam config set stale_days <N>` | Set age threshold (in days) for marking memories `stale` |

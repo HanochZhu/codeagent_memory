@@ -19,6 +19,7 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+fs4 = "0.12"
 hex = "0.4"
 ignore = "0.4"
 model2vec-rs = "0.1"

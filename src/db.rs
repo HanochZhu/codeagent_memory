@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS files (
     language TEXT NOT NULL,
     size INTEGER NOT NULL,
     modified_at INTEGER NOT NULL,
+    modified_ns INTEGER,
     indexed_at INTEGER NOT NULL
 );
 
@@ -49,6 +50,42 @@ CREATE INDEX IF NOT EXISTS idx_edges_target_kind ON edges(target, kind);
 -- relative to this database's project root.
 CREATE TABLE IF NOT EXISTS code_projects (
     rel_path TEXT PRIMARY KEY
+);
+
+-- Unresolved call/reference sites captured at parse time. They let an
+-- unchanged file rebuild its outgoing edges when a definition it references
+-- changes, without re-parsing the file.
+CREATE TABLE IF NOT EXISTS node_refs (
+    file_path TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    target_name TEXT NOT NULL,
+    edge_kind TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    qualifier TEXT,
+    prefer TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_refs_file ON node_refs(file_path);
+CREATE INDEX IF NOT EXISTS idx_node_refs_target ON node_refs(target_name);
+
+-- One header row per impl block (method_id NULL) plus one row per method, so
+-- implements/contains/references edges can be rebuilt from names.
+CREATE TABLE IF NOT EXISTS node_impls (
+    file_path TEXT NOT NULL,
+    type_name TEXT NOT NULL,
+    trait_name TEXT,
+    line INTEGER NOT NULL,
+    method_id TEXT,
+    method_line INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_impls_file ON node_impls(file_path);
+CREATE INDEX IF NOT EXISTS idx_node_impls_type ON node_impls(type_name);
+CREATE INDEX IF NOT EXISTS idx_node_impls_trait ON node_impls(trait_name);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS solutions (
@@ -102,18 +139,56 @@ CREATE TRIGGER IF NOT EXISTS solutions_au AFTER UPDATE ON solutions BEGIN
 END;
 "#;
 
+/// Bumped whenever `SCHEMA` or `migrate` changes. `open_db` only runs the DDL
+/// when the stored version differs, so frequent read tools do not execute the
+/// whole schema batch on every call.
+const DB_SCHEMA_VERSION: i64 = 3;
+
 pub fn open_db(path: &Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(path).with_context(|| format!("open sqlite {}", path.display()))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
-    conn.execute_batch(SCHEMA)?;
-    migrate(&conn)?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;",
+    )?;
+    if schema_version(&conn)? != Some(DB_SCHEMA_VERSION) {
+        conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?1)",
+            [DB_SCHEMA_VERSION.to_string()],
+        )?;
+    }
+    migrate_fts(&conn)?;
     Ok(conn)
 }
 
+fn schema_version(conn: &Connection) -> Result<Option<i64>> {
+    let has_meta: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if has_meta.is_none() {
+        return Ok(None);
+    }
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(value.and_then(|value| value.parse().ok()))
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "files", "modified_ns")? {
+        conn.execute("ALTER TABLE files ADD COLUMN modified_ns INTEGER", [])?;
+    }
     if !column_exists(conn, "solutions", "recalled_at")? {
         conn.execute("ALTER TABLE solutions ADD COLUMN recalled_at INTEGER", [])?;
     }
@@ -137,6 +212,10 @@ fn migrate(conn: &Connection) -> Result<()> {
          ON solutions(supersedes_id)
          WHERE supersedes_id IS NOT NULL;",
     )?;
+    Ok(())
+}
+
+fn migrate_fts(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version < FTS_TOKENIZER_VERSION {
         retokenize_solutions(conn)?;

@@ -1,12 +1,14 @@
 pub mod index;
 pub mod lang;
+pub mod lock;
 pub mod query;
 pub mod watch;
 
 pub use index::{
-    index_project, index_project_with_progress, sync_project, IndexPhase, IndexProgress,
-    IndexReport, SyncReport, CAM_IGNORE_FILE,
+    index_project, index_project_with_progress, refresh_project, refresh_project_with_progress,
+    sync_project, IndexPhase, IndexProgress, IndexReport, SyncReport, CAM_IGNORE_FILE,
 };
+pub use lock::IncrementalLock;
 pub use query::{
     find, graph_counts, ls, read, refs, Ambiguous, FindHit, FindResult, ReadOutcome, ReadResult,
     RefDir, RefOutcome, RefResult, SymbolCandidate, SymbolHints,

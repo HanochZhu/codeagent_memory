@@ -842,6 +842,461 @@ fn nested_git_projects_keep_their_own_graph() {
     }
 }
 
+#[test]
+fn sync_skips_child_whose_incremental_lock_is_held() {
+    use cam::code::{index_project, sync_project, IncrementalLock};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("owned/.git")).unwrap();
+    fs::write(dir.path().join("owned/lib.rs"), "pub fn owned() {}\n").unwrap();
+    fs::create_dir_all(dir.path().join("free/.git")).unwrap();
+    fs::write(dir.path().join("free/lib.rs"), "pub fn free_one() {}\n").unwrap();
+
+    let project = Project::init(Some(dir.path())).unwrap();
+    sync_project(&project).unwrap();
+
+    fs::write(
+        dir.path().join("owned/lib.rs"),
+        "pub fn owned() {}\npub fn owned_new() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("free/lib.rs"),
+        "pub fn free_one() {}\npub fn free_new() {}\n",
+    )
+    .unwrap();
+
+    let owned = Project::init(Some(&dir.path().join("owned"))).unwrap();
+    let guard = IncrementalLock::try_acquire(&owned).unwrap();
+    assert!(guard.is_some());
+
+    sync_project(&project).unwrap();
+    let owned_names = sqlite_strings(
+        &dir.path().join("owned/.cam/cam.db"),
+        "SELECT name FROM nodes ORDER BY name",
+    );
+    let free_names = sqlite_strings(
+        &dir.path().join("free/.cam/cam.db"),
+        "SELECT name FROM nodes ORDER BY name",
+    );
+    assert!(
+        !owned_names.iter().any(|name| name == "owned_new"),
+        "{owned_names:?}"
+    );
+    assert!(
+        free_names.iter().any(|name| name == "free_new"),
+        "{free_names:?}"
+    );
+
+    index_project(&project).unwrap();
+    let owned_after_index = sqlite_strings(
+        &dir.path().join("owned/.cam/cam.db"),
+        "SELECT name FROM nodes ORDER BY name",
+    );
+    assert!(
+        !owned_after_index.iter().any(|name| name == "owned_new"),
+        "{owned_after_index:?}"
+    );
+}
+
+#[test]
+fn sync_preserves_incoming_edges_when_a_callee_line_shifts() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/a.rs"), "pub fn target() {}\n").unwrap();
+    fs::write(
+        dir.path().join("src/b.rs"),
+        "pub fn caller() { target(); }\n",
+    )
+    .unwrap();
+
+    cam_json(dir.path(), &["index"]);
+    let before = cam_json(dir.path(), &["ref", "target", "--dir", "in"]);
+    assert!(entry_names(&before["refs"]).contains(&"caller"), "{before}");
+
+    // Move `target` down so its node id (which embeds start_line) changes.
+    fs::write(
+        dir.path().join("src/a.rs"),
+        "pub fn first() {}\npub fn second() {}\npub fn target() {}\n",
+    )
+    .unwrap();
+    let report = cam_json(dir.path(), &["sync"]);
+    assert_eq!(report["files_modified"], 1, "{report}");
+    assert_eq!(
+        report["files_parsed"], 1,
+        "unchanged caller must not be re-parsed: {report}"
+    );
+
+    let after = cam_json(dir.path(), &["ref", "target", "--dir", "in"]);
+    assert!(
+        entry_names(&after["refs"]).contains(&"caller"),
+        "incoming edge lost after the callee moved lines: {after}"
+    );
+}
+
+#[test]
+fn sync_resolves_calls_to_definitions_added_in_another_file() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/a.rs"), "pub fn other() {}\n").unwrap();
+    fs::write(
+        dir.path().join("src/b.rs"),
+        "pub fn caller() { later(); }\n",
+    )
+    .unwrap();
+
+    cam_json(dir.path(), &["index"]);
+    let before = cam_json(dir.path(), &["ref", "src/b.rs/caller", "--dir", "out"]);
+    assert!(!entry_names(&before["refs"]).contains(&"later"), "{before}");
+
+    fs::write(
+        dir.path().join("src/a.rs"),
+        "pub fn other() {}\npub fn later() {}\n",
+    )
+    .unwrap();
+    let report = cam_json(dir.path(), &["sync"]);
+    assert_eq!(report["files_parsed"], 1, "{report}");
+
+    let after = cam_json(dir.path(), &["ref", "src/b.rs/caller", "--dir", "out"]);
+    assert!(
+        entry_names(&after["refs"]).contains(&"later"),
+        "unchanged caller did not pick up the new definition: {after}"
+    );
+}
+
+#[test]
+fn cli_sync_refuses_when_another_process_owns_the_lock() {
+    use cam::code::IncrementalLock;
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+    cam_json(dir.path(), &["index"]);
+
+    let project = Project::init(Some(dir.path())).unwrap();
+    let held = IncrementalLock::try_acquire(&project).unwrap();
+    assert!(held.is_some(), "test should own the lock");
+
+    let out = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(dir.path())
+        .arg("sync")
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "sync should refuse: {text}");
+    assert!(text.contains("incremental.lock"), "{text}");
+}
+
+#[test]
+fn watcher_waiting_for_lock_stops_on_request() {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use cam::code::{watch_project, IncrementalLock};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    let held = IncrementalLock::try_acquire(&project)
+        .unwrap()
+        .expect("lock");
+
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let watched = project.clone();
+    let handle = thread::spawn(move || {
+        let result = watch_project(&watched, Duration::from_millis(100), Some(&stop_rx), |_| {});
+        let _ = done_tx.send(result.is_ok());
+    });
+
+    thread::sleep(Duration::from_millis(300));
+    let _ = stop_tx.send(());
+    let stopped = done_rx.recv_timeout(Duration::from_secs(5));
+    handle.join().unwrap();
+    drop(held);
+    assert!(
+        stopped.unwrap_or(false),
+        "watcher did not stop while waiting for the lock"
+    );
+}
+
+#[test]
+fn concurrent_watcher_index_and_reads_finish() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    use cam::code::{index_project, ls, refs, watch_project, RefDir, SymbolHints};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    write_fixture(dir.path());
+    let project = Project::init(Some(dir.path())).unwrap();
+    index_project(&project).unwrap();
+
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (stopped_tx, stopped_rx) = mpsc::channel();
+    let watched = project.clone();
+    let watcher = thread::spawn(move || {
+        let result = watch_project(&watched, Duration::from_millis(120), Some(&stop_rx), |_| {});
+        let _ = stopped_tx.send(result.is_ok());
+    });
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let reader_project = project.clone();
+    let reader_stop = Arc::clone(&stop);
+    let reader = thread::spawn(move || {
+        while !reader_stop.load(Ordering::Relaxed) {
+            let _ = ls(&reader_project, None);
+            let _ = refs(&reader_project, "add", RefDir::In, SymbolHints::default());
+        }
+    });
+
+    let lib = dir.path().join("src/lib.rs");
+    for i in 0..6 {
+        fs::write(
+            &lib,
+            format!(
+                "pub fn add(a: i32, b: i32) -> i32 {{ a + b }}\n\
+                 pub fn run() {{ let _ = add(1, 2); }}\n\
+                 pub fn extra{i}() {{}}\n"
+            ),
+        )
+        .unwrap();
+        index_project(&project).unwrap();
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = stop_tx.send(());
+    let stopped = stopped_rx.recv_timeout(Duration::from_secs(10));
+    reader.join().unwrap();
+    watcher.join().unwrap();
+    assert!(stopped.unwrap_or(false), "watcher did not stop");
+
+    fs::write(
+        &lib,
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\npub fn final_one() {}\n",
+    )
+    .unwrap();
+    let report = cam::code::sync_project(&project).unwrap();
+    assert_eq!(report.files_parsed, 1, "{report:?}");
+}
+
+#[test]
+#[ignore = "stress: run with cargo test -- --ignored --nocapture"]
+fn stress_incremental_updates_at_each_stage() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use cam::code::{index_project, ls, refs, sync_project, watch_project, RefDir, SymbolHints};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    for i in 0..300 {
+        fs::write(
+            src.join(format!("f{i}.rs")),
+            format!("pub fn target{i}() {{}}\npub fn caller{i}() {{ target{i}(); }}\n"),
+        )
+        .unwrap();
+    }
+    let project = Project::init(Some(dir.path())).unwrap();
+
+    let started = Instant::now();
+    index_project(&project).unwrap();
+    eprintln!(
+        "[stage] initial index of 300 files: {:?}",
+        started.elapsed()
+    );
+
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (stopped_tx, stopped_rx) = mpsc::channel();
+    let watched = project.clone();
+    let watcher_sync_ms = Arc::new(std::sync::Mutex::new(0u64));
+    let watcher_sync_ms_writer = Arc::clone(&watcher_sync_ms);
+    let watcher = thread::spawn(move || {
+        let ok = watch_project(
+            &watched,
+            Duration::from_millis(100),
+            Some(&stop_rx),
+            |report| {
+                let mut worst = watcher_sync_ms_writer.lock().unwrap();
+                *worst = (*worst).max(report.duration_ms);
+            },
+        )
+        .is_ok();
+        let _ = stopped_tx.send(ok);
+    });
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let reader_project = project.clone();
+    let reader_stop = Arc::clone(&stop);
+    let reader = thread::spawn(move || {
+        while !reader_stop.load(Ordering::Relaxed) {
+            let _ = ls(&reader_project, Some("src"));
+            let _ = refs(
+                &reader_project,
+                "target0",
+                RefDir::In,
+                SymbolHints::default(),
+            );
+        }
+    });
+
+    let f0 = src.join("f0.rs");
+    let mut worst_incremental = Duration::ZERO;
+    for round in 0..20 {
+        let started = Instant::now();
+        fs::write(
+            &f0,
+            format!(
+                "pub fn target0() {{}}\n\
+                 pub fn caller0() {{ target0(); }}\n\
+                 pub fn extra{round}() {{}}\n"
+            ),
+        )
+        .unwrap();
+        sync_project(&project).unwrap();
+        let _ = ls(&project, Some("src"));
+        let _ = refs(&project, "target0", RefDir::In, SymbolHints::default());
+        worst_incremental = worst_incremental.max(started.elapsed());
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = stop_tx.send(());
+    let stopped = stopped_rx.recv_timeout(Duration::from_secs(10));
+    reader.join().unwrap();
+    watcher.join().unwrap();
+    assert!(stopped.unwrap_or(false), "watcher did not stop");
+
+    fs::write(
+        &f0,
+        "pub fn target0() {}\npub fn caller0() { target0(); }\n",
+    )
+    .unwrap();
+    let started = Instant::now();
+    let report = sync_project(&project).unwrap();
+    let one_file = started.elapsed();
+    eprintln!(
+        "[stage] one-file incremental sync with 300 files present: {:?}, parsed={}",
+        one_file, report.files_parsed
+    );
+    eprintln!("[stage] worst incremental round under watcher+reads: {worst_incremental:?}");
+    eprintln!(
+        "[stage] worst watcher-triggered sync: {}ms",
+        *watcher_sync_ms.lock().unwrap()
+    );
+
+    let started = Instant::now();
+    index_project(&project).unwrap();
+    eprintln!(
+        "[stage] explicit full index while idle: {:?}",
+        started.elapsed()
+    );
+
+    assert_eq!(report.files_parsed, 1, "{report:?}");
+    assert!(
+        worst_incremental < Duration::from_secs(5),
+        "incremental round took {worst_incremental:?}"
+    );
+}
+
+#[test]
+#[ignore = "stress: run with cargo test -- --ignored --nocapture"]
+fn stress_increment_during_initial_index() {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use cam::code::{index_project, sync_project};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    for i in 0..120 {
+        fs::write(
+            src.join(format!("f{i}.rs")),
+            format!("pub fn target{i}() {{}}\npub fn caller{i}() {{ target{i}(); }}\n"),
+        )
+        .unwrap();
+    }
+    let project = Project::init(Some(dir.path())).unwrap();
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let indexed = project.clone();
+    let indexer = thread::spawn(move || {
+        let _ = done_tx.send(index_project(&indexed).is_ok());
+    });
+
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    let synced = sync_project(&project);
+    eprintln!(
+        "[stage] sync issued during initial index returned after {:?}",
+        started.elapsed()
+    );
+    assert!(synced.is_ok(), "{synced:?}");
+    let indexed = done_rx
+        .recv_timeout(Duration::from_secs(120))
+        .expect("initial index hung");
+    indexer.join().unwrap();
+    assert!(indexed);
+}
+
+#[test]
+fn refresh_project_applies_changes_without_full_rebuild() {
+    use cam::code::{index_project, refresh_project};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/a.rs"), "pub fn target() {}\n").unwrap();
+    fs::write(
+        dir.path().join("src/b.rs"),
+        "pub fn caller() { target(); }\n",
+    )
+    .unwrap();
+    let project = Project::init(Some(dir.path())).unwrap();
+    index_project(&project).unwrap();
+
+    fs::write(
+        dir.path().join("src/a.rs"),
+        "pub fn target() {}\npub fn extra() {}\n",
+    )
+    .unwrap();
+    let report = refresh_project(&project).unwrap();
+    assert!(report.files >= 1, "{report:?}");
+
+    let a_ls = cam_json(dir.path(), &["ls", "src/a.rs"]);
+    let names = entry_names(&a_ls);
+    assert!(names.contains(&"extra"), "{names:?}");
+    let callers = cam_json(dir.path(), &["ref", "target", "--dir", "in"]);
+    assert!(
+        entry_names(&callers["refs"]).contains(&"caller"),
+        "{callers}"
+    );
+
+    // --force keeps the full-rebuild path available through the CLI.
+    let forced = cam_json(dir.path(), &["index", "--force"]);
+    assert!(forced["files"].as_u64().unwrap() >= 2, "{forced}");
+}
+
 fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
     fs::create_dir_all(dst).unwrap();
     for entry in fs::read_dir(src).unwrap() {

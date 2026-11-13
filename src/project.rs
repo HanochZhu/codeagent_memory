@@ -87,16 +87,20 @@ pub fn find_project_root(start: &Path) -> PathBuf {
     let home_canon = home.as_ref().and_then(|h| h.canonicalize().ok());
 
     // 1. Find nearest .git without escaping home or root boundary
-    if let Some(git_root) = walk_up_boundary(&start_abs, home.as_deref(), home_canon.as_deref(), |p| {
-        p.join(".git").exists()
-    }) {
+    if let Some(git_root) =
+        walk_up_boundary(&start_abs, home.as_deref(), home_canon.as_deref(), |p| {
+            p.join(".git").exists()
+        })
+    {
         return git_root;
     }
 
     // 2. Find nearest .cam (excluding global ~/.cam)
-    if let Some(cam_root) = walk_up_boundary(&start_abs, home.as_deref(), home_canon.as_deref(), |p| {
-        p.join(CAM_DIR).exists()
-    }) {
+    if let Some(cam_root) =
+        walk_up_boundary(&start_abs, home.as_deref(), home_canon.as_deref(), |p| {
+            p.join(CAM_DIR).exists()
+        })
+    {
         return cam_root;
     }
 

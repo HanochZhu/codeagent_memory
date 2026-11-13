@@ -16,7 +16,7 @@ Wire MCP first: [docs/mcp.md](mcp.md) (中文: [docs/mcp.zh.md](mcp.zh.md)).
 Same order for both entry points:
 
 1. **Recall first.** By default recall expands a matched revision to its latest replacement and hides the superseded revision. Reuse a hit that is `latest` and not `needs_update`; set `include_superseded` / `--include-superseded` only for history or comparison.
-2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` / `cam index` once for that project. `cam_index` rebuilds the whole graph; use `cam sync` for later edits.
+2. **Make sure the graph is indexed** before reading code. If `ls` / `read` / `ref` report the graph is not indexed, run `cam_index` / `cam index` once for that project. The first call indexes every file; later calls apply only changes (`force` / `--force` rebuilds everything).
 3. **On miss / stale / needs_update**, walk the code graph: `ls` → `read` (symbol path) → `ref`.
 4. **After you solve it**, store one memory per fact or per problem solution path (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them separately. Several memories from the same solution go in one `cam_add` as `memories`, using `#0`, `#1`, ... in `links` (recall does not traverse graph links yet). On the CLI, `cam add` stores one memory per invocation and `--link` connects it. Use `parent` only for structural hierarchy; use `supersedes` when the new memory replaces an older revision.
 
@@ -109,6 +109,8 @@ Translate the question to English and recall first. Before reading code, run `ca
 | `cam_mem_show` | `cam mem show <id>` |
 
 CLI-only (no MCP tool): `cam sync`, `cam watch`, `cam status`, `cam config get|set stale_days N|set embedding_model <model>`.
+
+`cam mcp` starts an incremental watcher for its project. The watcher holds `.cam/incremental.lock`. A nested checkout that already has its own MCP is left alone; otherwise the parent watcher writes that checkout's `.cam/cam.db`. `cam watch` takes the same lock and waits while another watcher holds it. `cam index` / `cam sync` take the lock too and exit with an error when a watcher already owns it (stop that watcher or use its `cam_index` tool). An incremental sync re-parses only changed files and rebuilds edges for those files plus files that reference a touched definition.
 
 With `--json`, failures print `{"error":{"code":…,"message":…}}` to stdout and exit non-zero. `--pretty` adds indentation.
 

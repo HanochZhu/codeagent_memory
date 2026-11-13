@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use cam::code::{
     clamp_debounce_ms, find, graph_counts, index_project, index_project_with_progress, ls, read,
-    refs, sync_project, watch_project, Ambiguous, ReadOutcome, RefDir, RefOutcome, SymbolHints,
-    DEFAULT_DEBOUNCE_MS,
+    refresh_project, refresh_project_with_progress, refs, sync_project, watch_project, Ambiguous,
+    IncrementalLock, ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
 };
 
 use cam::memory::{
@@ -44,8 +44,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Parse the project with tree-sitter into SQLite
-    Index,
+    /// Update the graph. Incremental unless --force is given.
+    Index {
+        /// Rebuild every file even when the graph already exists
+        #[arg(long)]
+        force: bool,
+    },
     /// Incrementally update the graph for files that changed
     Sync,
     /// Watch the project and update the graph when files change
@@ -252,14 +256,21 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         Command::Mcp => {
             cam::mcp::serve_stdio(project_arg)?;
         }
-        Command::Index => {
+        Command::Index { force } => {
             let project = resolve_project(project_arg)?;
+            let _lock = acquire_incremental_writer(&project)?;
             let show_progress = !json && io::stderr().is_terminal();
             let mut progress = show_progress.then(cli_progress::ShimmerProgress::start);
-            let report = if let Some(bar) = progress.as_mut() {
-                index_project_with_progress(&project, &mut |event| bar.on_progress(event))?
-            } else {
-                index_project(&project)?
+            let bar = progress.as_mut();
+            let report = match (force, bar) {
+                (true, Some(bar)) => {
+                    index_project_with_progress(&project, &mut |event| bar.on_progress(event))?
+                }
+                (false, Some(bar)) => {
+                    refresh_project_with_progress(&project, &mut |event| bar.on_progress(event))?
+                }
+                (true, None) => index_project(&project)?,
+                (false, None) => refresh_project(&project)?,
             };
             if let Some(bar) = progress.take() {
                 bar.finish();
@@ -278,6 +289,7 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
         }
         Command::Sync => {
             let project = resolve_project(project_arg)?;
+            let _lock = acquire_incremental_writer(&project)?;
             let report = sync_project(&project)?;
             if json {
                 emit_json(&report, pretty)?;
@@ -662,6 +674,19 @@ fn read_body(file: Option<&PathBuf>, body: Option<String>) -> Result<String> {
 
 fn trim_body(body: &str, max: usize) -> String {
     cam::memory::clip_body(body, max).unwrap_or_else(|| body.to_string())
+}
+
+/// Explicit index/sync must be the only writer for this checkout. If a watcher
+/// owns `.cam/incremental.lock`, it is already keeping the graph fresh.
+fn acquire_incremental_writer(project: &Project) -> Result<IncrementalLock> {
+    match IncrementalLock::try_acquire(project)? {
+        Some(lock) => Ok(lock),
+        None => bail!(
+            "another cam process is watching {} (holds .cam/incremental.lock); \
+             stop it or run the index from that process",
+            project.root.display()
+        ),
+    }
 }
 
 fn format_sync(report: &cam::code::SyncReport) -> String {

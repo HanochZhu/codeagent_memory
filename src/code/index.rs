@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -11,7 +12,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::lang::{parse_source, Def, ImplBlock, Lang, Parsed, Rel, RelKind};
+use super::lang::{parse_source, Def, Lang, Parsed, RelKind};
 use crate::db;
 use crate::project::Project;
 
@@ -30,6 +31,11 @@ const MAX_CRATE_TIES: usize = 4;
 pub const CAM_IGNORE_FILE: &str = ".camignore";
 pub(crate) const SKIP_DIR_NAMES: &[&str] =
     &["target", "node_modules", ".cam", ".git", "vendor", "dist"];
+
+/// Bumped when the stored raw relation rows change shape. A database created
+/// before `node_refs` existed re-parses every file once so later incremental
+/// edge rebuilds have the rows they need.
+const GRAPH_REFS_VERSION: &str = "1";
 
 #[derive(Debug, Serialize)]
 pub struct IndexReport {
@@ -65,6 +71,8 @@ pub struct SyncReport {
     pub files_added: usize,
     pub files_modified: usize,
     pub files_removed: usize,
+    /// Files tree-sitter parsed in this sync. Unchanged files are not parsed.
+    pub files_parsed: usize,
     pub nodes: usize,
     pub edges: usize,
     pub skipped: usize,
@@ -75,6 +83,22 @@ struct SourceFile {
     abs: PathBuf,
     rel: String,
     lang: Lang,
+    size: i64,
+    modified_at: i64,
+    modified_ns: Option<i64>,
+}
+
+/// A file that will be (re)parsed. `hash` is already known when the caller had
+/// to hash it to classify the change, so parsing does not hash twice.
+struct PendingFile {
+    src: SourceFile,
+    hash: Option<String>,
+}
+
+struct FileStat {
+    hash: String,
+    size: i64,
+    modified_ns: Option<i64>,
 }
 
 /// A git checkout below the project being indexed. Its symbols live in that
@@ -105,9 +129,49 @@ pub fn index_project_with_progress(
     project: &Project,
     on_progress: &mut dyn FnMut(IndexProgress),
 ) -> Result<IndexReport> {
+    with_graph_write(|| index_project_locked(project, on_progress))
+}
+
+/// Build the graph only when it is empty; otherwise apply the incremental
+/// diff. This is what `cam index` and the MCP `cam_index` tool use by default,
+/// so a reindex after editing a few files does not re-parse the whole project.
+pub fn refresh_project(project: &Project) -> Result<IndexReport> {
+    refresh_project_with_progress(project, &mut |_| {})
+}
+
+pub fn refresh_project_with_progress(
+    project: &Project,
+    on_progress: &mut dyn FnMut(IndexProgress),
+) -> Result<IndexReport> {
+    with_graph_write(|| {
+        project.ensure_initialized()?;
+        let conn = db::open_db(&project.db_path())?;
+        let indexed = db::table_count(&conn, "files")? > 0;
+        drop(conn);
+        if indexed {
+            let report = sync_tree(project)?;
+            Ok(IndexReport {
+                files: report.files_checked,
+                nodes: report.nodes,
+                edges: report.edges,
+                skipped: report.skipped,
+            })
+        } else {
+            index_project_locked(project, on_progress)
+        }
+    })
+}
+
+fn index_project_locked(
+    project: &Project,
+    on_progress: &mut dyn FnMut(IndexProgress),
+) -> Result<IndexReport> {
     project.ensure_initialized()?;
     let conn = db::open_db(&project.db_path())?;
-    conn.execute_batch("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;")?;
+    conn.execute_batch(
+        "DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;
+         DELETE FROM node_refs; DELETE FROM node_impls;",
+    )?;
     drop(conn);
     let own = sync_own(project, on_progress)?;
     let mut report = IndexReport {
@@ -120,8 +184,12 @@ pub fn index_project_with_progress(
         let child = Project {
             root: project.root.join(rel),
         };
-        let child_report = index_project_with_progress(&child, on_progress)
-            .with_context(|| format!("index nested project {}", child.root.display()))?;
+        let Some(child_report) =
+            update_if_unlocked(&child, |child| index_project_locked(child, on_progress))
+                .with_context(|| format!("index nested project {}", child.root.display()))?
+        else {
+            continue;
+        };
         report.files += child_report.files;
         report.nodes += child_report.nodes;
         report.edges += child_report.edges;
@@ -131,10 +199,37 @@ pub fn index_project_with_progress(
 }
 
 pub fn sync_project(project: &Project) -> Result<SyncReport> {
-    let started = Instant::now();
-    let mut report = sync_tree(project)?;
-    report.duration_ms = started.elapsed().as_millis() as u64;
-    Ok(report)
+    with_graph_write(|| {
+        let started = Instant::now();
+        let mut report = sync_tree(project)?;
+        report.duration_ms = started.elapsed().as_millis() as u64;
+        Ok(report)
+    })
+}
+
+/// One writer at a time inside this process. The MCP thread may index while
+/// the watcher thread syncs the same database.
+fn with_graph_write<T>(body: impl FnOnce() -> Result<T>) -> Result<T> {
+    thread_local! {
+        static DEPTH: Cell<u32> = const { Cell::new(0) };
+    }
+    static GATE: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    DEPTH.with(|depth| {
+        if depth.get() > 0 {
+            return body();
+        }
+        let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        depth.set(1);
+        struct Reset<'a>(&'a Cell<u32>);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.0.set(0);
+            }
+        }
+        let _reset = Reset(depth);
+        body()
+    })
 }
 
 fn sync_tree(project: &Project) -> Result<SyncReport> {
@@ -143,11 +238,26 @@ fn sync_tree(project: &Project) -> Result<SyncReport> {
         let child = Project {
             root: project.root.join(&rel),
         };
-        let child_report = sync_tree(&child)
-            .with_context(|| format!("sync nested project {}", child.root.display()))?;
+        let Some(child_report) = update_if_unlocked(&child, sync_tree)
+            .with_context(|| format!("sync nested project {}", child.root.display()))?
+        else {
+            continue;
+        };
         merge_sync(&mut own.report, child_report);
     }
     Ok(own.report)
+}
+
+/// Update a nested checkout only when its incremental lock is free.
+///
+/// A child MCP holds `.cam/incremental.lock` for as long as it is watching,
+/// and the parent leaves that checkout's database untouched. With no holder,
+/// the parent writes the child's `.cam/cam.db` and releases the lock.
+fn update_if_unlocked<T>(
+    child: &Project,
+    update: impl FnOnce(&Project) -> Result<T>,
+) -> Result<Option<T>> {
+    super::lock::with_incremental_lock(child, update)
 }
 
 fn merge_sync(parent: &mut SyncReport, child: SyncReport) {
@@ -155,6 +265,7 @@ fn merge_sync(parent: &mut SyncReport, child: SyncReport) {
     parent.files_added += child.files_added;
     parent.files_modified += child.files_modified;
     parent.files_removed += child.files_removed;
+    parent.files_parsed += child.files_parsed;
     parent.nodes += child.nodes;
     parent.edges += child.edges;
     parent.skipped += child.skipped;
@@ -168,25 +279,39 @@ fn sync_own(project: &Project, progress: &mut dyn FnMut(IndexProgress)) -> Resul
     let (sources, children, mut skipped) = scan_source_files(project, progress)?;
     let child_rels: Vec<String> = children.into_iter().map(|child| child.rel).collect();
     write_code_projects(&conn, &child_rels)?;
-    let existing = load_file_hashes(&conn)?;
+    let existing = load_file_stats(&conn)?;
+    let force_relations = graph_refs_version(&conn)?.as_deref() != Some(GRAPH_REFS_VERSION);
     let mut current = HashSet::new();
     let mut added = Vec::new();
     let mut modified = Vec::new();
+    let mut touched = Vec::new();
     let mut unchanged = Vec::new();
 
     for src in sources {
         current.insert(src.rel.clone());
-        let hash = match hash_file(&src.abs) {
-            Ok(h) => h,
+        let Some(old) = existing.get(&src.rel) else {
+            // New file: no hash needed before parsing, so read it once.
+            added.push(PendingFile { src, hash: None });
+            continue;
+        };
+        let same_stat =
+            src.modified_ns.is_some() && old.size == src.size && old.modified_ns == src.modified_ns;
+        if same_stat {
+            unchanged.push(src);
+            continue;
+        }
+        match hash_file(&src.abs) {
+            Ok(hash) if hash == old.hash => touched.push(PendingFile {
+                src,
+                hash: Some(hash),
+            }),
+            Ok(hash) => modified.push(PendingFile {
+                src,
+                hash: Some(hash),
+            }),
             Err(_) => {
                 skipped += 1;
-                continue;
             }
-        };
-        match existing.get(&src.rel) {
-            None => added.push(src),
-            Some(old) if old != &hash => modified.push(src),
-            Some(_) => unchanged.push(src),
         }
     }
 
@@ -196,8 +321,20 @@ fn sync_own(project: &Project, progress: &mut dyn FnMut(IndexProgress)) -> Resul
         .cloned()
         .collect();
 
-    let files_checked = added.len() + modified.len() + unchanged.len();
+    // A database indexed before raw relation rows existed cannot rebuild
+    // dependents incrementally; re-parse every source once so they are stored.
+    if force_relations {
+        modified.extend(
+            unchanged
+                .drain(..)
+                .map(|src| PendingFile { src, hash: None }),
+        );
+        modified.append(&mut touched);
+    }
+
+    let files_checked = added.len() + modified.len() + touched.len() + unchanged.len();
     if added.is_empty() && modified.is_empty() && removed.is_empty() {
+        update_touched(&conn, &touched)?;
         return Ok(OwnSync {
             report: unchanged_sync_report(&conn, files_checked, skipped, started)?,
             children: child_rels,
@@ -212,16 +349,16 @@ fn sync_own(project: &Project, progress: &mut dyn FnMut(IndexProgress)) -> Resul
         report(progress, IndexPhase::Parsing, 0, parse_total);
     }
     let mut parsed = 0usize;
-    for src in &added {
-        if let Some(file) = extract_or_skip(project, src, &mut skipped) {
+    for pending in &added {
+        if let Some(file) = extract_or_skip(project, pending, &mut skipped) {
             added_ok += 1;
             extracted.push(file);
         }
         parsed += 1;
         report(progress, IndexPhase::Parsing, parsed, parse_total);
     }
-    for src in &modified {
-        if let Some(file) = extract_or_skip(project, src, &mut skipped) {
+    for pending in &modified {
+        if let Some(file) = extract_or_skip(project, pending, &mut skipped) {
             modified_ok += 1;
             extracted.push(file);
         }
@@ -230,48 +367,73 @@ fn sync_own(project: &Project, progress: &mut dyn FnMut(IndexProgress)) -> Resul
     }
     let changed_len = extracted.len();
     if changed_len == 0 && removed.is_empty() {
+        update_touched(&conn, &touched)?;
         return Ok(OwnSync {
             report: unchanged_sync_report(&conn, files_checked, skipped, started)?,
             children: child_rels,
         });
     }
-    for src in &unchanged {
-        if let Some(file) = extract_or_skip(project, src, &mut skipped) {
-            extracted.push(file);
-        }
+
+    let changed_paths: HashSet<String> = extracted
+        .iter()
+        .map(|file| file.rel.clone())
+        .chain(removed.iter().cloned())
+        .collect();
+    // When every file is being re-parsed, the affected set is already complete.
+    let affected = affected_files(
+        &conn,
+        &changed_paths,
+        &extracted,
+        !force_relations && !existing.is_empty(),
+    )?;
+
+    if changed_len > 0 {
+        report(progress, IndexPhase::Storing, 0, changed_len);
     }
 
     {
         let tx = conn.unchecked_transaction()?;
         for path in &removed {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [path])?;
+            tx.execute("DELETE FROM node_refs WHERE file_path = ?1", [path])?;
+            tx.execute("DELETE FROM node_impls WHERE file_path = ?1", [path])?;
             tx.execute("DELETE FROM files WHERE path = ?1", [path])?;
         }
-        if changed_len > 0 {
-            report(progress, IndexPhase::Storing, 0, changed_len);
+        for pending in &touched {
+            tx.execute(
+                "UPDATE files SET size = ?1, modified_at = ?2, modified_ns = ?3 WHERE path = ?4",
+                rusqlite::params![
+                    pending.src.size,
+                    pending.src.modified_at,
+                    pending.src.modified_ns,
+                    &pending.src.rel
+                ],
+            )?;
         }
-        for (i, file) in extracted[..changed_len].iter().enumerate() {
+        for (i, file) in extracted.iter().enumerate() {
             tx.execute("DELETE FROM nodes WHERE file_path = ?1", [&file.rel])?;
-            insert_file_and_defs(&tx, &project.root, file)?;
+            tx.execute("DELETE FROM node_refs WHERE file_path = ?1", [&file.rel])?;
+            tx.execute("DELETE FROM node_impls WHERE file_path = ?1", [&file.rel])?;
+            insert_file_and_defs(&tx, file)?;
+            insert_relation_rows(&tx, file)?;
+            insert_impl_rows(&tx, file)?;
             report(progress, IndexPhase::Storing, i + 1, changed_len);
         }
-        tx.execute("DELETE FROM edges", [])?;
-        tx.commit()?;
-    }
 
-    let resolve_total = extracted.len();
-    if resolve_total > 0 {
-        report(progress, IndexPhase::Resolving, 0, resolve_total);
-    }
-    let name_index = load_name_index(&conn)?;
-    {
-        let tx = conn.unchecked_transaction()?;
-        for (i, file) in extracted.iter().enumerate() {
-            let Parsed { defs, rels, impls } = &file.parsed;
-            insert_rels(&tx, &file.rel, defs, rels, &name_index)?;
-            insert_impls(&tx, &file.rel, defs, impls, &name_index)?;
+        let resolve_total = affected.len();
+        if resolve_total > 0 {
+            report(progress, IndexPhase::Resolving, 0, resolve_total);
+        }
+        let name_index = load_name_index(&tx)?;
+        for (i, path) in affected.iter().enumerate() {
+            delete_file_edges(&tx, path)?;
+            rebuild_file_edges(&tx, path, &name_index)?;
             report(progress, IndexPhase::Resolving, i + 1, resolve_total);
         }
+        tx.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('graph_refs_version', ?1)",
+            [GRAPH_REFS_VERSION],
+        )?;
         tx.commit()?;
     }
 
@@ -281,6 +443,7 @@ fn sync_own(project: &Project, progress: &mut dyn FnMut(IndexProgress)) -> Resul
             files_added: added_ok,
             files_modified: modified_ok,
             files_removed: removed.len(),
+            files_parsed: parse_total,
             nodes: db::table_count(&conn, "nodes")? as usize,
             edges: db::table_count(&conn, "edges")? as usize,
             skipped,
@@ -368,10 +531,16 @@ fn scan_source_files(
             continue;
         };
         let rel = rel_path(&project.root, path)?;
+        let meta = fs::metadata(path).ok();
+        let size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(0);
+        let (modified_at, modified_ns) = modified_parts(meta.as_ref());
         sources.push(SourceFile {
             abs: path.to_path_buf(),
             rel,
             lang,
+            size,
+            modified_at,
+            modified_ns,
         });
         found += 1;
         report(progress, IndexPhase::Scanning, found, 0);
@@ -403,20 +572,62 @@ pub(crate) fn project_has_source_files(project: &Project) -> Result<bool> {
     Ok(false)
 }
 
-fn load_file_hashes(conn: &rusqlite::Connection) -> Result<HashMap<String, String>> {
-    let mut stmt = conn.prepare("SELECT path, hash FROM files")?;
-    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+fn load_file_stats(conn: &rusqlite::Connection) -> Result<HashMap<String, FileStat>> {
+    let mut stmt = conn.prepare("SELECT path, hash, size, modified_ns FROM files")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            FileStat {
+                hash: row.get(1)?,
+                size: row.get(2)?,
+                modified_ns: row.get(3)?,
+            },
+        ))
+    })?;
     let mut map = HashMap::new();
     for row in rows {
-        let (path, hash) = row?;
-        map.insert(path, hash);
+        let (path, stat) = row?;
+        map.insert(path, stat);
     }
     Ok(map)
+}
+
+fn update_touched(conn: &rusqlite::Connection, touched: &[PendingFile]) -> Result<()> {
+    if touched.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    for pending in touched {
+        tx.execute(
+            "UPDATE files SET size = ?1, modified_at = ?2, modified_ns = ?3 WHERE path = ?4",
+            rusqlite::params![
+                pending.src.size,
+                pending.src.modified_at,
+                pending.src.modified_ns,
+                &pending.src.rel
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn hash_file(path: &Path) -> Result<String> {
     let bytes = fs::read(path)?;
     Ok(hex::encode(Sha256::digest(&bytes)))
+}
+
+/// Seconds and nanoseconds since the Unix epoch, from a file's mtime.
+fn modified_parts(meta: Option<&fs::Metadata>) -> (i64, Option<i64>) {
+    meta.and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|dur| {
+            (
+                dur.as_secs() as i64,
+                Some(dur.as_nanos().min(i64::MAX as u128) as i64),
+            )
+        })
+        .unwrap_or((0, None))
 }
 
 pub(crate) fn skip_dir_name(name: &str) -> bool {
@@ -471,21 +682,55 @@ struct ExtractedFile {
     rel: String,
     lang: Lang,
     parsed: Parsed,
+    hash: String,
+    size: i64,
+    modified_at: i64,
+    modified_ns: Option<i64>,
 }
 
-fn extract_file(project: &Project, path: &Path, lang: Lang) -> Result<ExtractedFile> {
-    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let rel = rel_path(&project.root, path)?;
-    let parsed = parse_source(lang, &source)?;
-    Ok(ExtractedFile { rel, lang, parsed })
+struct StoredRef {
+    source_id: String,
+    target_name: String,
+    edge_kind: String,
+    line: i64,
+    qualifier: Option<String>,
+    prefer: String,
+}
+
+struct StoredImpl {
+    type_name: String,
+    trait_name: Option<String>,
+    line: i64,
+    method_id: Option<String>,
+    method_line: Option<i64>,
+}
+
+fn extract_file(project: &Project, pending: &PendingFile) -> Result<ExtractedFile> {
+    let src = &pending.src;
+    let source =
+        fs::read_to_string(&src.abs).with_context(|| format!("read {}", src.abs.display()))?;
+    let parsed = parse_source(src.lang, &source)?;
+    let hash = match &pending.hash {
+        Some(hash) => hash.clone(),
+        None => hex::encode(Sha256::digest(source.as_bytes())),
+    };
+    Ok(ExtractedFile {
+        rel: rel_path(&project.root, &src.abs)?,
+        lang: src.lang,
+        parsed,
+        hash,
+        size: src.size,
+        modified_at: src.modified_at,
+        modified_ns: src.modified_ns,
+    })
 }
 
 fn extract_or_skip(
     project: &Project,
-    src: &SourceFile,
+    pending: &PendingFile,
     skipped: &mut usize,
 ) -> Option<ExtractedFile> {
-    match extract_file(project, &src.abs, src.lang) {
+    match extract_file(project, pending) {
         Ok(extracted) => Some(extracted),
         Err(_) => {
             *skipped += 1;
@@ -505,6 +750,7 @@ fn unchanged_sync_report(
         files_added: 0,
         files_modified: 0,
         files_removed: 0,
+        files_parsed: 0,
         nodes: db::table_count(conn, "nodes")? as usize,
         edges: db::table_count(conn, "edges")? as usize,
         skipped,
@@ -512,27 +758,26 @@ fn unchanged_sync_report(
     })
 }
 
-fn insert_file_and_defs(conn: &Connection, root: &Path, file: &ExtractedFile) -> Result<()> {
+fn insert_file_and_defs(conn: &Connection, file: &ExtractedFile) -> Result<()> {
     let rel = file.rel.as_str();
     let lang = file.lang;
     let defs = &file.parsed.defs;
-    let abs = root.join(rel);
-    let meta = fs::metadata(&abs).ok();
-    let bytes = fs::read(&abs).unwrap_or_default();
-    let hash = hex::encode(Sha256::digest(&bytes));
     let now = chrono::Utc::now().timestamp();
+    let modified_at = if file.modified_at > 0 {
+        file.modified_at
+    } else {
+        now
+    };
     conn.execute(
-        "INSERT OR REPLACE INTO files(path, hash, language, size, modified_at, indexed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR REPLACE INTO files(path, hash, language, size, modified_at, modified_ns, indexed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             rel,
-            hash,
+            &file.hash,
             lang.name(),
-            meta.as_ref().map(|m| m.len() as i64).unwrap_or(0),
-            meta.and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(now),
+            file.size,
+            modified_at,
+            file.modified_ns,
             now
         ],
     )?;
@@ -567,92 +812,281 @@ fn insert_file_and_defs(conn: &Connection, root: &Path, file: &ExtractedFile) ->
     Ok(())
 }
 
-fn insert_rels(
-    conn: &Connection,
-    rel: &str,
-    defs: &[Def],
-    rels: &[Rel],
-    index: &HashMap<String, Vec<Candidate>>,
-) -> Result<()> {
+/// Persist the unresolved call/reference sites of a file so its outgoing edges
+/// can be rebuilt later without reading the source again.
+fn insert_relation_rows(conn: &Connection, file: &ExtractedFile) -> Result<()> {
+    let Parsed { defs, rels, .. } = &file.parsed;
     for site in rels {
         let Some(source_def) = innermost_def(defs, site.byte) else {
             continue;
         };
-        let source_id = symbol_id(rel, source_def);
-        let (prefer, edge_kind) = match site.kind {
-            RelKind::Calls => (CALL_KINDS, "calls"),
-            RelKind::References => (TYPE_KINDS, "references"),
+        let source_id = symbol_id(&file.rel, source_def);
+        let (edge_kind, prefer) = match site.kind {
+            RelKind::Calls => ("calls", "call"),
+            RelKind::References => ("references", "type"),
         };
-        for target_id in resolve_targets(index, rel, &site.name, prefer, site.qualifier.as_deref())
-        {
-            if source_id == target_id {
+        conn.execute(
+            "INSERT INTO node_refs(file_path, source_id, target_name, edge_kind, line, qualifier, prefer)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                &file.rel,
+                source_id,
+                &site.name,
+                edge_kind,
+                site.line,
+                site.qualifier.as_deref(),
+                prefer
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// Persist impl blocks as a header row plus one row per method. Edges are
+/// rebuilt from the stored names, so editing a type in another file updates
+/// these without a re-parse.
+fn insert_impl_rows(conn: &Connection, file: &ExtractedFile) -> Result<()> {
+    let Parsed { defs, impls, .. } = &file.parsed;
+    for block in impls {
+        conn.execute(
+            "INSERT INTO node_impls(file_path, type_name, trait_name, line, method_id, method_line)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)",
+            rusqlite::params![
+                &file.rel,
+                &block.type_name,
+                block.trait_name.as_deref(),
+                block.line
+            ],
+        )?;
+        for def in defs {
+            if def.kind != "method" {
                 continue;
             }
+            if def.start_byte < block.start_byte || def.start_byte > block.end_byte {
+                continue;
+            }
+            let method_id = symbol_id(&file.rel, def);
             conn.execute(
-                "INSERT OR IGNORE INTO edges(source, target, kind, line) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![source_id, target_id, edge_kind, site.line],
+                "INSERT INTO node_impls(file_path, type_name, trait_name, line, method_id, method_line)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    &file.rel,
+                    &block.type_name,
+                    block.trait_name.as_deref(),
+                    block.line,
+                    method_id,
+                    def.start_line
+                ],
             )?;
         }
     }
     Ok(())
 }
 
-fn insert_impls(
+/// Files whose outgoing edges must be rebuilt: the changed files themselves
+/// plus unchanged files that reference a definition name touched by the
+/// change. The latter fixes incoming edges when a target moved lines or was
+/// renamed, without re-parsing those files.
+fn affected_files(
     conn: &Connection,
-    rel: &str,
-    defs: &[Def],
-    impls: &[ImplBlock],
+    changed_paths: &HashSet<String>,
+    extracted: &[ExtractedFile],
+    expand_dependents: bool,
+) -> Result<Vec<String>> {
+    let mut affected: BTreeSet<String> = changed_paths.iter().cloned().collect();
+    if !expand_dependents {
+        return Ok(affected.into_iter().collect());
+    }
+
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for path in changed_paths {
+        let mut stmt =
+            conn.prepare("SELECT name FROM nodes WHERE kind != 'file' AND file_path = ?1")?;
+        let rows = stmt.query_map([path], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            names.insert(row?);
+        }
+    }
+    for file in extracted {
+        for def in &file.parsed.defs {
+            names.insert(def.name.clone());
+        }
+    }
+    if names.is_empty() {
+        return Ok(affected.into_iter().collect());
+    }
+
+    // Avoid SQLite's bound-parameter limit for a large change set. The inserts
+    // share one transaction instead of committing once per name.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS sync_names(name TEXT PRIMARY KEY)",
+        [],
+    )?;
+    tx.execute("DELETE FROM sync_names", [])?;
+    {
+        let mut insert = tx.prepare("INSERT OR IGNORE INTO sync_names(name) VALUES (?1)")?;
+        for name in &names {
+            insert.execute([name])?;
+        }
+    }
+    {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT file_path FROM node_refs
+                 JOIN sync_names ON node_refs.target_name = sync_names.name
+             UNION
+             SELECT DISTINCT file_path FROM node_refs
+                 JOIN sync_names ON node_refs.qualifier = sync_names.name
+             UNION
+             SELECT DISTINCT file_path FROM node_impls
+                 JOIN sync_names ON node_impls.type_name = sync_names.name
+             UNION
+             SELECT DISTINCT file_path FROM node_impls
+                 JOIN sync_names ON node_impls.trait_name = sync_names.name",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            affected.insert(row?);
+        }
+    }
+    tx.commit()?;
+    Ok(affected.into_iter().collect())
+}
+
+fn delete_file_edges(conn: &Connection, path: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM edges WHERE source IN (SELECT id FROM nodes WHERE file_path = ?1)",
+        [path],
+    )?;
+    Ok(())
+}
+
+fn rebuild_file_edges(
+    conn: &Connection,
+    path: &str,
     index: &HashMap<String, Vec<Candidate>>,
 ) -> Result<()> {
+    let file_id = file_node_id(path);
+    let defs: Vec<(String, i64)> = {
+        let mut stmt = conn
+            .prepare("SELECT id, start_line FROM nodes WHERE file_path = ?1 AND kind != 'file'")?;
+        let rows = stmt.query_map([path], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (id, line) in &defs {
+        insert_edge(conn, &file_id, id, "contains", *line)?;
+    }
+
+    let refs: Vec<StoredRef> = {
+        let mut stmt = conn.prepare(
+            "SELECT source_id, target_name, edge_kind, line, qualifier, prefer
+             FROM node_refs WHERE file_path = ?1",
+        )?;
+        let rows = stmt.query_map([path], |row| {
+            Ok(StoredRef {
+                source_id: row.get(0)?,
+                target_name: row.get(1)?,
+                edge_kind: row.get(2)?,
+                line: row.get(3)?,
+                qualifier: row.get(4)?,
+                prefer: row.get(5)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for reference in refs {
+        let prefer_kinds = if reference.prefer == "call" {
+            CALL_KINDS
+        } else {
+            TYPE_KINDS
+        };
+        for target_id in resolve_targets(
+            index,
+            path,
+            &reference.target_name,
+            prefer_kinds,
+            reference.qualifier.as_deref(),
+        ) {
+            if reference.source_id == target_id {
+                continue;
+            }
+            insert_edge(
+                conn,
+                &reference.source_id,
+                &target_id,
+                &reference.edge_kind,
+                reference.line,
+            )?;
+        }
+    }
+
+    let impls: Vec<StoredImpl> = {
+        let mut stmt = conn.prepare(
+            "SELECT type_name, trait_name, line, method_id, method_line
+             FROM node_impls WHERE file_path = ?1",
+        )?;
+        let rows = stmt.query_map([path], |row| {
+            Ok(StoredImpl {
+                type_name: row.get(0)?,
+                trait_name: row.get(1)?,
+                line: row.get(2)?,
+                method_id: row.get(3)?,
+                method_line: row.get(4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
     for block in impls {
-        let types = resolve_targets(index, rel, &block.type_name, TYPE_KINDS, None);
+        let types = resolve_targets(index, path, &block.type_name, TYPE_KINDS, None);
         let traits = block
             .trait_name
             .as_deref()
-            .map(|name| resolve_targets(index, rel, name, TRAIT_KINDS, None))
+            .map(|name| resolve_targets(index, path, name, TRAIT_KINDS, None))
             .unwrap_or_default();
-        for type_id in &types {
-            for trait_id in &traits {
-                if type_id == trait_id {
-                    continue;
-                }
-                conn.execute(
-                    "INSERT OR IGNORE INTO edges(source, target, kind, line) VALUES (?1, ?2, 'implements', ?3)",
-                    rusqlite::params![type_id, trait_id, block.line],
-                )?;
-            }
-            for def in defs {
-                if def.kind != "method" {
-                    continue;
-                }
-                if def.start_byte < block.start_byte || def.start_byte > block.end_byte {
-                    continue;
-                }
-                let method_id = symbol_id(rel, def);
-                if method_id == *type_id {
-                    continue;
-                }
-                conn.execute(
-                    "INSERT OR IGNORE INTO edges(source, target, kind, line) VALUES (?1, ?2, 'contains', ?3)",
-                    rusqlite::params![type_id, method_id, def.start_line],
-                )?;
-                conn.execute(
-                    "INSERT OR IGNORE INTO edges(source, target, kind, line) VALUES (?1, ?2, 'references', ?3)",
-                    rusqlite::params![method_id, type_id, def.start_line],
-                )?;
+        let Some(method_id) = block.method_id else {
+            for type_id in &types {
                 for trait_id in &traits {
-                    if method_id == *trait_id {
+                    if type_id == trait_id {
                         continue;
                     }
-                    conn.execute(
-                        "INSERT OR IGNORE INTO edges(source, target, kind, line) VALUES (?1, ?2, 'references', ?3)",
-                        rusqlite::params![method_id, trait_id, def.start_line],
-                    )?;
+                    insert_edge(conn, type_id, trait_id, "implements", block.line)?;
+                }
+            }
+            continue;
+        };
+        let method_line = block.method_line.unwrap_or(block.line);
+        for type_id in &types {
+            if method_id != *type_id {
+                insert_edge(conn, type_id, &method_id, "contains", method_line)?;
+            }
+            insert_edge(conn, &method_id, type_id, "references", method_line)?;
+            for trait_id in &traits {
+                if method_id != *trait_id {
+                    insert_edge(conn, &method_id, trait_id, "references", method_line)?;
                 }
             }
         }
     }
     Ok(())
+}
+
+fn insert_edge(conn: &Connection, source: &str, target: &str, kind: &str, line: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO edges(source, target, kind, line) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![source, target, kind, line],
+    )?;
+    Ok(())
+}
+
+fn graph_refs_version(conn: &Connection) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = 'graph_refs_version'",
+        [],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 fn innermost_def(defs: &[Def], byte: usize) -> Option<&Def> {

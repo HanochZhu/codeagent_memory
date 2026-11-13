@@ -23,6 +23,8 @@ cam config set embedding_model <model>
 cam mcp
 ```
 
+`cam mcp` incrementally watches its project and holds `.cam/incremental.lock`. A nested checkout with its own MCP is skipped; otherwise the parent writes that checkout's `.cam/cam.db`. `cam watch` waits when that lock is already held.
+
 `cam find` matches symbol names only. It does not search text inside function bodies.
 
 `in` lists callers. `out` lists callees. A bare name that matches several definitions returns `status: ambiguous` and `candidates`. Pass a candidate `id` back as the symbol or virtual path.

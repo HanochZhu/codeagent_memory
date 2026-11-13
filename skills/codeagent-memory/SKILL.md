@@ -19,7 +19,7 @@ If that fails, stop and ask the user to install it. Do not install packages, cha
    - Reuse a hit only when it is `latest` and not `needs_update`.
    - Hits carry full bodies. Only with `snippets` / `--snippets` do long lower-ranked bodies come back clipped with `body_truncated`; read one with `cam mem show <id>` before using the details.
    - On `stale`, `needs_update`, or no hit, continue.
-2. Index once if `ls`, `find`, `read`, or `ref` says the graph is not indexed: `cam index`. Later file edits use `cam sync`, not another full index.
+2. Index once if `ls`, `find`, `read`, or `ref` says the graph is not indexed: `cam index`. The first call indexes every file; later calls apply only changes (`--force` rebuilds everything). The MCP process then watches the project. A nested checkout with its own MCP is skipped; otherwise the parent writes that checkout's `.cam/cam.db`. Do not re-run full indexing for ordinary edits.
 3. Walk the graph: `cam find <part of a name>` or `cam ls <dir>`, then `cam read <file>/<symbol>`, then `cam ref <symbol> --dir in|out`.
    - `src/main.rs` is a file. `src/main.rs/main` is a symbol in that file.
    - On `status: ambiguous`, retry with a candidate `id`, or narrow with `--file`, `--kind`, or `--scope`.

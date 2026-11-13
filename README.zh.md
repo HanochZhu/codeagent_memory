@@ -141,7 +141,7 @@ cam recall "how does hybrid recall fuse BM25 and vectors"
 cam add --summary "..." < notes.md
 ```
 
-<sub>`cam` 首次执行时会自动初始化 `.cam/`。如需随文件保存自动增量更新代码图，可在后台运行 `cam watch`。</sub>
+<sub>`cam` 首次执行时会自动初始化 `.cam/`。`cam mcp` 会增量监听该项目。子项目单独开着 MCP 时父项目会跳过它，否则父项目把增量写进子项目的 `.cam/cam.db`。`cam watch` 使用同一把锁。</sub>
 
 #### 3. 为主 Agent 接入 MCP
 
@@ -170,7 +170,7 @@ cam add --summary "..." < notes.md
 | --- | --- |
 | **SQLite 代码图** | tree-sitter 解析函数、类型与调用边写入 `.cam/cam.db`，无需打开整文件即可定位与跳转 |
 | **虚拟路径寻址** | `src/main.rs` 指向文件大纲；`src/main.rs/main` 直接指向该文件内的符号源码 |
-| **增量同步与监听** | `cam sync` 按内容哈希增量更新；`cam watch` 监听源文件变动自动同步 |
+| **增量同步与监听** | `cam mcp` 与 `cam watch` 共用 `.cam/incremental.lock`，按内容哈希在保存后更新。子项目有自己的 MCP 时父项目跳过；否则写入该子项目的 `.cam/cam.db` |
 | **多路混合召回（RRF）** | 本地稠密向量（`model2vec`）+ 标识符分词 BM25，通过 **RRF**（$k=60$）融合排序 |
 | **版本链与记忆树** | `--parent` 构建可分叉的主题树；`--supersedes` 建立线性替代修订并自动折叠旧版 |
 | **艾宾浩斯保留率** | $R = e^{-t / S}$ 温和调节排序分（幅度 $\le 10\%$），对过期和遗忘条目打标（`stale` / `needs_update`），永不删历史 |
@@ -217,7 +217,7 @@ cam add --summary "..." < notes.md
 
 | 命令 | 作用 |
 | --- | --- |
-| `cam index` | 使用 tree-sitter 解析项目写入 `.cam/cam.db`（无 `.cam/` 时自动创建） |
+| `cam index` | 首次写入 `.cam/cam.db`，之后只做增量更新；加 `--force` 才全量重建 |
 | `cam sync` | 按文件内容哈希增量更新代码图 |
 | `cam watch [--debounce-ms N]` | 监听源文件变动并自动 `sync`（`--json` 下每次同步输出一行 JSON） |
 | `cam ls [virt_path]` | 列出目录、文件或文件内的符号 |
@@ -238,7 +238,7 @@ cam add --summary "..." < notes.md
 
 | 命令 | 作用 |
 | --- | --- |
-| `cam mcp` | 启动供主 Agent 使用的 stdio MCP 服务（见 [docs/mcp.zh.md](docs/mcp.zh.md)） |
+| `cam mcp` | 启动 stdio MCP 服务，并增量监听该项目（见 [docs/mcp.zh.md](docs/mcp.zh.md)） |
 | `cam status` | 查看解析出的项目根路径、数据库位置、节点/边/记忆统计与当前配置 |
 | `cam config get` | 查看 `~/.cam/config.toml` 当前配置 |
 | `cam config set stale_days <N>` | 设置记忆标记为 `stale` 的天数阈值（默认 `30`） |

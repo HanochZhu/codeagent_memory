@@ -6,7 +6,9 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::code::{find, graph_counts, index_project, ls, read, refs, RefDir, SymbolHints};
+use crate::code::{
+    find, graph_counts, index_project, ls, read, refresh_project, refs, RefDir, SymbolHints,
+};
 use crate::memory::{
     add_memories, add_solution_with_links, show_solution, solution_tree, Embedder, NewMemory,
     RecallOptions,
@@ -25,7 +27,7 @@ Main agent: call these MCP tools. Do not shell out to `cam` unless a tool is mis
 
 Workflow:
 1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update. A hit with body_truncated (only with snippets) carries a snippet: cam_mem_show it before relying on details.
-2. Before reading code, make sure the graph is indexed: if cam_ls / cam_find / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. cam_index rebuilds the whole graph, so use `cam sync` (CLI) for later edits instead of indexing again.
+2. Before reading code, make sure the graph is indexed: if cam_ls / cam_find / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. The first cam_index indexes every file; later calls apply only changes (pass force=true to rebuild everything). After that, this MCP process incrementally watches its own project. A nested git checkout is skipped while its own MCP holds `.cam/incremental.lock`; otherwise this process writes that checkout's `.cam/cam.db`.
 3. On miss / stale / needs_update: cam_find (part of a symbol name) or cam_ls → cam_read (prefer symbol paths) → cam_ref. cam_find matches symbol names only; use your own grep for text inside function bodies.
 4. After you solve it, store what you learned with cam_add. One memory is one fact, or the solution path for one problem (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them as two memories. A body holds only the detail that one memory needs.
    Put several memories from the same solution in one cam_add call as `memories`. Inside that array, parent, supersedes, and links may use #0, #1, ... for other items. Recall does not walk links. Example: {"memories":[{"summary":"The shell tool truncates output at 1000 lines","body":"formatLargeTextForModel keeps the last 1000 lines."},{"summary":"Images use a separate size cap","body":"Images over 5 MB base64 are replaced with a not-sent note.","links":["#0"]}]}. A later cam_add can link by the returned id. Summary is English; the body may contain non-Latin characters. supersedes replaces an older revision; parent only sets the structural tree parent.
@@ -34,7 +36,7 @@ Subagents usually have no MCP. Instruct them to run the equivalent CLI with --js
 
 Virtual paths: `src/main.rs` is a file; `src/main.rs/main` is a symbol in that file.
 Ambiguity: when a bare name matches several definitions, cam_ref / cam_read return status `ambiguous` with `candidates` (not an error). Re-call with a candidate `id`, or pass `file` / `kind` / `scope` hints to cam_ref. In a folder holding several repos, cam_ls lists each nested repo with kind `project`; use that path as `scope`.
-Ignore rules: `.gitignore` and `.camignore` (same syntax) at any depth. A nested directory with its own `.git` (clone, submodule, or linked worktree) is indexed into that directory's `.cam/cam.db`; the parent database stores the catalog and queries fan out, so opening the nested directory reuses its graph.
+Ignore rules: `.gitignore` and `.camignore` (same syntax) at any depth. A nested directory with its own `.git` (clone, submodule, or linked worktree) is indexed into that directory's `.cam/cam.db`; the parent database stores the catalog and queries fan out, so opening the nested directory reuses its graph. Incremental updates use `.cam/incremental.lock`: a nested checkout with its own MCP is not updated by the parent, and otherwise the parent writes that checkout's database.
 Project resolution: tool argument `path`, else CAM_PROJECT, else server `--project`, else .cam / .git walk-up from the server cwd, else the server cwd. `.cam/` and the database are created automatically on the first tool call."##;
 
 const RESTART_NOTICE: &str = "cam 已更新，请重启 MCP 服务";
@@ -239,7 +241,13 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
     match name {
         "cam_index" => {
             let project = project_from(args, ctx)?;
-            to_json(index_project(&project).map_err(err_str)?)
+            let force = arg_bool(args, "force").unwrap_or(false);
+            let report = if force {
+                index_project(&project)
+            } else {
+                refresh_project(&project)
+            };
+            to_json(report.map_err(err_str)?)
         }
         "cam_ls" => {
             let project = project_from(args, ctx)?;
@@ -333,8 +341,51 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
 }
 
 fn project_from(args: &Value, ctx: &McpContext) -> Result<Project, String> {
-    resolve_project_from_strings(arg_str(args, "path"), ctx.default_path.as_deref())
-        .map_err(err_str)
+    let project = resolve_project_from_strings(arg_str(args, "path"), ctx.default_path.as_deref())
+        .map_err(err_str)?;
+    ensure_incremental_watch(&project);
+    Ok(project)
+}
+
+fn ensure_incremental_watch(project: &Project) {
+    use std::collections::HashSet;
+    use std::sync::{LazyLock, Mutex};
+
+    static STARTED: LazyLock<Mutex<HashSet<std::path::PathBuf>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    let Ok(root) = project.root.canonicalize() else {
+        return;
+    };
+    let tracked = root.clone();
+    {
+        let mut started = STARTED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !started.insert(root) {
+            return;
+        }
+    }
+    let watched = project.clone();
+    let failed_start = tracked.clone();
+    let spawned = std::thread::Builder::new()
+        .name("cam-incremental".into())
+        .spawn(move || {
+            let debounce = std::time::Duration::from_millis(crate::code::DEFAULT_DEBOUNCE_MS);
+            if let Err(err) = crate::code::watch_project(&watched, debounce, None, |_| {}) {
+                eprintln!("cam incremental watch stopped: {err:#}");
+            }
+            STARTED
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&tracked);
+        });
+    if spawned.is_err() {
+        STARTED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&failed_start);
+    }
 }
 
 fn embedder_from(args: &Value) -> Result<Box<dyn Embedder>, String> {
@@ -464,10 +515,13 @@ fn tool_defs() -> Vec<Value> {
     vec![
         tool(
             "cam_index",
-            "Parse the project with tree-sitter into .cam/cam.db. Nested directories with their own .git are indexed into that directory's .cam/cam.db; this database keeps a catalog of them. Equivalent CLI: cam index",
+            "Build or update the graph in .cam/cam.db. The first call indexes every file; later calls apply the incremental hash diff. Pass force=true to rebuild every file. Nested directories with their own .git are indexed into that directory's .cam/cam.db. Equivalent CLI: cam index [--force]",
             json!({
                 "type": "object",
-                "properties": { "path": path_prop() },
+                "properties": {
+                    "path": path_prop(),
+                    "force": { "type": "boolean", "description": "Rebuild every file even when the graph already exists." }
+                },
                 "additionalProperties": false
             }),
             false,

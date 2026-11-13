@@ -23,6 +23,9 @@ pub fn watch_project(
     stop: Option<&Receiver<()>>,
     mut on_sync: impl FnMut(&SyncReport),
 ) -> Result<()> {
+    let Some(_incremental) = super::lock::IncrementalLock::acquire_blocking(project, stop)? else {
+        return Ok(());
+    };
     project.ensure_initialized()?;
     on_sync(&sync_project(project)?);
 
