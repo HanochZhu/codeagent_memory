@@ -33,7 +33,7 @@ Need `cam` on the **GUI / IDE PATH**. Windows install location is usually `%USER
 Each memory is one fact, or the solution path for one problem (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them as two memories. One `cam_add` call stores one memory via `summary` and `body`, or several via `memories`. Inside `memories`, `#0`, `#1`, ... refer to other items in that call for `parent`, `supersedes`, and `links`.
 `cam_recall.query` and `cam_add.summary` must be written in English (non-Latin
 scripts in them are rejected). `cam_add.body` supports non-Latin characters and holds only the detail that one memory needs.
-`cam_add.links` connects related facts in the knowledge graph (recall does not traverse graph links yet).
+`cam_add.links` connects related facts in the knowledge graph (recall appends one-hop linked memories as supplemental context).
 `serverInfo.version` is `<crate version>+<git commit>`. After the `cam` binary on disk changes, tool results append `cam 已更新，请重启 MCP 服务` until the MCP process is restarted.
 `cam_add.parent` is a structural hierarchy edge and may branch.
 `cam_add.supersedes` creates a linear replacement revision; recall hides the

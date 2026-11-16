@@ -18,7 +18,7 @@
 1. **先 recall。** 默认会把命中的旧修订扩展到最新版，并隐藏已被取代的旧版。命中且 `latest`、不是 `needs_update` 才直接复用；只有查询历史或版本对比时才传 `include_superseded` / `--include-superseded`。
 2. **读代码前先确保已建图。** 若 `ls` / `read` / `ref` 提示未建图，对该项目跑一次 `cam_index` / `cam index`。首次调用会索引全部文件，之后只做增量更新（`force` / `--force` 才全量重建）。
 3. **未命中 / stale / needs_update**，走代码图：`ls` → `read`（符号路径）→ `ref`。
-4. **解完再 add。** 一条记忆只存一条事实，或一个问题的解决路径（现象、原因、改法、如何验证）。两段内容能分别被问到，或者会分别过时，就分成两条。同一次解决得到的多条放进一次 `cam_add` 的 `memories`，用 `#0`、`#1` 在 `links` 里互指（当前暂不做图召回）。CLI 的 `cam add` 一次写一条，用 `--link` 连接。`parent` 只表示结构层级；新记忆取代旧修订时使用 `supersedes`。
+4. **解完再 add。** 一条记忆只存一条事实，或一个问题的解决路径（现象、原因、改法、如何验证）。两段内容能分别被问到，或者会分别过时，就分成两条。同一次解决得到的多条放进一次 `cam_add` 的 `memories`，用 `#0`、`#1` 在 `links` 里互指（召回会从直接命中扩展一跳 links 作为补充上下文）。CLI 的 `cam add` 一次写一条，用 `--link` 连接。`parent` 只表示结构层级；新记忆取代旧修订时使用 `supersedes`。
 
 虚拟路径：`src/main.rs` 是文件；`src/main.rs/main` 是该文件里的符号。
 

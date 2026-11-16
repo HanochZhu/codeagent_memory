@@ -187,7 +187,7 @@ See [docs/mcp.md](docs/mcp.md) for host-specific config paths and [docs/agents.m
 1. **Extract** — `tree-sitter` walks the workspace and stores symbol definitions and call edges in `.cam/cam.db`.
 2. **Surgical Read** — Agents navigate via virtual paths (`ls` → `find` → `read` → `ref`). Reading a file returns its symbol outline; reading `file/symbol` returns only that symbol's source slice.
 3. **Hybrid Recall** — `recall` takes an English query, embeds it locally, runs identifier-aware BM25 (splitting `snake_case`, `kebab-case`, `camelCase` + English stemming), prunes low-confidence tails, and fuses both lists with **RRF** ($k=60$) scaled by $0.9 + 0.1 \times R$. Superseded revisions are automatically expanded to their newest replacement.
-4. **Write-Back** — When an agent solves a non-trivial task, it extracts atomic facts so each `add` stores only one fact (English summary; body supports non-Latin characters). Related facts are connected via `--link` / `links` into a knowledge graph (inspected via `mem show`; recall does not traverse graph links yet). `--parent` attaches a memory to a structural topic; `--supersedes` replaces an outdated memory while preserving lineage.
+4. **Write-Back** — When an agent solves a non-trivial task, it extracts atomic facts so each `add` stores only one fact (English summary; body supports non-Latin characters). Related facts are connected via `--link` / `links` into a knowledge graph (inspected via `mem show`; recall appends one-hop linked memories as supplemental context). `--parent` attaches a memory to a structural topic; `--supersedes` replaces an outdated memory while preserving lineage.
 
 Architecture deep dive (Chinese): [DESIGN.md](DESIGN.md).
 
@@ -254,7 +254,7 @@ Full agent rules & copy-paste system prompts: [docs/agents.md](docs/agents.md).
 
 ## Memory Rules
 
-- **Atomic facts & knowledge graph links:** Store only one atomic fact per memory to avoid packing excessive information into a single entry. When multiple facts are related, link them with `--link` / `links` to form a knowledge graph (graph recall is not enabled yet).
+- **Atomic facts & knowledge graph links:** Store only one atomic fact per memory to avoid packing excessive information into a single entry. When multiple facts are related, link them with `--link` / `links` to form a knowledge graph (one-hop linked memories are appended as supplemental context).
 - **English queries and summaries:** Recall queries and memory summaries must be written in English. Memory bodies support non-Latin characters.
 - **Retention & reinforcement:** Ebbinghaus retention $R = e^{-t / S}$ adjusts recall score via $\text{relevance} \times (0.9 + 0.1 \times R)$. Entries with $R < 0.3$ are marked `needs_update`; entries older than `stale_days` (default `30`) are marked `stale`. Every valid recall hit (`needs_update = false`) refreshes last-accessed time and multiplies stability $S$ by `1.7`.
 - **Non-destructive lineage:** Memories are never deleted. `--parent` forms branching trees; `--supersedes` forms linear revision chains where only the tail is marked `latest` and older revisions are folded out of default recall results.

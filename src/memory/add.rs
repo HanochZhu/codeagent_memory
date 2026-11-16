@@ -292,6 +292,26 @@ fn resolve_drafts(
         )?);
     }
 
+    // `parent` is a hierarchy edge, so unlike `links` it must form a forest.
+    // A batch can otherwise create a cycle entirely among its new records.
+    let new_parents: HashMap<String, Option<String>> = drafts
+        .iter()
+        .zip(&parents)
+        .map(|(draft, parent)| (draft.id.clone(), parent.clone()))
+        .collect();
+    for (start, draft) in drafts.iter().enumerate() {
+        let mut seen = HashSet::new();
+        let mut current = Some(draft.id.as_str());
+        while let Some(id) = current {
+            if !seen.insert(id.to_string()) {
+                bail!("{} creates a parent cycle", field_at(style, start, "parent"));
+            }
+            current = new_parents
+                .get(id)
+                .and_then(|parent| parent.as_deref());
+        }
+    }
+
     let mut resolved = Vec::with_capacity(drafts.len());
     for (index, draft) in drafts.iter().enumerate() {
         let mut links = Vec::new();

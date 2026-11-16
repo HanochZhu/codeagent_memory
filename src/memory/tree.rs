@@ -35,7 +35,7 @@ pub struct SolutionView {
 pub fn solution_tree(project: &Project) -> Result<Vec<TreeNode>> {
     let conn = project.connect()?;
     let mut stmt =
-        conn.prepare("SELECT id, parent_id, summary FROM solutions ORDER BY created_at")?;
+        conn.prepare("SELECT id, parent_id, summary FROM solutions ORDER BY created_at, id")?;
     let rows = stmt
         .query_map([], |row| {
             Ok((

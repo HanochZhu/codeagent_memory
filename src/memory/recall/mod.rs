@@ -31,10 +31,16 @@ const POOL: usize = 20;
 /// says how fresh a memory is, not whether it answers the query, so it must
 /// not outweigh a difference in relevance.
 const RETENTION_WEIGHT: f32 = 0.1;
+/// Link context is supplemental, so it inherits only half its best seed score.
+const LINK_DECAY: f32 = 0.5;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallHit {
     pub id: String,
+    /// `direct` is vector/BM25 or revision recall; `link` is one-hop context.
+    pub source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub linked_from: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supersedes_id: Option<String>,
     pub summary: String,
@@ -150,6 +156,8 @@ pub fn recall(
             vec_score: vec_of.get(&id).copied(),
             bm25_score: bm25_of.get(&id).copied(),
             id,
+            source: "direct".into(),
+            linked_from: Vec::new(),
             supersedes_id: row.supersedes_id,
             summary: row.summary,
             body: row.body,
@@ -171,6 +179,59 @@ pub fn recall(
             .then_with(|| a.id.cmp(&b.id))
     });
     hits.truncate(opts.limit.max(1));
+    let direct_ids: HashSet<String> = hits.iter().map(|hit| hit.id.clone()).collect();
+    let mut linked_scores: HashMap<String, (f32, HashSet<String>)> = HashMap::new();
+    for seed in &hits {
+        for linked_id in linked_memories(&conn, &seed.id)? {
+            if direct_ids.contains(&linked_id) {
+                continue;
+            }
+            let entry = linked_scores
+                .entry(linked_id)
+                .or_insert_with(|| (seed.score * LINK_DECAY, HashSet::new()));
+            entry.0 = entry.0.max(seed.score * LINK_DECAY);
+            entry.1.insert(seed.id.clone());
+        }
+    }
+    let mut linked: Vec<_> = linked_scores.into_iter().collect();
+    linked.sort_by(|a, b| {
+        b.1.0
+            .partial_cmp(&a.1.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    linked.truncate(opts.limit.max(1));
+    for (id, (score, sources)) in linked {
+        let row = hydrate::load_solution(&conn, &id)?;
+        let r = retention(now, c0(row.recalled_at, row.created_at), row.stability);
+        let tail = revisions.tail_of(&conn, &id)?;
+        let latest = tail == id;
+        if !opts.include_superseded && !latest {
+            continue;
+        }
+        let mut linked_from: Vec<_> = sources.into_iter().collect();
+        linked_from.sort();
+        hits.push(RecallHit {
+            id,
+            source: "link".into(),
+            linked_from,
+            supersedes_id: row.supersedes_id,
+            summary: row.summary,
+            body: row.body,
+            body_truncated: false,
+            score,
+            relevance: score,
+            vec_score: None,
+            bm25_score: None,
+            path: Vec::new(),
+            stale: cfg.is_stale(row.updated_at),
+            needs_update: needs_update(r),
+            retention: r,
+            latest,
+            age_days: Config::age_days(row.updated_at),
+            updated_at: row.updated_at,
+        });
+    }
     if opts.snippets {
         snippet::clip_lower_bodies(&mut hits);
     }
@@ -184,6 +245,17 @@ pub fn recall(
         }
     }
     Ok(hits)
+}
+
+fn linked_memories(conn: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT target_id FROM solution_links WHERE source_id = ?1
+         UNION SELECT source_id FROM solution_links WHERE target_id = ?1",
+    )?;
+    let ids = stmt
+        .query_map([id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids)
 }
 
 /// Shared fixtures for the recall module's tests.
@@ -224,6 +296,8 @@ mod testing {
     pub fn recall_hit(id: &str, relevance: f32, body: &str) -> RecallHit {
         RecallHit {
             id: id.into(),
+            source: "direct".into(),
+            linked_from: Vec::new(),
             supersedes_id: None,
             summary: format!("{id} summary"),
             body: body.into(),
