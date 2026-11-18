@@ -28,7 +28,7 @@ cam 不把事实挂到代码符号上。事实是记忆树上的一条普通记�
 - 问题：记忆之间目前是不是没有建图。
 - **有树，没有边图（2026-10-08 原状）。** `parent_id` 是可分叉的主题层级，`cam mem tree` 用它组树；`supersedes_id` 有唯一约束，一条记忆最多一个后继，形成线性修订链。当时没有记忆版的 `edges` 表，也没有「相关 / 矛盾 / 提及」这类关系。
 - **召回不走结构树。** `revision_tails` 只沿 `supersedes_id` 找到链尾。`breadcrumb` 把父链摘要放进结果的 `path`，供展示，不把父、子、兄弟拉进候选。见 `DESIGN.md`「更新」与 `src/memory/recall/mod.rs`。
-- **2026-10-16 更新（原子事实 + 知识图谱边）：** 提取记忆时每条记忆只存一条原子事实，多个相关事实写入时通过 `solution_links`（CLI `--link` / MCP `links`）建立知识图谱关联，但召回阶段暂不做图召回（详见 [../../design/2026-10-16-atomic-fact-links.md](../../design/2026-10-16-atomic-fact-links.md)）。
+- **2026-10-16 更新（原子事实 + 知识图谱边）：** 提取记忆时每条记忆只存一条原子事实，多个相关事实写入时通过 `solution_links`（CLI `--link` / MCP `links`）建立知识图谱关联。该阶段暂不做图召回；后续 #8 增加了沿 links 的一跳补充召回（详见 [../../design/2026-10-16-atomic-fact-links.md](../../design/2026-10-16-atomic-fact-links.md)）。
 
 ## 仍开放的问题
 - 无

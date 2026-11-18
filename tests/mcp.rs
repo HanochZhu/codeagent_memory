@@ -622,6 +622,74 @@ fn mcp_find_returns_hits_that_read_back() {
 }
 
 #[test]
+fn mcp_recall_expands_linked_fact_without_matching_terms() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().display().to_string();
+    let mut mcp = McpChild::spawn(Some(dir.path()));
+    initialize(&mut mcp);
+
+    let seed = call_ok(
+        &mut mcp,
+        1,
+        "cam_add",
+        json!({
+            "path": root,
+            "summary": "BM25 and vector hybrid recall",
+            "body": "Fuse lexical and vector results with reciprocal rank fusion.",
+            "hash_embed": true
+        }),
+    );
+    let seed_id = seed["id"].as_str().unwrap();
+    let linked = call_ok(
+        &mut mcp,
+        2,
+        "cam_add",
+        json!({
+            "path": root,
+            "summary": "isolated persistence detail",
+            "body": "Keep the persisted detail available through its relation.",
+            "links": [seed_id],
+            "hash_embed": true
+        }),
+    );
+    let linked_id = linked["id"].as_str().unwrap();
+    drop(mcp);
+    let project = cam::project::Project {
+        root: dir.path().to_path_buf(),
+    };
+    rusqlite::Connection::open(project.db_path())
+        .unwrap()
+        .execute(
+            "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id = ?1",
+            [linked_id],
+        )
+        .unwrap();
+
+    let mut mcp = McpChild::spawn(Some(dir.path()));
+    initialize(&mut mcp);
+    let hits = call_ok(
+        &mut mcp,
+        3,
+        "cam_recall",
+        json!({
+            "path": root,
+            "query": "How does BM25 and vector hybrid recall work?",
+            "hash_embed": true
+        }),
+    );
+    let hits = hits.as_array().unwrap();
+    assert!(hits
+        .iter()
+        .any(|hit| hit["id"] == seed_id && hit["source"] == "direct"));
+    let linked_hit = hits
+        .iter()
+        .find(|hit| hit["id"] == linked_id)
+        .expect("MCP cam_recall should include the linked fact");
+    assert_eq!(linked_hit["source"], "link");
+    assert_eq!(linked_hit["linked_from"], json!([seed_id]));
+}
+
+#[test]
 fn mcp_unknown_tool_is_error() {
     let mut mcp = McpChild::spawn(None);
     initialize(&mut mcp);

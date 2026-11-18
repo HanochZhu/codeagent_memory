@@ -23,7 +23,7 @@
 | 文档 | 一句话 |
 |---|---|
 | [2026-09-16-memory-not-solution.md](design/2026-09-16-memory-not-solution.md) | 非代码面叫记忆 / memory，不叫 solution；习惯、事实、设计、解法同一棵树 |
-| [2026-10-16-atomic-fact-links.md](design/2026-10-16-atomic-fact-links.md) | 一条记忆只存一条原子事实，相关事实通过 `links` 建成知识图谱，暂不做图召回 |
+| [2026-10-16-atomic-fact-links.md](design/2026-10-16-atomic-fact-links.md) | 一条记忆只存一条原子事实，相关事实通过 `links` 建成知识图谱，并沿 links 一跳补充召回 |
 
 ## 任务 / 计划
 

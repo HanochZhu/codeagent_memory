@@ -145,6 +145,41 @@ fn add_and_recall_tree() {
     let linked_id = linked_json["id"].as_str().unwrap().to_string();
     assert_eq!(linked_json["links"], serde_json::json!([revision_id]));
 
+    // Ensure the CLI recall reaches this fact only through the stored graph edge.
+    let project = cam::project::Project {
+        root: dir.path().to_path_buf(),
+    };
+    rusqlite::Connection::open(project.db_path())
+        .unwrap()
+        .execute(
+            "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id = ?1",
+            [&linked_id],
+        )
+        .unwrap();
+    let linked_recall = Command::new(cam_bin())
+        .args(["--json", "--project"])
+        .arg(dir.path())
+        .args([
+            "recall",
+            "How does BM25 and vector hybrid recall work?",
+            "--hash-embed",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        linked_recall.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked_recall.stderr)
+    );
+    let linked_hits: Vec<serde_json::Value> =
+        serde_json::from_slice(&linked_recall.stdout).unwrap();
+    let linked_hit = linked_hits
+        .iter()
+        .find(|hit| hit["id"] == linked_id)
+        .expect("CLI cam recall should include the linked fact");
+    assert_eq!(linked_hit["source"], "link");
+    assert_eq!(linked_hit["linked_from"], serde_json::json!([revision_id]));
+
     let show_rev = Command::new(cam_bin())
         .args(["--json", "--project"])
         .arg(dir.path())

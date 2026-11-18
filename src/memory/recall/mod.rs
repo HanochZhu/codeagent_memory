@@ -183,6 +183,11 @@ pub fn recall(
     let mut linked_scores: HashMap<String, (f32, HashSet<String>)> = HashMap::new();
     for seed in &hits {
         for linked_id in linked_memories(&conn, &seed.id)? {
+            let linked_id = if opts.include_superseded {
+                linked_id
+            } else {
+                revisions.tail_of(&conn, &linked_id)?
+            };
             if direct_ids.contains(&linked_id) {
                 continue;
             }
@@ -194,11 +199,11 @@ pub fn recall(
         }
     }
     let mut linked: Vec<_> = linked_scores.into_iter().collect();
-    linked.sort_by(|a, b| {
-        b.1.0
-            .partial_cmp(&a.1.0)
+    linked.sort_by(|(a_id, (a_score, _)), (b_id, (b_score, _))| {
+        b_score
+            .partial_cmp(a_score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
+            .then_with(|| a_id.cmp(b_id))
     });
     linked.truncate(opts.limit.max(1));
     for (id, (score, sources)) in linked {
@@ -734,7 +739,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_does_not_traverse_fact_links() {
+    fn recall_expands_one_hop_fact_links_without_displacing_direct_hits() {
         let dir = tempdir().unwrap();
         let project = Project {
             root: dir.path().to_path_buf(),
@@ -757,10 +762,16 @@ mod tests {
         )
         .unwrap()
         .id;
+        let unrelated = add(&project, "unrelated zzz fact", "unrelated zzz body", None);
         let conn = project.connect().unwrap();
         conn.execute(
             "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id = ?1",
             [&linked],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id = ?1",
+            [&unrelated],
         )
         .unwrap();
         drop(conn);
@@ -770,15 +781,91 @@ mod tests {
             &embedder,
             "bm25 and vectors",
             RecallOptions {
-                limit: 5,
+                limit: 1,
                 ..Default::default()
             },
         )
         .unwrap();
         assert!(hits.iter().any(|h| h.id == matched), "{hits:?}");
-        assert!(
-            !hits.iter().any(|h| h.id == linked),
-            "fact links must not trigger graph recall: {hits:?}"
+        let linked_hit = hits
+            .iter()
+            .find(|h| h.id == linked)
+            .expect("linked fact is recalled");
+        assert_eq!(linked_hit.source, "link", "{linked_hit:?}");
+        assert_eq!(
+            linked_hit.linked_from,
+            vec![matched.clone()],
+            "{linked_hit:?}"
         );
+        assert!(!hits.iter().any(|h| h.id == unrelated), "{hits:?}");
+        let direct_ids: Vec<_> = hits
+            .iter()
+            .filter(|hit| hit.source == "direct")
+            .map(|hit| hit.id.as_str())
+            .collect();
+        assert_eq!(
+            direct_ids.first().copied(),
+            Some(matched.as_str()),
+            "{hits:?}"
+        );
+    }
+
+    #[test]
+    fn linked_superseded_fact_expands_to_its_latest_revision() {
+        let dir = tempdir().unwrap();
+        let project = Project {
+            root: dir.path().to_path_buf(),
+        };
+        let embedder = HashEmbedder::default();
+        let matched = add(
+            &project,
+            "multi path recall fuses bm25 and vectors",
+            "rank each path then apply reciprocal rank fusion",
+            None,
+        );
+        let linked_old = crate::memory::add_solution_with_links(
+            &project,
+            &embedder,
+            "unrelated linked fact",
+            "old linked detail",
+            None,
+            None,
+            std::slice::from_ref(&matched),
+        )
+        .unwrap()
+        .id;
+        let linked_latest = revise(
+            &project,
+            "updated unrelated fact",
+            "latest linked detail",
+            &linked_old,
+        );
+        let conn = project.connect().unwrap();
+        conn.execute(
+            "UPDATE solutions SET embedding = NULL, fts_text = '' WHERE id IN (?1, ?2)",
+            rusqlite::params![linked_old, linked_latest],
+        )
+        .unwrap();
+        drop(conn);
+
+        let hits = recall(
+            &project,
+            &embedder,
+            "bm25 and vectors",
+            RecallOptions {
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(hits
+            .iter()
+            .any(|hit| hit.id == matched && hit.source == "direct"));
+        let linked_hit = hits
+            .iter()
+            .find(|hit| hit.id == linked_latest)
+            .expect("latest linked revision should be included");
+        assert_eq!(linked_hit.source, "link");
+        assert!(!hits.iter().any(|hit| hit.id == linked_old));
     }
 }
