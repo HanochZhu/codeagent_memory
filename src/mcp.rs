@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::code::{
-    find, graph_counts, index_project, ls, read, refresh_project, refs, RefDir, SymbolHints,
+    find, graph_counts, grep, index_project, ls, read, refresh_project, refs, RefDir, SymbolHints,
 };
 use crate::memory::{
     add_memories, add_solution_with_links, show_solution, solution_tree, Embedder, NewMemory,
@@ -27,8 +27,8 @@ Main agent: call these MCP tools. Do not shell out to `cam` unless a tool is mis
 
 Workflow:
 1. cam_recall first, with the question written in English. Reuse a hit when it is latest and not needs_update. A hit with body_truncated (only with snippets) carries a snippet: cam_mem_show it before relying on details.
-2. Before reading code, make sure the graph is indexed: if cam_ls / cam_find / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. The first cam_index indexes every file; later calls apply only changes (pass force=true to rebuild everything). After that, this MCP process incrementally watches its own project. A nested git checkout is skipped while its own MCP holds `.cam/incremental.lock`; otherwise this process writes that checkout's `.cam/cam.db`.
-3. On miss / stale / needs_update: cam_find (part of a symbol name) or cam_ls → cam_read (prefer symbol paths) → cam_ref. cam_find matches symbol names only; use your own grep for text inside function bodies.
+2. Before reading code, make sure the graph is indexed: if cam_ls / cam_find / cam_grep / cam_read / cam_ref report an empty or not-indexed graph, call cam_index once for that project, then retry. The first cam_index indexes every file; later calls apply only changes (pass force=true to rebuild everything). After that, this MCP process incrementally watches its own project. A nested git checkout is skipped while its own MCP holds `.cam/incremental.lock`; otherwise this process writes that checkout's `.cam/cam.db`.
+3. On miss / stale / needs_update: use cam_find for symbol names or cam_grep for literal source text, then cam_read / cam_ref as needed.
 4. After you solve it, store what you learned with cam_add. One memory is one fact, or the solution path for one problem (symptom, cause, change, and how to verify). If two pieces can be asked about separately, or can become outdated separately, store them as two memories. A body holds only the detail that one memory needs.
    Put several memories from the same solution in one cam_add call as `memories`. Inside that array, parent, supersedes, and links may use #0, #1, ... for other items. Recall appends one-hop linked memories as supplemental context after direct hits. Example: {"memories":[{"summary":"The shell tool truncates output at 1000 lines","body":"formatLargeTextForModel keeps the last 1000 lines."},{"summary":"Images use a separate size cap","body":"Images over 5 MB base64 are replaced with a not-sent note.","links":["#0"]}]}. A later cam_add can link by the returned id. Summary is English; the body may contain non-Latin characters. supersedes replaces an older revision; parent only sets the structural tree parent.
 
@@ -280,6 +280,12 @@ fn run_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String>
             };
             let limit = arg_usize(args, "limit").unwrap_or(20);
             to_json(find(&project, query, hints, limit).map_err(err_str)?)
+        }
+        "cam_grep" => {
+            let project = project_from(args, ctx)?;
+            let query = required_str(args, "query")?;
+            let limit = arg_usize(args, "limit").unwrap_or(20);
+            to_json(grep(&project, query, arg_str(args, "scope"), limit).map_err(err_str)?)
         }
         "cam_recall" => {
             let project = project_from(args, ctx)?;
@@ -586,6 +592,23 @@ fn tool_defs() -> Vec<Value> {
                     "kind": { "type": "string", "description": "Keep only this node kind (function, method, struct, class, trait, enum, enum_variant, type_alias)." },
                     "file": { "type": "string", "description": "Keep only symbols whose file path contains this (case-insensitive)." },
                     "scope": { "type": "string", "description": "Keep only symbols under this sub-directory, typically a `project` entry from cam_ls." },
+                    "limit": { "type": "integer", "minimum": 1, "default": 20 },
+                    "path": path_prop()
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+            true,
+            true,
+        ),
+        tool(
+            "cam_grep",
+            "Search literal text in indexed source files (not configuration or documentation). Results include file path, line, and context; when a line is inside an indexed symbol, its virtual path and id are included. Honors the indexed file set and ignore rules. Needs an indexed graph; call cam_index first if it reports the graph is not indexed. Equivalent CLI: cam grep <query> [--scope DIR] [--limit N]",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Literal text to search for." },
+                    "scope": { "type": "string", "description": "Restrict to this sub-directory." },
                     "limit": { "type": "integer", "minimum": 1, "default": 20 },
                     "path": path_prop()
                 },

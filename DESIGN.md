@@ -19,7 +19,8 @@ cam 有两面：
 - `cam ls [path]`：目录 / 文件 / 符号
 - `cam read <path>`：文件大纲，或符号源码切片（`--full` 才整文件）
 - `cam ref <symbol> --dir in|out`：一跳 callers / callees（多跳 hops 第一版不做）
-- `cam find <query>`：按符号名子串找定义（不区分大小写，只搜名字不搜正文；正文文本仍用 agent 自带 grep）
+- `cam find <query>`：按符号名子串找定义（不区分大小写；只搜名字）
+- `cam grep <query>`：按字面量搜索已索引的源码，返回文件、行号和上下文；可附带所在符号路径与 ID
 
 虚拟路径：`src/main.rs` 是文件，`src/main.rs/main` 是该文件里的符号。
 
@@ -57,7 +58,7 @@ cam 有两面：
 
 # Agent 速查
 
-主 Agent（MCP）：`cam_recall` → `cam_find` / `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。
+主 Agent（MCP）：`cam_recall` → `cam_find` / `cam_grep` / `cam_ls` / `cam_read` / `cam_ref` → `cam_add`。
 
 Subagent（CLI）：
 

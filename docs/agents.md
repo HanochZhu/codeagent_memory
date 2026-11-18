@@ -36,21 +36,22 @@ After the host loads the `cam` MCP server, call tools. Do **not** shell out to `
 | `cam_ls` | List a directory, file, or the symbols in a file. |
 | `cam_read` | File outline, or a symbol body. Prefer `src/foo.rs/bar` over `full=true`. |
 | `cam_ref` | One-hop callers (`dir=in`) or callees (`dir=out`). On `status: ambiguous`, re-call with a candidate `id` or add `file` / `kind` / `scope`. |
-| `cam_find` | Symbols whose name contains `query` (case-insensitive; names only, not body text). Exact names first, then prefixes. Each hit has a virtual `path` and `id` for cam_read / cam_ref. |
+| `cam_find` | Symbols whose name contains `query` (case-insensitive). Exact names first, then prefixes. Each hit has a virtual `path` and `id` for cam_read / cam_ref. |
+| `cam_grep` | Literal text in indexed source files; returns file, line, context, and the containing symbol path / id when available. |
 | `cam_add` | Persist one fact or one problem's solution path per memory. English `summary`. One call may pass `memories` and refer to other items with `#0`, `#1`, .... `links` connects related memories, `parent` sets hierarchy, `supersedes` replaces a revision. |
 | `cam_mem_tree` / `cam_mem_show` | Browse the solution tree. |
 | `cam_index` | Once per repo (or after large code moves). `.cam/` is created automatically. |
 
-Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`). Hits carry full bodies by default. With `snippets` / `--snippets`, long bodies below the top hit come back clipped with `body_truncated: true`; `cam_mem_show` one before relying on its details. `cam_ls` / `cam_find` / `cam_read` / `cam_ref` fail with `not_indexed` when the graph is empty; call `cam_index` once, then retry.
+Tool results are JSON text. `cam_recall` refreshes retention on a successful hit (`needs_update = false`). Hits carry full bodies by default. With `snippets` / `--snippets`, long bodies below the top hit come back clipped with `body_truncated: true`; `cam_mem_show` one before relying on its details. `cam_ls` / `cam_find` / `cam_grep` / `cam_read` / `cam_ref` fail with `not_indexed` when the graph is empty; call `cam_index` once, then retry.
 
 ### Paste this into the main agent's rules / AGENTS.md
 
 ```text
 This repo uses cam (code graph + solution memory).
 
-Main agent: call MCP tools cam_recall / cam_find / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show. Do not run the cam CLI unless MCP is unavailable.
+Main agent: call MCP tools cam_recall / cam_find / cam_grep / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show. Do not run the cam CLI unless MCP is unavailable.
 
-Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, locate symbols with cam_find (part of a name) or cam_ls, then cam_read (symbol paths) → cam_ref. After solving, call cam_add with one fact or one problem's solution path per memory (English summary; body supports non-Latin text). Several memories from the same solution go in one call as memories, using #0 and #1 in links. parent sets hierarchy; supersedes replaces an older revision.
+Workflow: translate the question to English, then call cam_recall first. Before reading code, if cam_ls / cam_read / cam_ref report the graph is not indexed, call cam_index once for that project. On miss or needs_update, use cam_find for symbol names, cam_grep for literal source text, or cam_ls; then cam_read (symbol paths) → cam_ref. After solving, call cam_add with one fact or one problem's solution path per memory (English summary; body supports non-Latin text). Several memories from the same solution go in one call as memories, using #0 and #1 in links. parent sets hierarchy; supersedes replaces an older revision.
 
 Subagents have no MCP. When you delegate, tell them to run `cam --json` in the project directory (see docs/agents.md).
 ```
@@ -103,6 +104,7 @@ Translate the question to English and recall first. Before reading code, run `ca
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_find` | `cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]` |
+| `cam_grep` | `cam grep <query> [--scope DIR] [--limit N]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |

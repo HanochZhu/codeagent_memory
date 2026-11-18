@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use cam::code::{
-    clamp_debounce_ms, find, graph_counts, index_project, index_project_with_progress, ls, read,
-    refresh_project, refresh_project_with_progress, refs, sync_project, watch_project, Ambiguous,
-    IncrementalLock, ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
+    clamp_debounce_ms, find, graph_counts, grep, index_project, index_project_with_progress, ls,
+    read, refresh_project, refresh_project_with_progress, refs, sync_project, watch_project,
+    Ambiguous, IncrementalLock, ReadOutcome, RefDir, RefOutcome, SymbolHints, DEFAULT_DEBOUNCE_MS,
 };
 
 use cam::memory::{
@@ -100,6 +100,16 @@ enum Command {
         #[arg(long, value_name = "SUBSTR")]
         file: Option<String>,
         /// Keep only symbols under this sub-directory
+        #[arg(long, value_name = "DIR")]
+        scope: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Search literal text in indexed source files
+    Grep {
+        /// Literal text to search for
+        query: String,
+        /// Restrict to this project-relative directory
         #[arg(long, value_name = "DIR")]
         scope: Option<String>,
         #[arg(long, default_value_t = 20)]
@@ -420,6 +430,33 @@ fn run(cli: Cli, json: bool, pretty: bool) -> Result<()> {
             } else {
                 for h in &result.hits {
                     println!("{:<10} {}  {}-{}", h.kind, h.path, h.start_line, h.end_line);
+                }
+                if result.total_matches > result.hits.len() {
+                    eprintln!(
+                        "(showing {} of {})",
+                        result.hits.len(),
+                        result.total_matches
+                    );
+                }
+            }
+        }
+        Command::Grep {
+            query,
+            scope,
+            limit,
+        } => {
+            let project = resolve_project(project_arg)?;
+            let result = grep(&project, &query, scope.as_deref(), limit)?;
+            if json {
+                emit_json(&result, pretty)?;
+            } else if result.hits.is_empty() {
+                emit_text("no matches");
+            } else {
+                for hit in &result.hits {
+                    println!("{}:{}  {}", hit.file_path, hit.line, hit.context);
+                    if let Some(path) = &hit.symbol_path {
+                        println!("  symbol: {path}");
+                    }
                 }
                 if result.total_matches > result.hits.len() {
                     eprintln!(

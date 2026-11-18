@@ -36,21 +36,22 @@
 | `cam_ls` | 列目录、文件，或文件里的符号 |
 | `cam_read` | 文件大纲，或符号源码。优先 `src/foo.rs/bar`，少用 `full=true` |
 | `cam_ref` | 一跳 callers（`dir=in`）或 callees（`dir=out`）。返回 `status: ambiguous` 时，用候选 `id` 重查，或加 `file` / `kind` / `scope` |
-| `cam_find` | 按名字子串找符号（不区分大小写；只搜名字不搜正文）。完全同名在前，其次前缀；每条带虚拟 `path` 和 `id`，可交给 cam_read / cam_ref |
+| `cam_find` | 按名字子串找符号（不区分大小写）。完全同名在前，其次前缀；每条带虚拟 `path` 和 `id`，可交给 cam_read / cam_ref |
+| `cam_grep` | 在已索引源码中按字面量搜索，返回文件、行号、上下文；若命中位于符号中，还会返回符号虚拟路径和 ID |
 | `cam_add` | 写入一条事实或一个问题的解决路径。`summary` 用英语。一次调用可以用 `memories`，并用 `#0`、`#1` 互指。`links` 连接相关记忆，`parent` 表示结构层级，`supersedes` 替代旧修订 |
 | `cam_mem_tree` / `cam_mem_show` | 浏览解法树 |
 | `cam_index` | 每个仓库做一次（或代码大挪移之后）。`.cam/` 会在首次调用时自动创建。 |
 
-工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。默认每条都带完整正文。设 `snippets` / `--snippets` 后，第一条以外的长正文只带片段并标 `body_truncated: true`；要依赖细节前先 `cam_mem_show`。图为空时 `cam_ls` / `cam_find` / `cam_read` / `cam_ref` 会以 `not_indexed` 失败；先 `cam_index` 一次再重试。
+工具返回 JSON 文本。`cam_recall` 在成功命中（`needs_update = false`）时会刷新保留率。默认每条都带完整正文。设 `snippets` / `--snippets` 后，第一条以外的长正文只带片段并标 `body_truncated: true`；要依赖细节前先 `cam_mem_show`。图为空时 `cam_ls` / `cam_find` / `cam_grep` / `cam_read` / `cam_ref` 会以 `not_indexed` 失败；先 `cam_index` 一次再重试。
 
 ### 贴进主 Agent 的规则 / AGENTS.md
 
 ```text
 本仓库使用 cam（代码图 + 解法记忆）。
 
-主 Agent：调用 MCP 工具 cam_recall / cam_find / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show。MCP 可用时不要跑 cam CLI。
+主 Agent：调用 MCP 工具 cam_recall / cam_find / cam_grep / cam_ls / cam_read / cam_ref / cam_add / cam_mem_tree / cam_mem_show。MCP 可用时不要跑 cam CLI。
 
-流程：先把问题翻译成英语，再 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时用 cam_find（名字片段）或 cam_ls 定位，再 cam_read（符号路径）→ cam_ref 走代码图。解完用 cam_add 写入，一条记忆只存一条事实或一个问题的解决路径（summary 用英语，正文支持非拉丁字符）。同一次解决得到的多条放进 memories，用 #0、#1 在 links 里互指。parent 表示结构层级，supersedes 表示替代旧修订。
+流程：先把问题翻译成英语，再 cam_recall。读代码前若 cam_ls / cam_read / cam_ref 提示未建图，对该项目 cam_index 一次。未命中或 needs_update 时，用 cam_find 搜名字、cam_grep 搜源码正文，或用 cam_ls 定位，再 cam_read（符号路径）→ cam_ref 走代码图。解完用 cam_add 写入，一条记忆只存一条事实或一个问题的解决路径（summary 用英语，正文支持非拉丁字符）。同一次解决得到的多条放进 memories，用 #0、#1 在 links 里互指。parent 表示结构层级，supersedes 表示替代旧修订。
 
 Subagent 通常没有 MCP。委派时让它们在项目目录执行 `cam --json`（见 docs/agents.zh.md）。
 ```
@@ -103,6 +104,7 @@ cam --json --project <PROJECT> mem show <id>
 | `cam_read` | `cam read <virt_path> [--full]` |
 | `cam_ref` | `cam ref <symbol> --dir in\|out [--file SUBSTR] [--kind KIND] [--scope DIR]` |
 | `cam_find` | `cam find <query> [--kind KIND] [--file SUBSTR] [--scope DIR] [--limit N]` |
+| `cam_grep` | `cam grep <query> [--scope DIR] [--limit N]` |
 | `cam_recall` | `cam recall "<query>" [--limit N] [--no-expand] [--include-superseded] [--snippets]` |
 | `cam_add` | `cam add --summary "..." [--parent ID] [--supersedes ID] [--link ID]... [--body TEXT \| --file PATH]` |
 | `cam_mem_tree` | `cam mem tree` |

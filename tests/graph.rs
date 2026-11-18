@@ -600,6 +600,54 @@ fn find_without_index_asks_to_index() {
 }
 
 #[test]
+fn grep_finds_source_lines_and_maps_containing_symbols() {
+    use cam::code::{grep, index_project};
+    use cam::project::Project;
+
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(
+        dir.path().join("src/lib.rs"),
+        "pub fn render() {\n    let message = \"needle-in-body\";\n}\n// needle-in-comment\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join(".gitignore"), "ignored.rs\n").unwrap();
+    fs::write(dir.path().join("ignored.rs"), "// needle-in-ignored\n").unwrap();
+    fs::write(dir.path().join(".camignore"), "cam-ignored.rs\n").unwrap();
+    fs::write(
+        dir.path().join("cam-ignored.rs"),
+        "// needle-in-cam-ignored\n",
+    )
+    .unwrap();
+    let project = Project::init(Some(dir.path())).unwrap();
+    index_project(&project).unwrap();
+
+    let found = grep(&project, "needle-in-body", None, 20).unwrap();
+    assert_eq!(found.total_matches, 1);
+    assert_eq!(found.hits[0].file_path, "src/lib.rs");
+    assert_eq!(found.hits[0].line, 2);
+    assert!(found.hits[0].context.contains("needle-in-body"));
+    assert_eq!(
+        found.hits[0].symbol_path.as_deref(),
+        Some("src/lib.rs/render")
+    );
+    assert!(found.hits[0].symbol_id.is_some());
+
+    let ignored = grep(&project, "needle-in-ignored", None, 20).unwrap();
+    assert!(ignored.hits.is_empty(), "{ignored:?}");
+    let cam_ignored = grep(&project, "needle-in-cam-ignored", None, 20).unwrap();
+    assert!(cam_ignored.hits.is_empty(), "{cam_ignored:?}");
+    let comments = grep(&project, "needle-in-comment", Some("src"), 1).unwrap();
+    assert_eq!(comments.total_matches, 1);
+    assert_eq!(comments.hits.len(), 1);
+    assert!(comments.hits[0].symbol_path.is_none());
+
+    let cli = cam_json(dir.path(), &["grep", "needle-in-body"]);
+    assert_eq!(cli["total_matches"], 1, "{cli}");
+    assert_eq!(cli["hits"][0]["line"], 2);
+}
+
+#[test]
 fn ls_marks_nested_repos_and_scope_filters_refs() {
     use cam::code::{index_project, ls, refs, RefDir, RefOutcome, SymbolHints};
     use cam::project::Project;

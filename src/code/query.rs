@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::index::{normalize_virt, virt_parts};
@@ -147,6 +147,25 @@ pub struct FindResult {
     pub query: String,
     pub total_matches: usize,
     pub hits: Vec<FindHit>,
+}
+
+/// One literal source-text match, with an optional containing code symbol.
+#[derive(Debug, Serialize)]
+pub struct GrepHit {
+    pub file_path: String,
+    pub line: i64,
+    pub context: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GrepResult {
+    pub query: String,
+    pub total_matches: usize,
+    pub hits: Vec<GrepHit>,
 }
 
 /// One code graph visible from the project that was opened. `prefix` is empty
@@ -603,6 +622,91 @@ pub fn find(
         })
         .collect();
     Ok(FindResult {
+        query: needle.to_string(),
+        total_matches,
+        hits,
+    })
+}
+
+/// Search literal text in indexed source files without storing file contents.
+pub fn grep(
+    project: &Project,
+    query: &str,
+    scope: Option<&str>,
+    limit: usize,
+) -> Result<GrepResult> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        bail!("query is required");
+    }
+    let shards = open_shards(project)?;
+    ensure_visible_graph(project, &shards)?;
+    let scope = scope.map(normalize_prefix).filter(|s| !s.is_empty());
+    let mut hits = Vec::new();
+    let mut total_matches = 0usize;
+    for shard in &shards {
+        let mut stmt = shard.conn.prepare("SELECT path FROM files ORDER BY path")?;
+        let paths = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for file in paths {
+            let file_path = present_path(&shard.prefix, &file);
+            if scope
+                .as_deref()
+                .is_some_and(|prefix| !path_in_project(&file_path, prefix))
+            {
+                continue;
+            }
+            let source = match fs::read_to_string(shard.root.join(&file)) {
+                Ok(source) => source,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    return Err(err)
+                        .with_context(|| format!("read {}", shard.root.join(&file).display()))
+                }
+            };
+            for (index, line) in source.lines().enumerate() {
+                if !line.contains(needle) {
+                    continue;
+                }
+                total_matches += 1;
+                if hits.len() >= limit.max(1) {
+                    continue;
+                }
+                let symbol: Option<(String, String, String)> = shard
+                    .conn
+                    .query_row(
+                        "SELECT id, name, file_path FROM nodes
+                     WHERE file_path = ?1 AND kind != 'file' AND start_line <= ?2 AND end_line >= ?2
+                     ORDER BY (end_line - start_line), start_line DESC LIMIT 1",
+                        rusqlite::params![file, index as i64 + 1],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                let (symbol_id, symbol_path) = match symbol {
+                    Some((id, name, path)) => (
+                        Some(present_id(&shard.prefix, &id)),
+                        Some(format!("{}/{}", present_path(&shard.prefix, &path), name)),
+                    ),
+                    None => (None, None),
+                };
+                let context = if line.chars().count() > 300 {
+                    let excerpt: String = line.chars().take(297).collect();
+                    format!("{excerpt}…")
+                } else {
+                    line.to_string()
+                };
+                hits.push(GrepHit {
+                    file_path: file_path.clone(),
+                    line: index as i64 + 1,
+                    context,
+                    symbol_path,
+                    symbol_id,
+                });
+            }
+        }
+    }
+    Ok(GrepResult {
         query: needle.to_string(),
         total_matches,
         hits,

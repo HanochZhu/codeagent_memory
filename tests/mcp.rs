@@ -566,7 +566,7 @@ fn mcp_find_returns_hits_that_read_back() {
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::write(
         dir.path().join("src/lib.rs"),
-        "pub fn load_config() {}\npub fn reload_config() { load_config(); }\npub struct Config;\n",
+        "pub fn load_config() { let message = \"unique-body-needle\"; }\npub fn reload_config() { load_config(); }\npub struct Config;\n",
     )
     .unwrap();
     let root = dir.path().display().to_string();
@@ -603,7 +603,21 @@ fn mcp_find_returns_hits_that_read_back() {
     assert_eq!(body["status"], "ok", "{body}");
     assert!(body["source"].as_str().unwrap().contains("fn load_config"));
 
-    let missing = call_tool(&mut mcp, 5, "cam_find", json!({ "path": root }));
+    let text_hits = call_ok(
+        &mut mcp,
+        5,
+        "cam_grep",
+        json!({ "path": root, "query": "unique-body-needle" }),
+    );
+    assert_eq!(text_hits["total_matches"], 1, "{text_hits}");
+    assert_eq!(text_hits["hits"][0]["file_path"], "src/lib.rs");
+    assert_eq!(text_hits["hits"][0]["line"], 1);
+    assert_eq!(
+        text_hits["hits"][0]["symbol_path"],
+        "src/lib.rs/load_config"
+    );
+
+    let missing = call_tool(&mut mcp, 6, "cam_find", json!({ "path": root }));
     assert_eq!(missing["result"]["isError"], true, "{missing}");
 }
 

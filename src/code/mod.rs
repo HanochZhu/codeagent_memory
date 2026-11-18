@@ -10,7 +10,7 @@ pub use index::{
 };
 pub use lock::IncrementalLock;
 pub use query::{
-    find, graph_counts, ls, read, refs, Ambiguous, FindHit, FindResult, ReadOutcome, ReadResult,
-    RefDir, RefOutcome, RefResult, SymbolCandidate, SymbolHints,
+    find, graph_counts, grep, ls, read, refs, Ambiguous, FindHit, FindResult, GrepHit, GrepResult,
+    ReadOutcome, ReadResult, RefDir, RefOutcome, RefResult, SymbolCandidate, SymbolHints,
 };
 pub use watch::{clamp_debounce_ms, watch_project, DEFAULT_DEBOUNCE_MS};
