@@ -17,7 +17,7 @@ startCommand:
         `${config.workspace || process.cwd()}:/work`,
         "-w",
         "/work",
-        "ghcr.io/hanochzhu/codeagent-memory:0.1.6"
+        "ghcr.io/hanochzhu/codeagent-memory:0.1.7"
       ]
     })
 build:
