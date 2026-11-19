@@ -1,24 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <defs>
-    <linearGradient id="memory" x1="28" y1="27" x2="94" y2="101" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#60E6FF"/>
-      <stop offset="1" stop-color="#6C7CFF"/>
-    </linearGradient>
-  </defs>
+  <rect width="128" height="128" rx="29" fill="#0B0D10"/>
+  <rect x=".75" y=".75" width="126.5" height="126.5" rx="28.25" stroke="#FFFFFF" stroke-opacity=".1" stroke-width="1.5"/>
 
-  <rect width="128" height="128" rx="28" fill="#08111F"/>
-  <rect x=".75" y=".75" width="126.5" height="126.5" rx="27.25" stroke="#FFFFFF" stroke-opacity=".09" stroke-width="1.5"/>
-
-  <!-- A continuous recall loop shaped like the letter C. -->
-  <path d="M89 35C75 23 52 24 37 39C23 53 23 76 37 90C51 104 74 105 89 93"
-        stroke="url(#memory)" stroke-width="9" stroke-linecap="round"/>
-
-  <!-- Retrieval points on the memory graph. -->
-  <circle cx="89" cy="35" r="5.5" fill="#08111F" stroke="#8DEEFF" stroke-width="3"/>
-  <circle cx="31" cy="64" r="4" fill="#08111F" stroke="#78CAFF" stroke-width="3"/>
-  <circle cx="89" cy="93" r="5.5" fill="#08111F" stroke="#8795FF" stroke-width="3"/>
-
-  <!-- Code held inside the memory loop. -->
-  <path d="M57 49L45 64L57 79M71 49L83 64L71 79"
-        stroke="#F4F8FF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Three quiet layers form a compact symbol for stored, retrievable memory. -->
+  <path d="M39 43h50a7 7 0 0 1 0 14H39a7 7 0 0 1 0-14Z" fill="#F2F4F7"/>
+  <path d="M39 61h50a7 7 0 0 1 0 14H39a7 7 0 0 1 0-14Z" fill="#B8BEC7"/>
+  <path d="M39 79h36a7 7 0 0 1 0 14H39a7 7 0 0 1 0-14Z" fill="#7D858F"/>
 </svg>

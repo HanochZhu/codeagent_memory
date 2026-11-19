@@ -4,7 +4,7 @@
   "category": "developer",
   "description": "Local code graph and solution memory for coding agents. Surgical reads and recall over a project, via CLI and MCP.",
   "homepage": "https://github.com/HanochZhu/codeagent_memory",
-  "icon": "🧠",
+  "icon": "https://raw.githubusercontent.com/HanochZhu/codeagent_memory/main/assets/logo.png",
   "identifier": "hanochzhu-codeagent-memory",
   "localizations": [
     {
